@@ -323,5 +323,24 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       );
       return result.rows[0];
     },
+
+    async listAudits(caseId, { limit = 5 } = {}) {
+      const result = await query(
+        `SELECT id, case_id, actor_slack_user_id, action, details, created_at
+         FROM audit_events
+         WHERE case_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [caseId, limit],
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        caseId: row.case_id,
+        actorSlackUserId: row.actor_slack_user_id,
+        action: row.action,
+        ...(row.details || {}),
+        at: row.created_at?.toISOString?.() || row.created_at,
+      }));
+    },
   };
 }
