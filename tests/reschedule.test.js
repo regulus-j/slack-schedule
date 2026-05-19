@@ -47,8 +47,8 @@ test('scheduled cases show reschedule actions instead of create invite', () => {
   assert.ok(!actions.includes('open_finalize_modal'));
 
   const labels = actionButtonsForCase(scheduledCase).map((item) => item.text.text);
-  assert.ok(labels.includes('Reschedule interview'));
-  assert.ok(!labels.includes('Create calendar invite'));
+  assert.ok(labels.includes('🔄 Reschedule interview'));
+  assert.ok(!labels.includes('📅 Create calendar invite'));
 });
 
 test('cases with uploaded resumes show a view resume action', () => {
@@ -61,7 +61,7 @@ test('cases with uploaded resumes show a view resume action', () => {
   const labels = actionButtonsForCase(caseWithResume).map((item) => item.text.text);
 
   assert.ok(actions.includes('view_resume'));
-  assert.ok(labels.includes('View resume'));
+  assert.ok(labels.includes('📄 View resume'));
 });
 
 test('final scheduling is rejected after a calendar event exists', () => {
