@@ -115,6 +115,12 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       await persist();
       return audit;
     },
+
+    async listAudits(caseId, { limit = 5 } = {}) {
+      return state.audits
+        .filter((a) => a.caseId === caseId)
+        .slice(0, limit);
+    },
   };
 }
 
