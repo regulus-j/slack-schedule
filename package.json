@@ -1,0 +1,23 @@
+{
+  "name": "slack-scheduler",
+  "version": "0.0.0",
+  "description": "Slack-first interview scheduling assistant for JazzHR, Google Calendar, and Gmail workflows",
+  "main": "app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node app.js",
+    "test": "node --test",
+    "check": "node --check app.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@slack/bolt": "^4.7.2",
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@slack/cli-hooks": "^1.3.2",
+    "@types/node": "^25.7.0"
+  },
+  "author": "regulus-j Jamal A. Al Badi"
+}
