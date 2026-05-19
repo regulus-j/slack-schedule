@@ -96,6 +96,7 @@ export function applyScheduledEvent(caseRecord, eventResult, scheduleInput) {
     scheduleVersion: nextVersion,
     rescheduleStatus: RESCHEDULE_STATUSES.NONE,
     lastCalendarUpdateAt: new Date().toISOString(),
+    lastActionAt: new Date().toISOString(),
   };
 }
 
@@ -112,6 +113,8 @@ export function applyRescheduleRequest(caseRecord, request) {
       by: request.actorSlackUserId,
     },
     previousSchedule: normalized.currentSchedule,
+    lastActionAt: new Date().toISOString(),
+    lastActionBy: request.actorSlackUserId,
   };
 }
 
@@ -155,6 +158,8 @@ export function applyCompletedReschedule(caseRecord, eventResult, request, email
     reminderScheduleVersion:
       caseRecord.reminderStatus === 'sent' ? normalized.reminderScheduleVersion : nextVersion,
     lastCalendarUpdateAt: new Date().toISOString(),
+    lastActionAt: new Date().toISOString(),
+    lastActionBy: request.actorSlackUserId,
     pendingReschedule: null,
     actionLock: null,
   };
