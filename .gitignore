@@ -1,0 +1,16 @@
+# Claude Code (local settings)
+.claude/
+
+# node / npm
+node_modules/
+.env
+
+# runtime state
+/data/runtime/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
