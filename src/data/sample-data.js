@@ -1,0 +1,56 @@
+export const SAMPLE_APPLICANTS = [
+  {
+    id: 'applicant-demo-1',
+    jazzhrApplicationId: 'jazz-demo-1001',
+    firstName: 'Alex',
+    lastName: 'Reyes',
+    email: 'alex.reyes@example.com',
+    phone: '+63 900 000 0001',
+    jobTitle: 'Customer Support Specialist',
+    stage: '1st Interview',
+    hiringManagerId: 'hm-ana',
+    recruiterId: 'rec-jam',
+    source: 'sample',
+  },
+  {
+    id: 'applicant-demo-2',
+    jazzhrApplicationId: 'jazz-demo-1002',
+    firstName: 'Mika',
+    lastName: 'Santos',
+    email: 'mika.santos@example.com',
+    phone: '+63 900 000 0002',
+    jobTitle: 'Operations Coordinator',
+    stage: '2nd Interview',
+    hiringManagerId: 'hm-lee',
+    recruiterId: 'rec-jam',
+    source: 'sample',
+  },
+];
+
+export const SAMPLE_PEOPLE = [
+  {
+    id: 'rec-jam',
+    name: 'Jamal Al Badi',
+    email: 'jamal@example.com',
+    role: 'recruiter',
+    slackUserId: '',
+    zoomLink: 'https://zoom.us/j/example-recruiter',
+    signature: 'Jamal Al Badi\nRecruitment Team',
+  },
+  {
+    id: 'hm-ana',
+    name: 'Ana Cruz',
+    email: 'ana.cruz@example.com',
+    role: 'hiring_manager',
+    slackUserId: '',
+    positionTitle: 'Operations Manager',
+  },
+  {
+    id: 'hm-lee',
+    name: 'Lee Morgan',
+    email: 'lee.morgan@example.com',
+    role: 'hiring_manager',
+    slackUserId: '',
+    positionTitle: 'Client Services Lead',
+  },
+];
