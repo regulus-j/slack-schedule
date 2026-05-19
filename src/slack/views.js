@@ -27,24 +27,39 @@ export const STATUSES = [
   'Needs Attention',
 ];
 
+const STATUS_EMOJI = {
+  'Draft': '📄',
+  'Waiting for HM': '💬',
+  'Checking Calendar': '🔍',
+  'Waiting for Candidate': '👤',
+  'Ready to Schedule': '✅',
+  'Scheduled': '📅',
+  'Reschedule Requested': '🔄',
+  'Needs Attention': '⚠️',
+};
+
+function statusEmoji(status) {
+  return STATUS_EMOJI[status] || '';
+}
+
 export function homeView({ myCases, teamCases, googleConnected = false }) {
   return {
     type: 'home',
     blocks: [
-      header('Interview Scheduling'),
+      header('📋 Interview Scheduling'),
       section('Start, review, and approve interview scheduling cases without retyping candidate details.'),
-      section(googleConnected ? 'Google Calendar and Gmail are connected for this Slack user.' : 'Google is not connected yet. Click Connect Google before final scheduling.') ,
+      section(googleConnected ? '✅ Google Calendar and Gmail are connected for this Slack user.' : '⚠️ Google is not connected yet. Click Connect Google before final scheduling.') ,
       actions([
-        button('Start scheduling', 'open_schedule_intake', 'primary'),
-        button('Post channel button', 'post_schedule_launcher'),
-        button('Connect Google', 'open_google_oauth'),
+        button('🚀 Start scheduling', 'open_schedule_intake', 'primary'),
+        button('📢 Post channel button', 'post_schedule_launcher'),
+        button('🔗 Connect Google', 'open_google_oauth'),
       ]),
       divider(),
-      header('My Cases'),
-      ...caseListBlocks(myCases, 'No active cases assigned to you.'),
+      header('👤 My Cases'),
+      ...caseListBlocks(myCases, '📋 No active cases assigned to you.'),
       divider(),
-      header('Team Queue'),
-      ...caseListBlocks(teamCases, 'No team cases need attention.'),
+      header('👥 Team Queue'),
+      ...caseListBlocks(teamCases, '👥 No team cases need attention.'),
     ],
   };
 }
@@ -61,8 +76,8 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   return {
     type: 'modal',
     callback_id: 'schedule_intake_submit',
-    title: plain('Schedule Interview'),
-    submit: plain('Create'),
+    title: plain('📅 Schedule Interview'),
+    submit: plain('➕ Create'),
     close: plain('Cancel'),
     blocks: [
       input('Applicant name', 'applicant_block', {
@@ -156,8 +171,8 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         placeholder: plain('Search by country or timezone'),
         ...(selectedTimeZoneOption ? { initial_option: selectedTimeZoneOption } : {}),
       }),
-      section(`Interview timezone drives calendar invites. Times are shown in PH (${PH_TIME_ZONE}) with interview timezone equivalents.`),
-      section('Optional target interview window for calendar planning.'),
+      section(`🕐 Interview timezone drives calendar invites. Times are shown in PH (${PH_TIME_ZONE}) with interview timezone equivalents.`),
+      section('📅 Optional target interview window for calendar planning.'),
       input('Target start date', 'window_start_block', {
         type: 'datepicker',
         action_id: 'window_start',
@@ -174,15 +189,16 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   };
 }
 
-export function availabilityModal(caseRecord) {
+export function availabilityModal(caseRecord, recentAudits = []) {
   return {
     type: 'modal',
     callback_id: 'availability_submit',
     private_metadata: caseRecord.id,
-    title: plain('HM Availability'),
-    submit: plain('Save'),
+    title: plain('🕐 HM Availability'),
+    submit: plain('✅ Save'),
     close: plain('Cancel'),
     blocks: [
+      ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
       input('Availability', 'availability_block', {
         type: 'plain_text_input',
@@ -201,19 +217,21 @@ export function candidateMessageModal({
   smsDraft,
   callbackId = 'candidate_message_submit',
   submitText = 'Approve',
+  recentAudits = [],
 }) {
   const plainBody = renderedTemplate.plainBody || renderedTemplate.body
   return {
     type: 'modal',
     callback_id: callbackId,
     private_metadata: caseRecord.id,
-    title: plain('Candidate Message'),
-    submit: plain(submitText),
+    title: plain('✉️ Candidate Message'),
+    submit: plain(submitText === 'Approve' ? '✅ Approve' : submitText === 'Send' ? '🔔 Send' : submitText),
     close: plain('Cancel'),
     blocks: [
+      ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
-      section('Editing is plain text. Formatting is applied automatically.'),
-      section('*Email will be sent* to the candidate when you approve.'),
+      section('✏️ Editing is plain text. Formatting is applied automatically.'),
+      section('✉️ *Email will be sent* to the candidate when you approve.'),
       input('Email subject', 'email_subject_block', {
         type: 'plain_text_input',
         action_id: 'email_subject',
@@ -225,7 +243,7 @@ export function candidateMessageModal({
         multiline: true,
         initial_value: plainBody,
       }),
-      section('*SMS is a pre-prepared template only.* It is not sent automatically. Copy and send it manually.'),
+      section('📱 *SMS is a pre-prepared template only.* It is not sent automatically. Copy and send it manually.'),
       input(
         'SMS copy',
         'sms_block',
@@ -241,7 +259,7 @@ export function candidateMessageModal({
   };
 }
 
-export function finalizeModal(caseRecord) {
+export function finalizeModal(caseRecord, recentAudits = []) {
   const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
   const referenceDate = resolveReferenceDate(caseRecord)
   const timeOptions = buildPhTimeOptions({ referenceDate, interviewTimeZone })
@@ -250,12 +268,13 @@ export function finalizeModal(caseRecord) {
     type: 'modal',
     callback_id: 'finalize_schedule_submit',
     private_metadata: caseRecord.id,
-    title: plain('Finalize Schedule'),
-    submit: plain('Schedule'),
+    title: plain('📅 Finalize Schedule'),
+    submit: plain('📅 Schedule'),
     close: plain('Cancel'),
     blocks: [
+      ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
-      section(`Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
+      section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
       input('Interview date', 'date_block', {
         type: 'datepicker',
         action_id: 'date',
@@ -293,7 +312,7 @@ export function finalizeModal(caseRecord) {
   };
 }
 
-export function schedulingModal(caseRecord, schedulingResult) {
+export function schedulingModal(caseRecord, schedulingResult, recentAudits = []) {
   const phase = schedulingResult?.phase || 1
   const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
   const stageRules = schedulingResult?.stageRules || resolveStageRules(stageKey, caseRecord.stageOverrides)
@@ -307,10 +326,10 @@ export function schedulingModal(caseRecord, schedulingResult) {
   })
 
   const blocks = [
-    header('Schedule Interview'),
+    header('📅 Schedule Interview'),
     section(`*${caseTitle(caseRecord)}*`),
-    divider(),
-    header('Interview Stage'),
+    ...caseProgressHeader(caseRecord, recentAudits),
+    header('🎯 Interview Stage'),
     input('Stage', 'stage_block', {
       type: 'static_select',
       action_id: 'stage_select',
@@ -319,13 +338,13 @@ export function schedulingModal(caseRecord, schedulingResult) {
       initial_option: stageSelectOption(stageKey)
     }),
     divider(),
-    header('Attendees'),
+    header('👥 Attendees'),
     attendeeCheckboxes(attendees),
     actions([
-      button('Add External Attendee', 'scheduling_add_external', undefined, caseRecord.id)
+      button('➕ Add External Attendee', 'scheduling_add_external', undefined, caseRecord.id)
     ]),
     divider(),
-    header('Time Window'),
+    header('🕐 Time Window'),
     input('From', 'schedule_window_start_block', {
       type: 'datepicker',
       action_id: 'schedule_window_start',
@@ -345,16 +364,16 @@ export function schedulingModal(caseRecord, schedulingResult) {
       options: durationSelectOptions(stageRules.typicalDurationMinutes),
       initial_option: durationSelectOption(stageRules.typicalDurationMinutes)
     }),
-    section(`Interview timezone: ${caseRecord.interviewTimezone || SYDNEY_TIME_ZONE}. Times shown in PH (${PH_TIME_ZONE}).`)
+    section(`🕐 Interview timezone: ${caseRecord.interviewTimezone || SYDNEY_TIME_ZONE}. Times shown in PH (${PH_TIME_ZONE}).`)
   ]
 
   return {
     type: 'modal',
     callback_id: 'scheduling_phase_one',
     private_metadata: metadata,
-    title: plain('Schedule Interview'),
+    title: plain('📅 Schedule Interview'),
     close: plain('Cancel'),
-    submit: plain('Check Availability'),
+    submit: plain('🔍 Check Availability'),
     blocks
   }
 }
@@ -363,16 +382,16 @@ export function checkingAvailabilityModal(caseRecord) {
   return {
     type: 'modal',
     callback_id: 'scheduling_checking',
-    title: plain('Checking Availability'),
+    title: plain('🔍 Checking Availability'),
     close: plain('Cancel'),
     blocks: [
       section(`*${caseTitle(caseRecord)}*`),
-      section('Checking calendar availability. This may take a moment.'),
+      section('🔍 Checking calendar availability. This may take a moment.'),
     ],
   }
 }
 
-export function schedulingPhaseTwo(caseRecord, schedulingResult) {
+export function schedulingPhaseTwo(caseRecord, schedulingResult, recentAudits = []) {
   const timeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
   const referenceDate = resolveReferenceDate(caseRecord)
   const timeOptions = buildPhTimeOptions({ referenceDate, interviewTimeZone: timeZone })
@@ -394,38 +413,38 @@ export function schedulingPhaseTwo(caseRecord, schedulingResult) {
   })
 
   const blocks = [
-    header('Schedule Interview'),
+    header('📅 Schedule Interview'),
     section(`*${caseTitle(caseRecord)}*`),
-    section(`Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${timeZone}.`),
-    divider(),
-    section(`*Attendees (${includedCount} included)*`),
+    ...caseProgressHeader(caseRecord, recentAudits),
+    section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${timeZone}.`),
+    section(`👥 *Attendees (${includedCount} included)*`),
     ...includedAttendeeList(attendees),
     actions([
-      button('Edit Attendees', 'scheduling_edit_attendees', undefined, caseRecord.id)
+      button('✏️ Edit Attendees', 'scheduling_edit_attendees', undefined, caseRecord.id)
     ])
   ]
 
   if (mocked) {
-    blocks.push(section('\u26A0\uFE0F Calendar not connected \u2014 all slots during PH business hours shown'))
+    blocks.push(section('\u26A0\uFE0F *Calendar not connected* \u2014 all slots during PH business hours shown'))
   }
 
   if (available.length > 0) {
     const totalCount = allSlots.length || available.length
     blocks.push(divider())
-    blocks.push(section(`*Available Slots (${available.length} of ${totalCount} conflict-free)*`))
+    blocks.push(section(`✅ *Available Slots (${available.length} of ${totalCount} conflict-free)*`))
     blocks.push(...slotOptionBlocks(available, timeZone))
   } else if (warnings.length > 0) {
-    blocks.push(section('No conflict-free slots found. Showing best available:'))
+    blocks.push(section('⚠️ No conflict-free slots found. Showing best available:'))
     const topSlots = (allSlots || []).slice(0, 20)
     if (topSlots.length > 0) {
       blocks.push(...slotOptionBlocks(topSlots, timeZone))
     }
   } else {
-    blocks.push(section('No slots found. Please go back and expand the date range.'))
+    blocks.push(section('❌ No slots found. Please go back and expand the date range.'))
   }
 
   blocks.push(divider())
-  blocks.push(header('OR: Manual Entry'))
+  blocks.push(header('✏️ OR: Manual Entry'))
   blocks.push(input('Date', 'schedule_manual_date_block', {
     type: 'datepicker',
     action_id: 'schedule_manual_date',
@@ -439,7 +458,7 @@ export function schedulingPhaseTwo(caseRecord, schedulingResult) {
   }, true))
 
   blocks.push(divider())
-  blocks.push(header('Meeting Details'))
+  blocks.push(header('📋 Meeting Details'))
   blocks.push(input('Zoom Link', 'schedule_zoom_block', {
     type: 'plain_text_input',
     action_id: 'schedule_zoom_link',
@@ -462,21 +481,21 @@ export function schedulingPhaseTwo(caseRecord, schedulingResult) {
     type: 'modal',
     callback_id: 'scheduling_phase_two',
     private_metadata: metadata,
-    title: plain('Schedule Interview'),
+    title: plain('📅 Schedule Interview'),
     close: plain('Cancel'),
-    submit: plain('Confirm & Schedule'),
+    submit: plain('✅ Confirm & Schedule'),
     blocks
   }
 }
 
 export function attendeeCheckboxes(attendees) {
   if (!attendees || attendees.length === 0) {
-    return section('No attendees configured.')
+    return section('⚠️ No attendees configured.')
   }
 
   const options = attendees.map((a) => {
     const roleLabel = a.role.replace(/_/g, ' ')
-    const reqLabel = a.required ? ' — required' : ' — optional'
+    const reqLabel = a.required ? ' ⭐ required' : ' — optional'
     const emailSuffix = a.email ? ` — ${a.email}` : ''
 
     return {
@@ -495,7 +514,7 @@ export function attendeeCheckboxes(attendees) {
     type: 'input',
     block_id: 'attendee_toggle_block',
     optional: false,
-    label: plain('Include in scheduling'),
+    label: plain('👥 Include in scheduling'),
     element: {
       type: 'checkboxes',
       action_id: 'attendee_toggle',
@@ -506,20 +525,20 @@ export function attendeeCheckboxes(attendees) {
 }
 
 export function slotOptionBlocks(slots, timeZone) {
-  if (!slots || slots.length === 0) return [section('No slots available.')]
+  if (!slots || slots.length === 0) return [section('❌ No slots available.')]
 
   const { optionGroups, initialOption, truncated } = buildSlotOptionGroups(slots, timeZone)
   const blocks = []
 
   if (truncated) {
-    blocks.push(section('Showing the first 100 available times. Narrow the date range to see more.'))
+    blocks.push(section('ℹ️ Showing the first 100 available times. Narrow the date range to see more.'))
   }
 
   blocks.push({
     type: 'input',
     block_id: 'slot_select_block',
     optional: true,
-    label: plain('Select a time slot'),
+    label: plain('📅 Select a time slot'),
     element: {
       type: 'static_select',
       action_id: 'slot_select',
@@ -532,7 +551,7 @@ export function slotOptionBlocks(slots, timeZone) {
 }
 
 export function buildConflictBlock(conflict) {
-  if (!conflict) return section('Unknown conflict')
+  if (!conflict) return section('❓ Unknown conflict')
 
   const events = conflict.overlappingEvents || []
   const msgs = events.map((e) => {
@@ -545,20 +564,21 @@ export function buildConflictBlock(conflict) {
   return {
     type: 'context',
     elements: [
-      mrkdwn(`\u26A0\uFE0F Conflict detected${detail}`)
+      mrkdwn(`\u26A0\uFE0F *Conflict detected*${detail}`)
     ]
   }
 }
 
-export function externalAttendeeModal(caseRecord) {
+export function externalAttendeeModal(caseRecord, recentAudits = []) {
   return {
     type: 'modal',
     callback_id: 'external_attendee_submit',
     private_metadata: caseRecord.id,
-    title: plain('Add External Attendee'),
-    submit: plain('Add'),
+    title: plain('➕ Add External Attendee'),
+    submit: plain('➕ Add'),
     close: plain('Cancel'),
     blocks: [
+      ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
       input('Name', 'ext_name_block', {
         type: 'plain_text_input',
@@ -584,7 +604,7 @@ export function externalAttendeeModal(caseRecord) {
   }
 }
 
-export function rescheduleModal(caseRecord) {
+export function rescheduleModal(caseRecord, recentAudits = []) {
   const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
   const referenceDate = resolveReferenceDate(caseRecord)
   const timeOptions = buildPhTimeOptions({ referenceDate, interviewTimeZone })
@@ -593,12 +613,13 @@ export function rescheduleModal(caseRecord) {
     type: 'modal',
     callback_id: 'reschedule_submit',
     private_metadata: caseRecord.id,
-    title: plain('Reschedule Interview'),
-    submit: plain('Review'),
+    title: plain('🔄 Reschedule Interview'),
+    submit: plain('✏️ Review'),
     close: plain('Cancel'),
     blocks: [
+      ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
-      section(`Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
+      section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
       input('Reason for reschedule', 'reschedule_reason_block', {
         type: 'plain_text_input',
         action_id: 'reschedule_reason',
@@ -658,19 +679,20 @@ export function rescheduleModal(caseRecord) {
   };
 }
 
-export function rescheduleApprovalModal({ caseRecord, email }) {
+export function rescheduleApprovalModal({ caseRecord, email, recentAudits = [] }) {
   const plainBody = email.plainBody || email.body || ''
   return {
     type: 'modal',
     callback_id: 'reschedule_approval_submit',
     private_metadata: caseRecord.id,
-    title: plain('Approve Reschedule'),
-    submit: plain('Approve'),
+    title: plain('✅ Approve Reschedule'),
+    submit: plain('✅ Approve'),
     close: plain('Cancel'),
     blocks: [
+      ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
-      section('Review this message before updating Calendar and sending the candidate email.'),
-      section('Editing is plain text. Formatting is applied automatically when sending.'),
+      section('✏️ Review this message before updating Calendar and sending the candidate email.'),
+      section('📝 Editing is plain text. Formatting is applied automatically when sending.'),
       input('Email subject', 'email_subject_block', {
         type: 'plain_text_input',
         action_id: 'email_subject',
@@ -688,7 +710,7 @@ export function rescheduleApprovalModal({ caseRecord, email }) {
 
 export function caseMessageBlocks(caseRecord) {
   return [
-    header('Scheduling Case'),
+    header('📋 Scheduling Case'),
     section(caseSummary(caseRecord)),
     section(nextStepText(caseRecord)),
     actions(actionButtonsForCase(caseRecord)),
@@ -709,10 +731,10 @@ function caseSummary(caseRecord) {
   const hiringManager = caseRecord.hiringManager;
   return [
     `*${caseTitle(caseRecord)}*`,
-    `Status: *${caseRecord.status}*`,
-    `Applicant: ${applicant ? applicantLabel(applicant) : 'Missing applicant'}`,
-    `Recruiter: ${recruiter ? mentionPerson(recruiter) : 'Missing recruiter'}`,
-    `Hiring Manager: ${hiringManager ? mentionPerson(hiringManager) : 'Missing hiring manager'}`,
+    `${statusEmoji(caseRecord.status)} Status: *${caseRecord.status}*`,
+    `👤 Applicant: ${applicant ? applicantLabel(applicant) : 'Missing applicant'}`,
+    `👥 Recruiter: ${recruiter ? mentionPerson(recruiter) : 'Missing recruiter'}`,
+    `👤 Hiring Manager: ${hiringManager ? mentionPerson(hiringManager) : 'Missing hiring manager'}`,
     ...scheduleSummary(caseRecord),
     ...resumeSummary(caseRecord),
   ].join('\n');
@@ -720,32 +742,32 @@ function caseSummary(caseRecord) {
 
 export function actionButtonsForCase(caseRecord, compact = false) {
   const actionMap = {
-    approve_hm_draft: button(compact ? 'HM review' : 'Send HM review request', 'approve_hm_draft', 'primary', caseRecord.id),
+    approve_hm_draft: button(compact ? '✏️ HM review' : '✏️ Send HM review request', 'approve_hm_draft', 'primary', caseRecord.id),
     open_availability_modal: button(
-      compact ? 'Availability' : 'Record HM availability',
+      compact ? '🕐 Availability' : '🕐 Record HM availability',
       'open_availability_modal',
       undefined,
       caseRecord.id,
     ),
     open_candidate_message_modal: button(
-      compact ? 'Candidate' : 'Prepare candidate message',
+      compact ? '✉️ Candidate' : '✉️ Prepare candidate message',
       'open_candidate_message_modal',
       undefined,
       caseRecord.id,
     ),
-    send_reminder: button(compact ? 'Reminder' : 'Send reminder', 'open_reminder_message_modal', undefined, caseRecord.id),
-    view_resume: button(compact ? 'Resume' : 'View resume', 'view_resume', undefined, caseRecord.id),
-    open_finalize_modal: button(compact ? 'Create invite' : 'Create calendar invite', 'open_finalize_modal', 'primary', caseRecord.id),
-    scheduling_open: button(compact ? 'Schedule' : 'Schedule Interview', 'scheduling_open', 'primary', caseRecord.id),
+    send_reminder: button(compact ? '🔔 Reminder' : '🔔 Send reminder', 'open_reminder_message_modal', undefined, caseRecord.id),
+    view_resume: button(compact ? '📄 Resume' : '📄 View resume', 'view_resume', undefined, caseRecord.id),
+    open_finalize_modal: button(compact ? '📅 Create invite' : '📅 Create calendar invite', 'open_finalize_modal', 'primary', caseRecord.id),
+    scheduling_open: button(compact ? '📅 Schedule' : '📅 Schedule Interview', 'scheduling_open', 'primary', caseRecord.id),
     open_reschedule_modal: button(
-      compact ? 'Reschedule' : 'Reschedule interview',
+      compact ? '🔄 Reschedule' : '🔄 Reschedule interview',
       'open_reschedule_modal',
       'primary',
       caseRecord.id,
     ),
-    cancel_interview: button(compact ? 'Cancel' : 'Cancel interview', 'cancel_interview', 'danger', caseRecord.id),
+    cancel_interview: button(compact ? '❌ Cancel' : '❌ Cancel interview', 'cancel_interview', 'danger', caseRecord.id),
     view_calendar_details: button(
-      compact ? 'Calendar' : 'View calendar details',
+      compact ? '📅 Calendar' : '📅 View calendar details',
       'view_calendar_details',
       undefined,
       caseRecord.id,
@@ -757,46 +779,46 @@ export function actionButtonsForCase(caseRecord, compact = false) {
 
 function nextStepText(caseRecord) {
   if (caseRecord.status === 'Reschedule Requested') {
-    return '*Next:* approve the updated candidate message to update Calendar and notify the candidate.';
+    return '🎯 *Next:* approve the updated candidate message to update Calendar and notify the candidate.';
   }
   if (isScheduledCase(caseRecord)) {
-    return '*Next:* send a reminder, view the calendar details, or reschedule if the interview time changes.';
+    return '🎯 *Next:* send a reminder, view the calendar details, or reschedule if the interview time changes.';
   }
-  return '*Next:* continue the scheduling steps. Resume handling remains manual unless a resume upload flow is added.';
+  return '🎯 *Next:* continue the scheduling steps. Resume handling remains manual unless a resume upload flow is added.';
 }
 
 function scheduleSummary(caseRecord) {
   const normalized = normalizeCaseSchedule(caseRecord);
   const lines = [];
   if (normalized.currentSchedule?.date || normalized.currentSchedule?.time) {
-    lines.push(`Schedule: ${normalized.currentSchedule.date || 'date TBD'} ${normalized.currentSchedule.time || ''}`.trim());
+    lines.push(`📅 Schedule: ${normalized.currentSchedule.date || 'date TBD'} ${normalized.currentSchedule.time || ''}`.trim());
   }
   if (caseRecord.calendarEventId) {
-    lines.push(`Calendar event: ${caseRecord.calendarEventId}`);
+    lines.push(`📅 Calendar event: ${caseRecord.calendarEventId}`);
   }
   if (caseRecord.interviewWindowStartDate || caseRecord.interviewWindowEndDate) {
     lines.push(
-      `Target window: ${caseRecord.interviewWindowStartDate || 'TBD'} to ${caseRecord.interviewWindowEndDate || 'TBD'}`,
+      `🎯 Target window: ${caseRecord.interviewWindowStartDate || 'TBD'} to ${caseRecord.interviewWindowEndDate || 'TBD'}`,
     );
   }
   if (caseRecord.interviewTimezone) {
-    lines.push(`Timezone: ${caseRecord.interviewTimezone}`);
+    lines.push(`🕐 Timezone: ${caseRecord.interviewTimezone}`);
   }
   if (caseRecord.reminderStatus) {
-    lines.push(`Reminder: ${caseRecord.reminderStatus}`);
+    lines.push(`🔔 Reminder: ${caseRecord.reminderStatus}`);
   }
   if (caseRecord.rescheduleReason) {
-    lines.push(`Last reschedule reason: ${caseRecord.rescheduleReason}`);
+    lines.push(`🔄 Last reschedule reason: ${caseRecord.rescheduleReason}`);
   }
   return lines;
 }
 
 function resumeSummary(caseRecord) {
   if (!caseRecord.resumeLink) {
-    return ['Resume: not linked yet'];
+    return ['📄 Resume: not linked yet'];
   }
 
-  return [`Resume: linked`, `View resume: ${caseRecord.resumeLink}`];
+  return ['📄 Resume: linked', `🔗 View resume: ${caseRecord.resumeLink}`];
 }
 
 function caseTitle(caseRecord) {
@@ -1010,7 +1032,7 @@ function includedAttendeeList(attendees) {
     .filter((a) => a.included)
     .map((a) => {
       const roleLabel = a.role.replace(/_/g, ' ')
-      return section(`\u2713 ${a.name || a.email} (${roleLabel})`)
+      return section(`\u2705 ${a.name || a.email} (${roleLabel})`)
     })
 }
 
@@ -1019,5 +1041,61 @@ function conflictSummary(slot) {
   const entries = Object.entries(slot.conflicts).filter(([, c]) => c.hasConflict)
   if (entries.length === 0) return ''
   const count = entries.length
-  return `${count} conflict${count > 1 ? 's' : ''}`
+  return `⚠️ ${count} conflict${count > 1 ? 's' : ''}`
+}
+
+const ACTION_LABELS = {
+  case_created: 'Case created',
+  hm_message_approved: 'HM review sent',
+  hm_availability_saved: 'Availability saved',
+  candidate_email_approved: 'Candidate email approved',
+  calendar_event_approved: 'Calendar event created',
+  calendar_event_updated: 'Calendar updated',
+  reminder_sent: 'Reminder sent',
+  reminder_rescheduled: 'Reminder re-sent',
+  reschedule_requested: 'Reschedule requested',
+  reschedule_candidate_message_approved: 'Reschedule approved',
+  reschedule_cancelled: 'Interview cancelled',
+  resume_viewed: 'Resume viewed',
+}
+
+function formatActionLabel(action) {
+  return ACTION_LABELS[action] || action.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function formatTimeAgo(isoString) {
+  const seconds = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return new Date(isoString).toLocaleDateString()
+}
+
+function caseProgressHeader(caseRecord, recentAudits = []) {
+  const statusIndex = STATUSES.indexOf(caseRecord.status)
+  const emoji = statusEmoji(caseRecord.status)
+  const stepLabel = statusIndex >= 0 ? `(step ${statusIndex + 1} of ${STATUSES.length})` : ''
+  const statusText = stepLabel
+    ? `${emoji} *Status: ${caseRecord.status}*  ${stepLabel}`
+    : `${emoji} *Status: ${caseRecord.status}*`
+
+  const blocks = [
+    { type: 'section', text: { type: 'mrkdwn', text: statusText } },
+  ]
+
+  if (recentAudits.length > 0) {
+    const last = recentAudits[0]
+    const actorRef = last.actorSlackUserId ? `<@${last.actorSlackUserId}>` : 'system'
+    const elements = [
+      { type: 'mrkdwn', text: `📝 *Last:* ${formatActionLabel(last.action)} by ${actorRef} • ${formatTimeAgo(last.at)}` },
+    ]
+    blocks.push({ type: 'context', elements })
+  }
+
+  blocks.push({ type: 'divider' })
+  return blocks
 }
