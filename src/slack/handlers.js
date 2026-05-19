@@ -1,0 +1,1324 @@
+import crypto from 'node:crypto'
+import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../data/sample-data.js'
+import { searchTimezones } from '../data/timezones.js'
+import {
+  applicantOptions,
+  applicantPickerLabel,
+  findApplicant,
+  findPerson,
+  personOptions,
+  personPickerLabel,
+  toSlackOption,
+} from '../data/search.js'
+import { loadTemplates, plainTextToHtml, renderTemplate, templateRequiresResume } from '../templates.js'
+import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
+import {
+  PH_TIME_ZONE,
+  SYDNEY_TIME_ZONE,
+  buildCalendarEventDraft,
+  convertLocalDateTimeToZone,
+  formatDateForInput,
+  formatTimeForInput,
+  isTimeWithinBusinessHours,
+  isValidDateRange,
+} from '../time.js'
+import {
+  applyCancelledInterview,
+  applyCompletedReschedule,
+  applyRescheduleRequest,
+  applyScheduledEvent,
+  buildScheduleSnapshot,
+  canFinalizeSchedule,
+  canStartReschedule,
+} from '../workflow/reschedule.js'
+import { buildReminderEmail, buildRescheduleEmail } from '../workflow/messages.js'
+import { resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
+import { normalizeAttendees, refreshAttendees } from '../workflow/attendees.js'
+import { runSchedulingPipeline } from '../workflow/scheduler.js'
+import {
+  availabilityModal,
+  checkingAvailabilityModal,
+  candidateMessageModal,
+  caseMessageBlocks,
+  externalAttendeeModal,
+  finalizeModal,
+  homeView,
+  intakeModal,
+  rescheduleApprovalModal,
+  rescheduleModal,
+  schedulingModal,
+  schedulingPhaseTwo,
+} from './views.js'
+
+export function registerSlackHandlers(app, context) {
+  const { store, logger, config } = context;
+  const schedulingTimeZones = resolveSchedulingTimeZones(config)
+  const defaultTimeZone = schedulingTimeZones[0] || SYDNEY_TIME_ZONE
+
+  app.event('app_home_opened', async ({ event, client }) => {
+    await publishHome({ client, userId: event.user, store, logger });
+  });
+
+  app.command('/schedule-interview', async ({ command, ack, client }) => {
+    await ack();
+    if (command.text?.trim().toLowerCase() === 'button') {
+      await client.chat.postMessage({
+        channel: command.channel_id,
+        text: 'Start an interview scheduling case.',
+        blocks: [
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: '*Interview scheduling assistant*' },
+            accessory: {
+              type: 'button',
+              text: { type: 'plain_text', text: 'Start scheduling' },
+              action_id: 'open_schedule_intake',
+              style: 'primary',
+            },
+          },
+        ],
+      });
+      return;
+    }
+    await openIntakeModal({
+      client,
+      triggerId: command.trigger_id,
+      logger,
+      privateMetadata: command.channel_id,
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
+  app.action('post_schedule_launcher', async ({ ack, body, client }) => {
+    await ack();
+    await client.chat.postMessage({
+      channel: body.channel?.id || body.user.id,
+      text: 'Start an interview scheduling case.',
+      blocks: [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: '*Interview scheduling assistant*' },
+          accessory: {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Start scheduling' },
+            action_id: 'open_schedule_intake',
+            style: 'primary',
+          },
+        },
+      ],
+    });
+  });
+
+  app.action('open_schedule_intake', async ({ ack, body, client }) => {
+    await ack();
+    await openIntakeModal({
+      client,
+      triggerId: body.trigger_id,
+      logger,
+      privateMetadata: body.channel?.id || body.user.id,
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
+  app.action('applicant_select', async ({ ack, body, client }) => {
+    await ack();
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadTemplates(),
+      selectedKey: 'applicant',
+      selectedId: selectedOptionValue(body),
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
+  app.action('recruiter_select', async ({ ack, body, client }) => {
+    await ack();
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadTemplates(),
+      selectedKey: 'recruiter',
+      selectedId: selectedOptionValue(body),
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
+  app.action('hm_select', async ({ ack, body, client }) => {
+    await ack();
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadTemplates(),
+      selectedKey: 'hiringManager',
+      selectedId: selectedOptionValue(body),
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
+  app.action('open_google_oauth', async ({ ack, body, client }) => {
+    await ack();
+    if (!config.google.clientId || !config.google.clientSecret || !config.google.redirectUri) {
+      await client.chat.postEphemeral({
+        channel: body.channel?.id || body.user.id,
+        user: body.user.id,
+        text: 'Google OAuth is not configured yet. Set the Google client credentials before connecting a recruiter account.',
+      });
+      return;
+    }
+
+    const oauthUrl = buildGoogleOAuthUrl(config, JSON.stringify({ recruiterId: body.user.id, source: 'slack_home' }));
+    await client.chat.postEphemeral({
+      channel: body.channel?.id || body.user.id,
+      user: body.user.id,
+      text: `Connect Google Calendar and Gmail here: ${oauthUrl}`,
+    });
+  });
+
+  app.options('applicant_select', async ({ options, ack }) => {
+    await ack({ options: applicantOptions(options.value, SAMPLE_APPLICANTS) });
+  });
+
+  app.options('recruiter_select', async ({ options, ack }) => {
+    const recruiters = SAMPLE_PEOPLE.filter((person) => person.role === 'recruiter');
+    await ack({ options: personOptions(options.value, recruiters) });
+  });
+
+  app.options('hm_select', async ({ options, ack }) => {
+    const managers = SAMPLE_PEOPLE.filter((person) => person.role === 'hiring_manager');
+    await ack({ options: personOptions(options.value, managers) });
+  });
+
+  app.options('guest_select', async ({ options, ack }) => {
+    await ack({ options: personOptions(options.value, SAMPLE_PEOPLE) });
+  });
+
+  app.options('timezone_select', async ({ options, ack }) => {
+    await ack({ options: searchTimezones(options.value) });
+  });
+
+  app.view('schedule_intake_submit', async ({ ack, body, view, client }) => {
+    const values = view.state.values;
+    const templates = await loadTemplates();
+    const intakeDraft = buildIntakeDraft(values, templates);
+    const applicantId = intakeDraft.applicantId;
+    const templateId = intakeDraft.templateId;
+    const recruiterId = intakeDraft.recruiterId;
+    const hiringManagerId = intakeDraft.hiringManagerId;
+    const notes = intakeDraft.notes;
+    const resumeLink = intakeDraft.resumeLink;
+    const interviewWindowStartDate = intakeDraft.interviewWindowStartDate;
+    const interviewWindowEndDate = intakeDraft.interviewWindowEndDate;
+    const interviewTimezone = intakeDraft.interviewTimezone || defaultTimeZone;
+    const requiresResume = templateRequiresResume(templateId);
+    const errors = {};
+
+    if (intakeDraft.applicantEmail && !isValidEmail(intakeDraft.applicantEmail)) {
+      errors.applicant_email_block = 'Enter a valid applicant email.';
+    }
+    if (intakeDraft.recruiterEmail && !isValidEmail(intakeDraft.recruiterEmail)) {
+      errors.recruiter_email_block = 'Enter a valid recruiter email.';
+    }
+    if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
+      errors.hm_email_block = 'Enter a valid hiring manager email.';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      await ack({ response_action: 'errors', errors });
+      return;
+    }
+
+    if ((interviewWindowStartDate && !interviewWindowEndDate) || (!interviewWindowStartDate && interviewWindowEndDate)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          window_start_block: 'Select both target dates or leave both blank.',
+          window_end_block: 'Select both target dates or leave both blank.',
+        },
+      });
+      return;
+    }
+
+    if (interviewWindowStartDate && interviewWindowEndDate && !isValidDateRange(interviewWindowStartDate, interviewWindowEndDate)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          window_end_block: 'End date must be on or after the start date.',
+        },
+      });
+      return;
+    }
+
+    if (requiresResume && !resumeLink) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          resume_block: 'Paste a resume link for the 2nd/final interview.',
+        },
+      });
+      return;
+    }
+
+    await ack();
+
+    const applicant = intakeDraft.applicant;
+    const recruiter = intakeDraft.recruiter;
+    const hiringManager = intakeDraft.hiringManager;
+    const caseRecord = await store.createCase({
+      ownerSlackUserId: body.user.id,
+      channelId: body.view.private_metadata || body.user.id,
+      applicant,
+      recruiter,
+      hiringManager,
+      templateId,
+      notes,
+      resumeLink,
+      interviewWindowStartDate: interviewWindowStartDate || null,
+      interviewWindowEndDate: interviewWindowEndDate || null,
+      interviewTimezone,
+      autofill: {
+        zoomLink: recruiter?.zoomLink || '',
+        signature: recruiter?.signature || 'Recruitment Team',
+      },
+    });
+
+    await store.addAudit({
+      caseId: caseRecord.id,
+      actorSlackUserId: body.user.id,
+      action: 'case_created',
+      templateId,
+    });
+
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `Created scheduling case ${caseRecord.id}`,
+      blocks: caseMessageBlocks(caseRecord),
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+  });
+
+  app.action('approve_hm_draft', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    const message = buildHiringManagerMessage(caseRecord);
+    const target = caseRecord.hiringManager?.slackUserId || caseRecord.channelId || body.user.id;
+
+    await client.chat.postMessage({
+      channel: target,
+      text: message,
+    });
+
+    const updated = await store.updateCase(caseRecord.id, { status: 'Waiting for HM', hmMessage: message });
+    await store.addAudit({
+      caseId: caseRecord.id,
+      actorSlackUserId: body.user.id,
+      action: 'hm_message_approved',
+      recipient: target,
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `HM draft approved for ${updated.id}. Manual resume reminder included.`,
+      blocks: caseMessageBlocks(updated),
+    });
+  });
+
+  app.action('open_availability_modal', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: availabilityModal(caseRecord),
+    });
+  });
+
+  app.view('availability_submit', async ({ ack, body, view, client }) => {
+    await ack();
+    const caseId = view.private_metadata;
+    const availability = view.state.values.availability_block.availability.value || '';
+    const updated = await store.updateCase(caseId, {
+      status: 'Checking Calendar',
+      hmAvailability: availability,
+    });
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'hm_availability_saved',
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `Availability saved for ${caseId}. Calendar free/busy is ready to wire once Google OAuth is connected.`,
+      blocks: caseMessageBlocks(updated),
+    });
+  });
+
+  app.action('open_candidate_message_modal', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    const templates = await loadTemplates();
+    const template = templates.find((item) => item.id === caseRecord.templateId) || templates[0];
+    const renderedTemplate = renderTemplate(template, buildTemplateVariables(caseRecord));
+    const smsDraft = buildSmsDraft(caseRecord);
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: candidateMessageModal({ caseRecord, renderedTemplate, smsDraft }),
+    });
+  });
+
+  app.action('open_reminder_message_modal', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    if (!caseRecord.calendarEventId) {
+      await client.chat.postEphemeral({
+        channel: body.channel?.id || body.user.id,
+        user: body.user.id,
+        text: 'Create the calendar invite before sending a reminder.',
+      });
+      return;
+    }
+    const templates = await loadTemplates();
+    const template = templates.find((item) => item.id === 'interview-reminder') || templates[0];
+    const renderedTemplate = renderTemplate(template, buildTemplateVariables(caseRecord));
+    const smsDraft = buildSmsDraft(caseRecord);
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: candidateMessageModal({
+        caseRecord,
+        renderedTemplate,
+        smsDraft,
+        callbackId: 'reminder_message_submit',
+        submitText: 'Send',
+      }),
+    });
+  });
+
+  app.action('view_resume', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    if (!caseRecord.resumeLink) {
+      await client.chat.postMessage({
+        channel: body.user.id,
+        text: `No resume link has been added for ${caseRecord.id} yet.`,
+      });
+      return;
+    }
+
+    const details = [`Resume for ${caseRecord.id}:`, `<${caseRecord.resumeLink}|Open resume>`].join('\n');
+
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: details,
+    });
+    await store.addAudit({
+      caseId: caseRecord.id,
+      actorSlackUserId: body.user.id,
+      action: 'resume_viewed',
+      resumeLink: caseRecord.resumeLink,
+    });
+  });
+
+  app.view('candidate_message_submit', async ({ ack, body, view, client }) => {
+    await ack();
+    const caseId = view.private_metadata;
+    const caseRecord = await requireCase(store, caseId);
+    const plainBody = view.state.values.email_body_block.email_body.value || '';
+    const htmlBody = plainTextToHtml(plainBody);
+    const email = {
+      subject: view.state.values.email_subject_block.email_subject.value,
+      body: htmlBody,
+      htmlBody,
+      plainBody,
+      to: caseRecord.applicant?.email,
+      from: caseRecord.recruiter?.email,
+    };
+    const smsCopy = view.state.values.sms_block.sms_copy.value || '';
+    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+    const updated = await store.updateCase(caseId, {
+      status: 'Waiting for Candidate',
+      candidateEmail: email,
+      smsCopy,
+      gmailSendStatus: emailResult.mocked ? 'mocked' : 'sent',
+    });
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'candidate_email_approved',
+      templateId: caseRecord.templateId,
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `Candidate message approved for ${caseId}. SMS remains manual.`,
+      blocks: caseMessageBlocks(updated),
+    });
+  });
+
+  app.view('reminder_message_submit', async ({ ack, body, view, client }) => {
+    await ack();
+    const caseId = view.private_metadata;
+    const caseRecord = await requireCase(store, caseId);
+    if (caseRecord.reminderStatus === 'sent' && caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion) {
+      await client.chat.postMessage({
+        channel: body.user.id,
+        text: `A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
+      });
+      return;
+    }
+    const plainBody = view.state.values.email_body_block.email_body.value || '';
+    const htmlBody = plainTextToHtml(plainBody);
+    const email = {
+      subject: view.state.values.email_subject_block.email_subject.value,
+      body: htmlBody,
+      htmlBody,
+      plainBody,
+      to: caseRecord.applicant?.email,
+      from: caseRecord.recruiter?.email,
+    };
+    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+    const updated = await store.updateCase(caseId, {
+      reminderEmail: email,
+      reminderStatus: emailResult.mocked ? 'mocked' : 'sent',
+      reminderScheduleVersion: caseRecord.scheduleVersion || 1,
+    });
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'reminder_sent',
+      scheduleVersion: updated.reminderScheduleVersion,
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `Reminder sent for ${caseId}.`,
+      blocks: caseMessageBlocks(updated),
+    });
+  });
+
+  app.action('open_finalize_modal', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: finalizeModal(caseRecord),
+    });
+  });
+
+  app.action('scheduling_open', async ({ ack, body, client }) => {
+    await ack();
+    try {
+      const caseId = body.actions?.[0]?.value || body.view?.private_metadata
+      const caseRecord = await requireCase(store, caseId)
+      const stageKey = resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
+      const attendees = normalizeAttendees(caseRecord, stageRules)
+
+      await client.views.open({
+        trigger_id: body.trigger_id,
+        view: schedulingModal(caseRecord, { phase: 1, stageRules, attendees, stageKey })
+      })
+    } catch (error) {
+      logger.error('scheduling_open_error', { error: error.message })
+      await client.chat.postEphemeral({
+        channel: body.channel?.id || body.user?.id || body.user.id,
+        user: body.user.id,
+        text: `Could not open scheduling: ${error.message}`
+      })
+    }
+  })
+
+  app.view('scheduling_phase_one', async ({ ack, body, view, client }) => {
+    try {
+      let metadata = {}
+      try {
+        metadata = JSON.parse(view.private_metadata || '{}')
+      } catch (_) {
+        metadata = { caseId: view.private_metadata }
+      }
+      const caseId = metadata.caseId
+
+      const stageKey = view.state.values.stage_block?.stage_select?.selected_option?.value || metadata.stageKey || '1st-interview'
+      const stageOverrides = metadata.stageOverrides || {}
+
+      const attendeeValues = view.state.values.attendee_toggle_block?.attendee_toggle?.selected_options || []
+      const selectedEmails = attendeeValues.map((o) => o.value)
+
+      const windowStart = view.state.values.schedule_window_start_block?.schedule_window_start?.selected_date || ''
+      const windowEnd = view.state.values.schedule_window_end_block?.schedule_window_end?.selected_date || ''
+      const durationStr = view.state.values.duration_block?.duration_select?.selected_option?.value || '30'
+      const durationMinutes = parseInt(durationStr, 10)
+
+      const externalAttendees = metadata.externalAttendees || []
+
+      const resolvedRules = resolveStageRules(stageKey, {
+        ...stageOverrides,
+        durationMinutes
+      })
+
+      const caseRecord = await requireCase(store, caseId)
+      if (!caseRecord) throw new Error('Case not found')
+
+      await ack({
+        response_action: 'update',
+        view: {
+          ...checkingAvailabilityModal(caseRecord),
+          private_metadata: view.private_metadata,
+        }
+      })
+
+      const attendanceOverrides = {}
+      const allAttendees = normalizeAttendees(caseRecord, resolvedRules)
+      for (const a of allAttendees) {
+        const email = a.email || a.id
+        attendanceOverrides[a.id] = selectedEmails.includes(email)
+        attendanceOverrides[a.email] = selectedEmails.includes(email)
+      }
+
+      const updatedRecord = {
+        ...caseRecord,
+        stageKey,
+        stageOverrides: { ...caseRecord.stageOverrides, ...stageOverrides, durationMinutes },
+        attendanceOverrides: { ...caseRecord.attendanceOverrides, ...attendanceOverrides },
+        externalAttendees,
+        interviewWindowStartDate: windowStart || caseRecord.interviewWindowStartDate,
+        interviewWindowEndDate: windowEnd || caseRecord.interviewWindowEndDate
+      }
+
+      const refreshedAttendees = refreshAttendees(updatedRecord, stageKey, { ...stageOverrides, durationMinutes }, { ...caseRecord.attendanceOverrides, ...attendanceOverrides })
+      updatedRecord.attendees = refreshedAttendees
+
+      await store.updateCase(caseRecord.id, {
+        stageKey,
+        stageOverrides: updatedRecord.stageOverrides,
+        attendanceOverrides: updatedRecord.attendanceOverrides,
+        externalAttendees,
+        interviewWindowStartDate: updatedRecord.interviewWindowStartDate,
+        interviewWindowEndDate: updatedRecord.interviewWindowEndDate,
+        attendees: refreshedAttendees
+      })
+
+      const result = await runSchedulingPipeline({
+        caseRecord: updatedRecord,
+        config,
+        logger,
+        store
+      })
+
+      await client.views.update({
+        view_id: body.view.id,
+        view: schedulingPhaseTwo(caseRecord, {
+          ...result,
+          phase: 2,
+          mocked: result.warnings?.some((w) => w.includes('mocked')) || false
+        })
+      })
+    } catch (error) {
+      if (!body?.view?.id) {
+        logger.error('scheduling_check_availability_error', { error: error.message })
+        return
+      }
+      logger.error('scheduling_check_availability_error', { error: error.message })
+      await client.chat.postEphemeral({
+        channel: body.user.id,
+        user: body.user.id,
+        text: `Could not check availability: ${error.message}`
+      })
+    }
+  })
+
+  app.action('scheduling_edit_attendees', async ({ ack, body, client }) => {
+    await ack()
+    try {
+      const caseId = body.actions?.[0]?.value || body.view?.private_metadata
+      let metadata = {}
+      try { metadata = JSON.parse(body.view?.private_metadata || '{}') } catch (_) { metadata = {} }
+      const resolvedCaseId = caseId || metadata.caseId
+
+      const caseRecord = await requireCase(store, resolvedCaseId)
+      const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
+      const attendees = normalizeAttendees(caseRecord, stageRules)
+
+      await client.views.update({
+        view_id: body.view.id,
+        view: schedulingModal(caseRecord, {
+          phase: 1,
+          stageRules,
+          attendees,
+          stageKey,
+          externalAttendees: caseRecord.externalAttendees || []
+        })
+      })
+    } catch (error) {
+      logger.error('scheduling_edit_attendees_error', { error: error.message })
+    }
+  })
+
+  app.action('scheduling_add_external', async ({ ack, body, client }) => {
+    await ack()
+    try {
+      const caseId = body.actions?.[0]?.value
+      const caseRecord = await requireCase(store, caseId)
+
+      await client.views.push({
+        trigger_id: body.trigger_id,
+        view: externalAttendeeModal(caseRecord)
+      })
+    } catch (error) {
+      logger.error('scheduling_add_external_error', { error: error.message })
+    }
+  })
+
+  app.view('external_attendee_submit', async ({ ack, body, view, client }) => {
+    await ack()
+    try {
+      const caseId = view.private_metadata
+      const caseRecord = await requireCase(store, caseId)
+
+      const name = view.state.values.ext_name_block?.ext_name?.value || ''
+      const email = view.state.values.ext_email_block?.ext_email?.value || ''
+      const role = view.state.values.ext_role_block?.ext_role?.selected_option?.value || 'external'
+
+      if (!email) {
+        return
+      }
+
+      const newExternal = { name, email, role, required: false, id: `ext-${crypto.randomUUID()}` }
+      const externalAttendees = [...(caseRecord.externalAttendees || []), newExternal]
+
+      await store.updateCase(caseId, { externalAttendees })
+
+      const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
+      const updatedRecord = { ...caseRecord, externalAttendees }
+      const attendees = normalizeAttendees(updatedRecord, stageRules)
+
+      await client.views.update({
+        view_id: body.view.id,
+        view: schedulingModal(caseRecord, {
+          phase: 1,
+          stageRules,
+          attendees,
+          stageKey,
+          externalAttendees
+        })
+      })
+    } catch (error) {
+      logger.error('external_attendee_submit_error', { error: error.message })
+    }
+  })
+
+  app.view('scheduling_phase_two', async ({ ack, body, view, client }) => {
+    await ack()
+    try {
+      let metadata = {}
+      try { metadata = JSON.parse(view.private_metadata || '{}') } catch (_) { metadata = {} }
+
+      const caseId = metadata.caseId || body.view?.previous_view_id
+      const caseRecord = await requireCase(store, caseId)
+      if (!caseRecord) throw new Error('Case not found')
+
+      const slotValue = view.state.values.slot_select_block?.slot_select?.selected_option?.value
+      const manualDate = view.state.values.schedule_manual_date_block?.schedule_manual_date?.selected_date
+      const manualTime = view.state.values.schedule_manual_time_block?.schedule_manual_time?.selected_option?.value
+
+      if (!slotValue && !(manualDate && manualTime)) {
+        await client.chat.postEphemeral({
+          channel: body.user.id,
+          user: body.user.id,
+          text: 'Select a time slot or provide a manual date and time.'
+        })
+        return
+      }
+
+      const selectedGuests =
+        view.state.values.schedule_guest_block?.schedule_guest_select?.selected_options?.map((option) => findPerson(option.value)?.email) ||
+        []
+      const externalGuests = parseEmails(view.state.values.schedule_external_guests_block?.schedule_external_guests?.value || '')
+      const zoomLink = view.state.values.schedule_zoom_block?.schedule_zoom_link?.value || caseRecord.autofill?.zoomLink || ''
+
+      const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
+      const allAttendees = normalizeAttendees(caseRecord, stageRules)
+      const includedEmails = allAttendees.filter((a) => a.included).map((a) => a.email).filter(Boolean)
+
+      const allAttendeeEmails = [...new Set([...includedEmails, ...selectedGuests, ...externalGuests])].filter(Boolean)
+
+      const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
+      let startDate, startTime
+      if (slotValue) {
+        startDate = formatDateForInput(slotValue, interviewTimeZone)
+        startTime = formatTimeForInput(slotValue, interviewTimeZone)
+      } else {
+        const converted = convertLocalDateTimeToZone({
+          date: manualDate,
+          time: manualTime,
+          fromTimeZone: PH_TIME_ZONE,
+          toTimeZone: interviewTimeZone,
+        })
+        startDate = converted.date
+        startTime = converted.time
+      }
+
+      const eventResult = await createCalendarEvent({
+        config,
+        logger,
+        caseRecord,
+        store,
+        eventInput: {
+          candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
+          jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
+          startDate,
+          startTime,
+          zoomLink,
+          attendees: allAttendeeEmails,
+          timeZone: interviewTimeZone,
+        },
+      })
+
+      const scheduleInput = buildScheduleSnapshot({
+        date: startDate,
+        time: startTime,
+        zoomLink,
+        attendees: allAttendeeEmails,
+        eventId: eventResult.eventId,
+      })
+
+      const updated = await store.updateCase(caseRecord.id, {
+        ...applyScheduledEvent(caseRecord, eventResult, scheduleInput),
+        selectedSlot: slotValue ? { start: slotValue } : null
+      })
+
+      await store.addAudit({
+        caseId: caseRecord.id,
+        actorSlackUserId: body.user.id,
+        action: 'calendar_event_approved',
+        eventId: eventResult.eventId,
+        via: slotValue ? 'slot_selection' : 'manual_entry'
+      })
+
+      const reminderEmail = buildReminderEmail(updated)
+      const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store })
+      await store.updateCase(caseRecord.id, {
+        reminderEmail,
+        reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
+        reminderScheduleVersion: updated.scheduleVersion || 1,
+      })
+      await store.addAudit({
+        caseId: caseRecord.id,
+        actorSlackUserId: body.user.id,
+        action: 'reminder_sent',
+        scheduleVersion: updated.scheduleVersion || 1,
+      })
+
+      await publishHome({ client, userId: body.user.id, store, logger })
+      await client.chat.postMessage({
+        channel: body.user.id,
+        text: `Scheduled ${caseRecord.id}. Calendar event ID: ${eventResult.eventId}`,
+        blocks: caseMessageBlocks(updated),
+      })
+    } catch (error) {
+      logger.error('scheduling_confirm_error', { error: error.message })
+      await client.chat.postEphemeral({
+        channel: body.user.id,
+        user: body.user.id,
+        text: `Could not schedule interview: ${error.message}`
+      })
+    }
+  })
+
+  app.view('finalize_schedule_submit', async ({ ack, body, view, client }) => {
+    const caseId = view.private_metadata;
+    const caseRecord = await requireCase(store, caseId);
+    if (!canFinalizeSchedule(caseRecord)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          date_block: 'This case is already scheduled. Use Reschedule interview instead.',
+        },
+      });
+      return;
+    }
+
+    const selectedTime = view.state.values.time_block.time.selected_option?.value || '';
+    if (!isTimeWithinBusinessHours(selectedTime)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          time_block: `Select a time between 9:00 AM and 6:00 PM ${PH_TIME_ZONE}.`,
+        },
+      });
+      return;
+    }
+
+    await ack();
+    const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
+    const selectedDate = view.state.values.date_block.date.selected_date
+    const converted = convertLocalDateTimeToZone({
+      date: selectedDate,
+      time: selectedTime,
+      fromTimeZone: PH_TIME_ZONE,
+      toTimeZone: interviewTimeZone,
+    })
+    const selectedGuests =
+      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
+      [];
+    const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
+    const attendees = [
+      caseRecord.applicant?.email,
+      caseRecord.recruiter?.email,
+      caseRecord.hiringManager?.email,
+      ...selectedGuests,
+      ...externalGuests,
+    ].filter(Boolean);
+
+    const eventResult = await createCalendarEvent({
+      config,
+      logger,
+      caseRecord,
+      store,
+      eventInput: {
+        candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
+        jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
+        startDate: converted.date,
+        startTime: converted.time,
+        zoomLink: view.state.values.zoom_block.zoom_link.value,
+        attendees,
+        timeZone: interviewTimeZone,
+      },
+    });
+
+    const scheduleInput = buildScheduleSnapshot({
+      date: converted.date,
+      time: converted.time,
+      zoomLink: view.state.values.zoom_block.zoom_link.value,
+      attendees,
+      eventId: eventResult.eventId,
+    });
+    const updated = await store.updateCase(caseId, applyScheduledEvent(caseRecord, eventResult, scheduleInput));
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'calendar_event_approved',
+      eventId: eventResult.eventId,
+    });
+
+    const reminderEmail = buildReminderEmail(updated);
+    const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store });
+    const reminderUpdated = await store.updateCase(caseId, {
+      reminderEmail,
+      reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
+      reminderScheduleVersion: updated.scheduleVersion || 1,
+    });
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'reminder_sent',
+      scheduleVersion: reminderUpdated.reminderScheduleVersion,
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `Scheduled ${caseId}. Calendar event ID: ${eventResult.eventId}`,
+      blocks: caseMessageBlocks(reminderUpdated),
+    });
+  });
+
+  app.action('open_reschedule_modal', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    if (!canStartReschedule(caseRecord)) {
+      await client.chat.postEphemeral({
+        channel: body.channel?.id || body.user.id,
+        user: body.user.id,
+        text: 'This interview is already being rescheduled or is not scheduled yet.',
+      });
+      return;
+    }
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: rescheduleModal(caseRecord),
+    });
+  });
+
+  app.view('reschedule_submit', async ({ ack, body, view, client }) => {
+    const caseId = view.private_metadata;
+    const caseRecord = await requireCase(store, caseId);
+    if (!canStartReschedule(caseRecord)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          reschedule_reason_block: 'This interview is already being rescheduled.',
+        },
+      });
+      return;
+    }
+
+    const selectedTime = view.state.values.time_block.time.selected_option?.value || '';
+    if (!isTimeWithinBusinessHours(selectedTime)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          time_block: `Select a time between 9:00 AM and 6:00 PM ${PH_TIME_ZONE}.`,
+        },
+      });
+      return;
+    }
+
+    await ack();
+    const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
+    const selectedDate = view.state.values.date_block.date.selected_date
+    const converted = convertLocalDateTimeToZone({
+      date: selectedDate,
+      time: selectedTime,
+      fromTimeZone: PH_TIME_ZONE,
+      toTimeZone: interviewTimeZone,
+    })
+    const selectedGuests =
+      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
+      [];
+    const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
+    const attendees = [
+      caseRecord.applicant?.email,
+      caseRecord.recruiter?.email,
+      caseRecord.hiringManager?.email,
+      ...selectedGuests,
+      ...externalGuests,
+    ].filter(Boolean);
+
+    const request = {
+      actorSlackUserId: body.user.id,
+      reason: view.state.values.reschedule_reason_block.reschedule_reason.value,
+      date: converted.date,
+      time: converted.time,
+      zoomLink: view.state.values.zoom_block.zoom_link.value,
+      note: view.state.values.candidate_note_block.candidate_note.value || '',
+      attendees,
+    };
+    const email = buildRescheduleEmail(caseRecord, request);
+    request.email = email;
+
+    const updated = await store.updateCase(caseId, applyRescheduleRequest(caseRecord, request));
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'reschedule_requested',
+      reason: request.reason,
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: rescheduleApprovalModal({ caseRecord: updated, email }),
+    });
+  });
+
+  app.view('reschedule_approval_submit', async ({ ack, body, view, client }) => {
+    const caseId = view.private_metadata;
+    const caseRecord = await requireCase(store, caseId);
+    const request = caseRecord.pendingReschedule;
+    if (!request || caseRecord.rescheduleStatus !== 'requested') {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          email_subject_block: 'There is no pending reschedule request to approve.',
+        },
+      });
+      return;
+    }
+
+    await ack();
+    const plainBody = view.state.values.email_body_block.email_body.value || '';
+    const htmlBody = plainTextToHtml(plainBody);
+    const email = {
+      ...request.email,
+      subject: view.state.values.email_subject_block.email_subject.value,
+      body: htmlBody,
+      htmlBody,
+      plainBody,
+    };
+    const eventResult = await updateCalendarEvent({
+      config,
+      logger,
+      caseRecord,
+      store,
+      eventInput: {
+        candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
+        jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
+        startDate: request.date,
+        startTime: request.time,
+        zoomLink: request.zoomLink,
+        attendees: request.attendees,
+        timeZone: caseRecord.interviewTimezone || SYDNEY_TIME_ZONE,
+      },
+    });
+    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+    const completedRequest = { ...request, email };
+    const updated = await store.updateCase(
+      caseId,
+      applyCompletedReschedule(caseRecord, eventResult, completedRequest, emailResult),
+    );
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'reschedule_candidate_message_approved',
+    });
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'calendar_event_updated',
+      eventId: eventResult.eventId,
+    });
+    if (caseRecord.reminderStatus && caseRecord.reminderStatus !== 'sent') {
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'reminder_rescheduled',
+        scheduleVersion: updated.scheduleVersion,
+      });
+    }
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `Rescheduled ${caseId}. Calendar event updated: ${eventResult.eventId}`,
+      blocks: caseMessageBlocks(updated),
+    });
+  });
+
+  app.action('cancel_interview', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    const updated = await store.updateCase(caseRecord.id, applyCancelledInterview(caseRecord, body.user.id));
+    await store.addAudit({
+      caseId: caseRecord.id,
+      actorSlackUserId: body.user.id,
+      action: 'reschedule_cancelled',
+    });
+    await publishHome({ client, userId: body.user.id, store, logger });
+    await client.chat.postMessage({
+      channel: body.user.id,
+      text: `Marked ${caseRecord.id} as needing attention. Calendar cancellation is not automatic yet.`,
+      blocks: caseMessageBlocks(updated),
+    });
+  });
+
+  app.action('view_calendar_details', async ({ ack, body, client }) => {
+    await ack();
+    const caseRecord = await requireCase(store, body.actions[0].value);
+    const schedule = caseRecord.currentSchedule || {};
+    const eventLink = caseRecord.calendarEventHtmlLink || schedule.htmlLink || null;
+
+    const lines = [
+      `Calendar event: ${caseRecord.calendarEventId || 'not created yet'}`,
+      `Date: ${schedule.date || 'TBD'}`,
+      `Time: ${schedule.time || 'TBD'}`,
+      `Zoom: ${schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'}`,
+    ];
+
+    if (eventLink) {
+      lines.push(`<${eventLink}|Open in Google Calendar>`);
+    }
+
+    await client.chat.postEphemeral({
+      channel: body.channel?.id || body.user.id,
+      user: body.user.id,
+      text: lines.join('\n'),
+    });
+  });
+}
+
+async function openIntakeModal({
+  client,
+  triggerId,
+  logger,
+  privateMetadata = '',
+  timeZones = [],
+  defaultTimeZone,
+}) {
+  const templates = await loadTemplates();
+  logger.info('schedule_intake_opened', { templateCount: templates.length });
+  await client.views.open({
+    trigger_id: triggerId,
+    view: {
+      ...intakeModal({ templates, timeZones, defaultTimeZone }),
+      private_metadata: privateMetadata,
+    },
+  });
+}
+
+async function refreshIntakeModal({
+  client,
+  body,
+  templates,
+  selectedKey,
+  selectedId,
+  timeZones = [],
+  defaultTimeZone,
+}) {
+  if (!body.view?.id || !body.view?.hash) return;
+  const draft = buildIntakeDraft(body.view.state.values, templates, { [selectedKey]: selectedId });
+  await client.views.update({
+    view_id: body.view.id,
+    hash: body.view.hash,
+    view: {
+      ...intakeModal({ templates, draft, timeZones, defaultTimeZone }),
+      private_metadata: body.view.private_metadata || body.channel?.id || body.user.id,
+    },
+  });
+}
+
+async function publishHome({ client, userId, store, logger }) {
+  const [myCases, allCases] = await Promise.all([store.listCasesForUser(userId), store.listCases()]);
+  const teamCases = allCases.filter((item) => item.ownerSlackUserId !== userId && item.status !== 'Scheduled');
+  const googleConnected = typeof store.hasGoogleToken === 'function' ? await store.hasGoogleToken(userId) : false;
+  try {
+    await client.views.publish({
+      user_id: userId,
+      view: homeView({ myCases, teamCases, googleConnected }),
+    });
+  } catch (error) {
+    logger.error('home_publish_failed', { userId, error: error.message });
+  }
+}
+
+async function requireCase(store, caseId) {
+  const caseRecord = await store.getCase(caseId);
+  if (!caseRecord) throw new Error(`Case not found: ${caseId}`);
+  return caseRecord;
+}
+
+function buildTemplateVariables(caseRecord) {
+  const currentSchedule = caseRecord.currentSchedule || {};
+  return {
+    applicant_first_name: caseRecord.applicant?.firstName || '',
+    job_title: caseRecord.applicant?.jobTitle || '',
+    interview_stage: caseRecord.applicant?.stage || 'Interview',
+    date: currentSchedule.date || caseRecord.selectedInterviewDate || '[Date]',
+    time: currentSchedule.time || caseRecord.selectedInterviewTime || '[Time]',
+    link: currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '[Link]',
+    signature: '[signature]',
+    hiring_manager_name: caseRecord.hiringManager?.name || '[Hiring Manager]',
+    position_title: caseRecord.hiringManager?.positionTitle || '[Position Title]',
+    schedule_your_interview_here: '[Schedule Your Interview Here]',
+  };
+}
+
+export function buildIntakeDraft(values, templates, overrides = {}) {
+  const applicantId = overrides.applicant ?? (values.applicant_block?.applicant_select?.selected_option?.value || '');
+  const recruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
+  const hiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || '');
+  const templateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
+  const interviewTimezone = overrides.interviewTimezone ?? (values.timezone_block?.timezone_select?.selected_option?.value || '');
+
+  const applicant = applyEmailOverride(
+    findApplicant(applicantId),
+    values.applicant_email_block?.applicant_email?.value?.trim(),
+  );
+  const recruiter = applyEmailOverride(
+    findPerson(recruiterId),
+    values.recruiter_email_block?.recruiter_email?.value?.trim(),
+  );
+  const hiringManager = applyEmailOverride(
+    findPerson(hiringManagerId),
+    values.hm_email_block?.hm_email?.value?.trim(),
+  );
+  const template = templates.find((item) => item.id === templateId);
+
+  return {
+    applicantId,
+    recruiterId,
+    hiringManagerId,
+    templateId,
+    applicant,
+    recruiter,
+    hiringManager,
+    applicantOption: applicant ? toSlackOption(applicantPickerLabel(applicant), applicant.id) : undefined,
+    recruiterOption: recruiter ? toSlackOption(personPickerLabel(recruiter), recruiter.id) : undefined,
+    hiringManagerOption: hiringManager ? toSlackOption(personPickerLabel(hiringManager), hiringManager.id) : undefined,
+    templateOption: template ? toSlackOption(template.label, template.id) : undefined,
+    applicantEmail: applicant?.email || '',
+    recruiterEmail: recruiter?.email || '',
+    hiringManagerEmail: hiringManager?.email || '',
+    notes: values.notes_block?.notes?.value || '',
+    resumeLink: extractResumeLink(values),
+    interviewWindowStartDate: values.window_start_block?.window_start?.selected_date || '',
+    interviewWindowEndDate: values.window_end_block?.window_end?.selected_date || '',
+    interviewTimezone,
+  };
+}
+
+function resolveSchedulingTimeZones(config) {
+  const list = config?.scheduling?.timeZones || []
+  const normalized = list.map((timeZone) => String(timeZone || '').trim()).filter(Boolean)
+  return normalized.length > 0 ? normalized : [SYDNEY_TIME_ZONE]
+}
+
+function selectedOptionValue(body) {
+  return body.actions?.[0]?.selected_option?.value || '';
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function applyEmailOverride(person, emailOverride) {
+  if (!person) return null;
+  const email = String(emailOverride || '').trim();
+  if (!email) return person;
+  return {
+    ...person,
+    email,
+  };
+}
+
+function buildHiringManagerMessage(caseRecord) {
+  const applicantName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' ');
+  return [
+    `Hi ${mentionPerson(caseRecord.hiringManager, 'there')},`,
+    '',
+    `Please review this candidate for ${caseRecord.applicant?.jobTitle || 'the role'}:`,
+    `Candidate: ${applicantName} (${caseRecord.applicant?.email || 'missing email'})`,
+    `Application ID: ${caseRecord.applicant?.jazzhrApplicationId || 'N/A'}`,
+    `Recruiter: ${mentionPerson(caseRecord.recruiter, 'Recruitment Team')}`,
+    `Hiring Manager: ${mentionPerson(caseRecord.hiringManager, 'Hiring Manager')}`,
+    caseRecord.notes ? `Notes: ${caseRecord.notes}` : '',
+    '',
+    'Manual resume step: the recruiter will share the resume link separately.',
+    'Please reply with your availability for the interview.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildSmsDraft(caseRecord) {
+  return [
+    `Hi, ${caseRecord.applicant?.firstName || '[Candidate]'}!`,
+    '',
+    `This is ${caseRecord.recruiter?.name || '[Recruiter]'} from the Outsourced Pro Global recruitment team.`,
+    '',
+    `We would like to invite you for an interview for the ${caseRecord.applicant?.jobTitle || '[job_title]'} role. Let me know if the target schedule works well for you.`,
+    '',
+    'Thank you!',
+  ].join('\n');
+}
+
+function extractResumeLink(values) {
+  const resumeElement = values.resume_block?.resume_link;
+  return resumeElement?.value?.trim() || '';
+}
+
+function mentionPerson(person, fallback) {
+  if (person?.slackUserId) return `<@${person.slackUserId}>`;
+  return person?.name || fallback;
+}
+
+function parseEmails(value) {
+  return String(value || '')
+    .split(/[,\n;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
