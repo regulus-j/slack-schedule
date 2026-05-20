@@ -72,6 +72,7 @@ export function validateStartupConfig(config) {
 
   if (!config.slack.botToken) missing.push('SLACK_BOT_TOKEN');
   if (!config.slack.appToken) missing.push('SLACK_APP_TOKEN');
+  if (!config.jazzhr.apiKey) missing.push('JAZZHR_API_KEY');
 
   if (missing.length > 0) {
     throw new Error(`Missing required Slack environment variables: ${missing.join(', ')}`);

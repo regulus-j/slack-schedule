@@ -61,9 +61,9 @@ test('normalizeAttendees excludes HM for 1st-interview (default excluded)', () =
   assert.equal(hm.required, false)
 })
 
-test('normalizeAttendees includes HM for 2nd-or-final (default included)', () => {
-  const record = makeCaseRecord({ stageKey: '2nd-or-final' })
-  const rules = resolveStageRules('2nd-or-final')
+test('normalizeAttendees includes HM for 2nd-interview (default included)', () => {
+  const record = makeCaseRecord({ stageKey: '2nd-interview' })
+  const rules = resolveStageRules('2nd-interview')
   const result = normalizeAttendees(record, rules)
 
   const hm = result.find((a) => a.role === 'hiring_manager')
@@ -72,21 +72,20 @@ test('normalizeAttendees includes HM for 2nd-or-final (default included)', () =>
   assert.equal(hm.required, true)
 })
 
-test('normalizeAttendees marks HM as optional for final-offer (default optional)', () => {
-  const record = makeCaseRecord({ stageKey: 'final-offer' })
-  const rules = resolveStageRules('final-offer')
+test('normalizeAttendees includes HM for final-interview (default included)', () => {
+  const record = makeCaseRecord({ stageKey: 'final-interview' })
+  const rules = resolveStageRules('final-interview')
   const result = normalizeAttendees(record, rules)
 
   const hm = result.find((a) => a.role === 'hiring_manager')
   assert.ok(hm)
-  assert.equal(hm.included, false)
-  assert.equal(hm.required, false)
+  assert.equal(hm.included, true)
+  assert.equal(hm.required, true)
 })
 
-test('normalizeAttendees includes HM for final-offer when attendanceOverrides requests it', () => {
+test('normalizeAttendees keeps final-offer alias compatible', () => {
   const record = makeCaseRecord({
     stageKey: 'final-offer',
-    attendanceOverrides: { hiringManagerIncluded: true }
   })
   const rules = resolveStageRules('final-offer')
   const result = normalizeAttendees(record, rules)
@@ -94,6 +93,7 @@ test('normalizeAttendees includes HM for final-offer when attendanceOverrides re
   const hm = result.find((a) => a.role === 'hiring_manager')
   assert.ok(hm)
   assert.equal(hm.included, true)
+  assert.equal(hm.required, true)
 })
 
 test('normalizeAttendees includes guests', () => {
@@ -150,10 +150,10 @@ test('normalizeAttendees applies attendanceOverrides to force include HM by role
 
 test('normalizeAttendees applies attendanceOverrides to force exclude HM by role', () => {
   const record = makeCaseRecord({
-    stageKey: '2nd-or-final',
+    stageKey: '2nd-interview',
     attendanceOverrides: { hiring_manager: false }
   })
-  const rules = resolveStageRules('2nd-or-final')
+  const rules = resolveStageRules('2nd-interview')
   const result = normalizeAttendees(record, rules)
 
   const hm = result.find((a) => a.role === 'hiring_manager')
@@ -189,7 +189,7 @@ test('normalizeAttendees handles attendanceOverrides with object value', () => {
   const record = makeCaseRecord({
     attendanceOverrides: { hiring_manager: { included: false } }
   })
-  const rules = resolveStageRules('2nd-or-final')
+  const rules = resolveStageRules('2nd-interview')
   const result = normalizeAttendees(record, rules)
 
   const hm = result.find((a) => a.role === 'hiring_manager')
@@ -230,11 +230,11 @@ test('normalizeAttendees ensures at least one interviewer when all excluded', ()
 
 test('refreshAttendees rebuilds list when stage changes', () => {
   const record = makeCaseRecord({ stageKey: '1st-interview' })
-  const result = refreshAttendees(record, '2nd-or-final')
+  const result = refreshAttendees(record, '2nd-interview')
 
   const hm = result.find((a) => a.role === 'hiring_manager')
   assert.ok(hm)
-  assert.equal(hm.included, true, 'HM should be included for 2nd-or-final after refresh')
+  assert.equal(hm.included, true, 'HM should be included for 2nd-interview after refresh')
   assert.equal(hm.required, true)
 })
 

@@ -18,6 +18,12 @@
         "description": "Start or post an interview scheduling workflow",
         "usage_hint": "[button]",
         "should_escape": false
+      },
+      {
+        "command": "/slack-scheduler",
+        "description": "Admin commands: refresh-jazz to reload JazzHR cache",
+        "usage_hint": "[refresh-jazz]",
+        "should_escape": false
       }
     ]
   },

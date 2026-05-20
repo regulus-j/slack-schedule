@@ -1,8 +1,7 @@
-import { templateOptions } from '../templates.js'
-import { applicantLabel, personLabel, trimForSlack } from '../data/search.js'
+import { applicantLabel, personLabel, personOptions, trimForSlack } from '../data/search.js'
 import { TIMEZONE_COUNTRY_MAP } from '../data/timezones.js'
 import { isScheduledCase, normalizeCaseSchedule, visibleCaseActions } from '../workflow/reschedule.js'
-import { DEFAULT_STAGE_RULES, resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
+import { DEFAULT_STAGE_RULES, STAGE_OPTIONS, normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
 import { normalizeAttendees } from '../workflow/attendees.js'
 import {
   BUSINESS_DAY_END,
@@ -64,7 +63,7 @@ export function homeView({ myCases, teamCases, googleConnected = false }) {
   };
 }
 
-export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone }) {
+export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone, recruiters = [] }) {
   const resolvedTimeZones = timeZones.length > 0 ? timeZones : [SYDNEY_TIME_ZONE]
   const selectedTimeZone = draft.interviewTimezone || defaultTimeZone || resolvedTimeZones[0] || SYDNEY_TIME_ZONE
   const selectedTimeZoneCountry = TIMEZONE_COUNTRY_MAP[selectedTimeZone]
@@ -72,6 +71,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     text: plain(selectedTimeZoneCountry ? `${selectedTimeZone} (${selectedTimeZoneCountry})` : selectedTimeZone),
     value: selectedTimeZone,
   }
+  const recruiterSelect = recruiterSelectElement({ recruiters, draft })
 
   return {
     type: 'modal',
@@ -98,20 +98,14 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         },
         true,
       ),
-      input('Template', 'template_block', {
+      input('Stage', 'stage_block', {
         type: 'static_select',
-        action_id: 'template_select',
-        placeholder: plain('Choose template'),
-        options: templateOptions(templates),
-        ...(draft.templateOption ? { initial_option: draft.templateOption } : {}),
+        action_id: 'stage_select',
+        placeholder: plain('Choose stage'),
+        options: intakeStageOptions(),
+        ...(draft.stageOption ? { initial_option: draft.stageOption } : {}),
       }),
-      input('Recruiter name', 'recruiter_block', {
-        type: 'external_select',
-        action_id: 'recruiter_select',
-        min_query_length: 0,
-        placeholder: plain('Search recruiter'),
-        ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
-      }),
+      input('Recruiter name', 'recruiter_block', recruiterSelect),
       input(
         'Recruiter email',
         'recruiter_email_block',
@@ -314,7 +308,7 @@ export function finalizeModal(caseRecord, recentAudits = []) {
 
 export function schedulingModal(caseRecord, schedulingResult, recentAudits = []) {
   const phase = schedulingResult?.phase || 1
-  const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+  const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
   const stageRules = schedulingResult?.stageRules || resolveStageRules(stageKey, caseRecord.stageOverrides)
   const attendees = schedulingResult?.attendees || normalizeAttendees(caseRecord, stageRules)
   const metadata = JSON.stringify({
@@ -406,7 +400,7 @@ export function schedulingPhaseTwo(caseRecord, schedulingResult, recentAudits = 
   const metadata = JSON.stringify({
     caseId: caseRecord.id,
     phase: 2,
-    stageKey: caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview',
+    stageKey: normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview',
     stageOverrides: caseRecord.stageOverrides || {},
     externalAttendees: caseRecord.externalAttendees || [],
     selectedSlot: null
@@ -787,6 +781,13 @@ function nextStepText(caseRecord) {
   return '🎯 *Next:* continue the scheduling steps. Resume handling remains manual unless a resume upload flow is added.';
 }
 
+function calendarEventUrl(eventId) {
+  if (!eventId || eventId.startsWith('mock-') || eventId.startsWith('pending-')) return null
+  return `https://calendar.google.com/calendar/event?eid=${encodeURIComponent(eventId)}`
+}
+
+export { calendarEventUrl }
+
 function scheduleSummary(caseRecord) {
   const normalized = normalizeCaseSchedule(caseRecord);
   const lines = [];
@@ -794,7 +795,12 @@ function scheduleSummary(caseRecord) {
     lines.push(`📅 Schedule: ${normalized.currentSchedule.date || 'date TBD'} ${normalized.currentSchedule.time || ''}`.trim());
   }
   if (caseRecord.calendarEventId) {
-    lines.push(`📅 Calendar event: ${caseRecord.calendarEventId}`);
+    const link = caseRecord.calendarEventHtmlLink || caseRecord.currentSchedule?.htmlLink || calendarEventUrl(caseRecord.calendarEventId);
+    if (link) {
+      lines.push(`📅 <${link}|Calendar event>`);
+    } else {
+      lines.push('📅 Calendar event created (link not available)');
+    }
   }
   if (caseRecord.interviewWindowStartDate || caseRecord.interviewWindowEndDate) {
     lines.push(
@@ -854,6 +860,27 @@ function input(label, blockId, element, optional = false) {
   };
 }
 
+function recruiterSelectElement({ recruiters, draft }) {
+  const options = personOptions('', recruiters)
+  if (options.length > 0 && options.length <= 100) {
+    return {
+      type: 'static_select',
+      action_id: 'recruiter_select',
+      placeholder: plain('Choose recruiter'),
+      options,
+      ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
+    }
+  }
+
+  return {
+    type: 'external_select',
+    action_id: 'recruiter_select',
+    min_query_length: 0,
+    placeholder: plain('Search recruiter'),
+    ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
+  }
+}
+
 function actions(elements) {
   return { type: 'actions', elements };
 }
@@ -879,16 +906,24 @@ function divider() {
 }
 
 function stageSelectOptions(currentKey) {
-  return Object.entries(DEFAULT_STAGE_RULES).map(([key, rules]) => ({
-    text: plain(rules.description || key),
-    value: key
+  return STAGE_OPTIONS.map((stage) => ({
+    text: plain(stage.label),
+    value: stage.key
   }))
 }
 
 function stageSelectOption(key) {
-  const rules = DEFAULT_STAGE_RULES[key]
-  if (!rules) return undefined
-  return { text: plain(rules.description || key), value: key }
+  const normalized = normalizeStageKey(key)
+  const stage = STAGE_OPTIONS.find((item) => item.key === normalized)
+  if (!stage) return undefined
+  return { text: plain(stage.label), value: stage.key }
+}
+
+function intakeStageOptions() {
+  return STAGE_OPTIONS.map((stage) => ({
+    text: plain(stage.label),
+    value: stage.key
+  }))
 }
 
 function durationSelectOptions(currentMinutes) {
@@ -918,7 +953,7 @@ function buildPhTimeOptions({ referenceDate, interviewTimeZone, stepMinutes = 30
   if (startMinutes === null || endMinutes === null) return []
 
   const options = []
-  for (let minutes = startMinutes; minutes <= endMinutes; minutes += stepMinutes) {
+  for (let minutes = startMinutes; minutes < endMinutes; minutes += stepMinutes) {
     const timeValue = formatMinutesToTime(minutes)
     const phInstant = localDateTimeToUtc(resolvedDate, timeValue, PH_TIME_ZONE)
     const phLabel = formatTimeInTimeZone(phInstant, PH_TIME_ZONE)

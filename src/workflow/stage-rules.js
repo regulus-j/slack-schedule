@@ -7,32 +7,47 @@ export const DEFAULT_STAGE_RULES = {
     typicalDurationMinutes: 30,
     bufferMinutes: 15,
     maxInterviewers: 2,
-    description: 'First Interview'
+    description: '1st Interview'
   },
-  '2nd-or-final': {
+  '2nd-interview': {
     hiringManagerRequired: true,
     hiringManagerDefault: 'included',
     typicalDurationMinutes: 45,
     bufferMinutes: 15,
     maxInterviewers: 3,
-    description: 'Second / Final Interview'
+    description: '2nd Interview'
   },
-  'final-offer': {
-    hiringManagerRequired: false,
-    hiringManagerDefault: 'optional',
-    typicalDurationMinutes: 30,
+  'final-interview': {
+    hiringManagerRequired: true,
+    hiringManagerDefault: 'included',
+    typicalDurationMinutes: 45,
     bufferMinutes: 15,
-    maxInterviewers: 2,
-    description: 'Final Job Offer Meeting'
+    maxInterviewers: 3,
+    description: 'Final Interview'
   }
+}
+
+export const STAGE_OPTIONS = [
+  { key: '1st-interview', label: '1st Interview', templateId: '1st-interview-invite' },
+  { key: '2nd-interview', label: '2nd Interview', templateId: '2nd-or-Final-invite' },
+  { key: 'final-interview', label: 'Final Interview', templateId: '2nd-or-Final-invite' },
+]
+
+const STAGE_ALIASES = {
+  '2nd-or-final': '2nd-interview',
+  'final-offer': 'final-interview'
 }
 
 const TEMPLATE_TO_STAGE = {
   '1st-interview-invite': '1st-interview',
-  '2nd-or-Final-invite': '2nd-or-final',
-  'Thank You Email - 2nd-or-Final Interview': '2nd-or-final',
+  '2nd-or-Final-invite': '2nd-interview',
+  'Thank You Email - 2nd-or-Final Interview': '2nd-interview',
   'interview-reminder': null,
   'interview-reminder (unresponsive candidate)': null
+}
+
+export function normalizeStageKey(stageKey) {
+  return STAGE_ALIASES[stageKey] || stageKey || ''
 }
 
 export function resolveStageFromTemplate(templateId) {
@@ -40,12 +55,23 @@ export function resolveStageFromTemplate(templateId) {
   const meta = TEMPLATE_METADATA[templateId]
   if (!meta) return null
   if (meta.interviewStage === '1st Interview') return '1st-interview'
-  if (meta.interviewStage === '2nd/Final Interview') return '2nd-or-final'
+  if (meta.interviewStage === '2nd/Final Interview') return '2nd-interview'
   return null
 }
 
+export function resolveTemplateFromStage(stageKey) {
+  const normalized = normalizeStageKey(stageKey)
+  return STAGE_OPTIONS.find((stage) => stage.key === normalized)?.templateId || ''
+}
+
+export function stageLabel(stageKey) {
+  const normalized = normalizeStageKey(stageKey)
+  return STAGE_OPTIONS.find((stage) => stage.key === normalized)?.label || 'Interview'
+}
+
 export function resolveStageRules(stageKey, stageOverrides = {}) {
-  const defaults = DEFAULT_STAGE_RULES[stageKey] || DEFAULT_STAGE_RULES['1st-interview']
+  const normalized = normalizeStageKey(stageKey)
+  const defaults = DEFAULT_STAGE_RULES[normalized] || DEFAULT_STAGE_RULES['1st-interview']
   const base = structuredClone(defaults)
   if (stageOverrides.hiringManagerRequired !== undefined) base.hiringManagerRequired = stageOverrides.hiringManagerRequired
   if (stageOverrides.hiringManagerDefault !== undefined) base.hiringManagerDefault = stageOverrides.hiringManagerDefault

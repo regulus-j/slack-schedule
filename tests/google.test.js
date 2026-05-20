@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGoogleOAuthUrl, getRecruiterId } from '../src/services/google.js';
+import { buildGoogleOAuthUrl, checkFreeBusy, getRecruiterId } from '../src/services/google.js';
 import { homeView } from '../src/slack/views.js';
 
 test('builds a recruiter-scoped google oauth url', () => {
@@ -45,4 +45,50 @@ test('prefers the case owner slack id for google token lookup', () => {
     }),
     'U-owner',
   );
+});
+
+test('checkFreeBusy sends explicit timeMin and timeMax windows', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody;
+  globalThis.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      async json() {
+        return { calendars: {} };
+      },
+    };
+  };
+
+  try {
+    const result = await checkFreeBusy({
+      config: {
+        google: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          redirectUri: 'https://example.com/oauth',
+          sharedCalendarId: 'primary',
+        },
+      },
+      logger: { warn() {} },
+      attendees: [{ id: 'alex@example.com' }],
+      windows: [{
+        timeMin: '2026-06-01T00:00:00.000Z',
+        timeMax: '2026-06-02T00:00:00.000Z',
+      }],
+      recruiterId: 'U123',
+      store: {
+        async getGoogleToken() {
+          return { access_token: 'token' };
+        },
+      },
+    });
+
+    assert.equal(result.mocked, false);
+    assert.equal(requestBody.timeMin, '2026-06-01T00:00:00.000Z');
+    assert.equal(requestBody.timeMax, '2026-06-02T00:00:00.000Z');
+    assert.deepEqual(requestBody.items, [{ id: 'alex@example.com' }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -4,12 +4,18 @@ import { createHttpServer } from './src/http-server.js';
 import { createStore } from './src/store/index.js';
 import { registerSlackHandlers } from './src/slack/handlers.js';
 import { logger } from './src/logger.js';
+import { loadTalentDirectory } from './src/services/talent-directory.js';
+import { refreshJazzhrCache } from './src/services/jazzhr.js';
 
 const config = loadConfig();
 validateStartupConfig(config);
 
 const store = await createStore(config);
 await store.init();
+
+loadTalentDirectory(config);
+
+await refreshJazzhrCache({ config, logger, throwOnError: true });
 
 const app = new App({
   token: config.slack.botToken,

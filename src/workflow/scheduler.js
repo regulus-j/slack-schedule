@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
-import { BUSINESS_DAY_START, BUSINESS_DAY_END, SYDNEY_TIME_ZONE } from '../time.js'
+import { BUSINESS_DAY_START, BUSINESS_DAY_END, SYDNEY_TIME_ZONE, formatDateForInput, localDateTimeToUtc } from '../time.js'
 import { checkFreeBusy } from '../services/google.js'
-import { resolveStageFromTemplate, resolveStageRules } from './stage-rules.js'
+import { normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from './stage-rules.js'
 import { normalizeAttendees, includedAttendees, attendeesForFreeBusy } from './attendees.js'
 
 function parseDateToLocalMidnight(dateStr, timeZone) {
@@ -125,8 +125,11 @@ export function generateCandidateSlots({
 
   let cursor = parseDateToLocalMidnight(startDate, timeZone)
   const endCursor = parseDateToLocalMidnight(endDate, timeZone)
+  const todayStr = formatDateForInput(new Date(), timeZone)
+  const todayStart = parseDateToLocalMidnight(todayStr, timeZone)
 
   while (cursor <= endCursor) {
+    if (cursor < todayStart) { cursor = addDays(cursor, 1); continue }
     const dow = getDayOfWeek(cursor, timeZone)
     const isWeekend = dow === 0 || dow === 6
 
@@ -171,6 +174,7 @@ export async function checkAvailability({ caseRecord, config, logger, store }) {
 
   const windowStart = caseRecord.interviewWindowStartDate || caseRecord.interviewWindowStart
   const windowEnd = caseRecord.interviewWindowEndDate || caseRecord.interviewWindowEnd
+  const timeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
 
   if (!windowStart || !windowEnd) {
     logger.warn('scheduler_no_window', { caseId: caseRecord.id })
@@ -178,8 +182,8 @@ export async function checkAvailability({ caseRecord, config, logger, store }) {
   }
 
   const windows = [{
-    timeMin: new Date(windowStart).toISOString(),
-    timeMax: new Date(windowEnd).toISOString()
+    timeMin: localDateTimeToUtc(windowStart, '00:00', timeZone).toISOString(),
+    timeMax: localDateTimeToUtc(windowEnd, '23:59', timeZone).toISOString()
   }]
 
   try {
@@ -432,7 +436,7 @@ export async function runSchedulingPipeline({ caseRecord, config, logger, store 
   const warnings = []
 
   // 1. Resolve stage rules
-  const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+  const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
   const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
 
   // 2. Normalize attendees
