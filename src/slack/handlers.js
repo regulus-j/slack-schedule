@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../data/sample-data.js'
+import { getApplicants, getRecruiters, getHiringManagers, getAllPeople } from '../data/cache.js'
 import { searchTimezones } from '../data/timezones.js'
 import {
   applicantOptions,
@@ -10,8 +10,9 @@ import {
   personPickerLabel,
   toSlackOption,
 } from '../data/search.js'
-import { loadTemplates, plainTextToHtml, renderTemplate, templateRequiresResume } from '../templates.js'
+import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, templateRequiresResume } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
+import { refreshJazzhrCache } from '../services/jazzhr.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
 import {
   PH_TIME_ZONE,
@@ -33,11 +34,18 @@ import {
   canStartReschedule,
 } from '../workflow/reschedule.js'
 import { buildReminderEmail, buildRescheduleEmail } from '../workflow/messages.js'
-import { resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
+import {
+  normalizeStageKey,
+  resolveStageFromTemplate,
+  resolveStageRules,
+  resolveTemplateFromStage,
+  stageLabel,
+} from '../workflow/stage-rules.js'
 import { normalizeAttendees, refreshAttendees } from '../workflow/attendees.js'
 import { runSchedulingPipeline } from '../workflow/scheduler.js'
 import {
   availabilityModal,
+  calendarEventUrl,
   checkingAvailabilityModal,
   candidateMessageModal,
   caseMessageBlocks,
@@ -92,6 +100,48 @@ export function registerSlackHandlers(app, context) {
     });
   });
 
+  app.command('/slack-scheduler', async ({ command, ack, client }) => {
+    await ack();
+    const text = (command.text || '').trim().toLowerCase();
+
+    if (text === 'refresh-jazz') {
+      const result = await refreshJazzhrCache({ config, logger });
+      const recruiters = getRecruiters();
+      await client.chat.postMessage({
+        channel: command.channel_id,
+        text: result.refreshed
+          ? `JazzHR cache refreshed: ${result.records} applicants and ${recruiters.length} recruiters loaded.`
+          : 'JazzHR refresh completed with warnings (check logs for details).',
+      });
+      return;
+    }
+
+    if (text === 'status') {
+      const applicants = getApplicants();
+      const recruiters = getRecruiters();
+      const managers = getHiringManagers();
+      await client.chat.postEphemeral({
+        channel: command.channel_id,
+        user: command.user_id,
+        text: [
+          `*Cache status:*`,
+          `• Applicants: ${applicants.length}`,
+          `• Recruiters (JazzHR): ${recruiters.length}`,
+          `• Hiring Managers (SQL): ${managers.length}`,
+          `• Total people: ${recruiters.length + managers.length}`,
+          `• Recruiter preview: ${previewPeople(recruiters)}`,
+        ].join('\n'),
+      });
+      return;
+    }
+
+    await client.chat.postEphemeral({
+      channel: command.channel_id,
+      user: command.user_id,
+      text: 'Available subcommands: `refresh-jazz` — reload JazzHR applicant and recruiter cache, `status` — show cache counts.',
+    });
+  });
+
   app.action('post_schedule_launcher', async ({ ack, body, client }) => {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
@@ -131,7 +181,7 @@ export function registerSlackHandlers(app, context) {
     await refreshIntakeModal({
       client,
       body,
-      templates: await loadTemplates(),
+      templates: await loadSchedulingTemplates(),
       selectedKey: 'applicant',
       selectedId: selectedOptionValue(body),
       timeZones: schedulingTimeZones,
@@ -144,7 +194,7 @@ export function registerSlackHandlers(app, context) {
     await refreshIntakeModal({
       client,
       body,
-      templates: await loadTemplates(),
+      templates: await loadSchedulingTemplates(),
       selectedKey: 'recruiter',
       selectedId: selectedOptionValue(body),
       timeZones: schedulingTimeZones,
@@ -157,7 +207,7 @@ export function registerSlackHandlers(app, context) {
     await refreshIntakeModal({
       client,
       body,
-      templates: await loadTemplates(),
+      templates: await loadSchedulingTemplates(),
       selectedKey: 'hiringManager',
       selectedId: selectedOptionValue(body),
       timeZones: schedulingTimeZones,
@@ -186,21 +236,27 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.options('applicant_select', async ({ options, ack }) => {
-    await ack({ options: applicantOptions(options.value, SAMPLE_APPLICANTS) });
+    await ack({ options: applicantOptions(options.value, getApplicants()) });
   });
 
   app.options('recruiter_select', async ({ options, ack }) => {
-    const recruiters = SAMPLE_PEOPLE.filter((person) => person.role === 'recruiter');
-    await ack({ options: personOptions(options.value, recruiters) });
+    const recruiters = getRecruiters()
+    const slackOptions = personOptions(options.value, recruiters)
+    logger.info('recruiter_options_requested', {
+      query: options.value,
+      recruiterCount: recruiters.length,
+      optionCount: slackOptions.length,
+      preview: slackOptions.slice(0, 3).map((option) => option.text.text),
+    })
+    await ack({ options: slackOptions });
   });
 
   app.options('hm_select', async ({ options, ack }) => {
-    const managers = SAMPLE_PEOPLE.filter((person) => person.role === 'hiring_manager');
-    await ack({ options: personOptions(options.value, managers) });
+    await ack({ options: personOptions(options.value, getHiringManagers()) });
   });
 
   app.options('guest_select', async ({ options, ack }) => {
-    await ack({ options: personOptions(options.value, SAMPLE_PEOPLE) });
+    await ack({ options: personOptions(options.value, getAllPeople()) });
   });
 
   app.options('timezone_select', async ({ options, ack }) => {
@@ -209,10 +265,11 @@ export function registerSlackHandlers(app, context) {
 
   app.view('schedule_intake_submit', async ({ ack, body, view, client }) => {
     const values = view.state.values;
-    const templates = await loadTemplates();
+    const templates = await loadSchedulingTemplates();
     const intakeDraft = buildIntakeDraft(values, templates);
     const applicantId = intakeDraft.applicantId;
     const templateId = intakeDraft.templateId;
+    const stageKey = intakeDraft.stageKey;
     const recruiterId = intakeDraft.recruiterId;
     const hiringManagerId = intakeDraft.hiringManagerId;
     const notes = intakeDraft.notes;
@@ -222,6 +279,10 @@ export function registerSlackHandlers(app, context) {
     const interviewTimezone = intakeDraft.interviewTimezone || defaultTimeZone;
     const requiresResume = templateRequiresResume(templateId);
     const errors = {};
+
+    if (!stageKey) {
+      errors.stage_block = 'Choose an interview stage.';
+    }
 
     if (intakeDraft.applicantEmail && !isValidEmail(intakeDraft.applicantEmail)) {
       errors.applicant_email_block = 'Enter a valid applicant email.';
@@ -281,6 +342,7 @@ export function registerSlackHandlers(app, context) {
       recruiter,
       hiringManager,
       templateId,
+      stageKey,
       notes,
       resumeLink,
       interviewWindowStartDate: interviewWindowStartDate || null,
@@ -297,11 +359,12 @@ export function registerSlackHandlers(app, context) {
       actorSlackUserId: body.user.id,
       action: 'case_created',
       templateId,
+      stageKey,
     });
 
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
-      text: `✅ Created scheduling case ${caseRecord.id}`,
+      text: '✅ Scheduling case created',
       blocks: caseMessageBlocks(caseRecord),
     });
     await publishHome({ client, userId: body.user.id, store, logger });
@@ -309,27 +372,55 @@ export function registerSlackHandlers(app, context) {
 
   app.action('approve_hm_draft', async ({ ack, body, client }) => {
     await ack();
-    if (!await verifyChannel({ config, body, client })) return
-    const caseRecord = await requireCase(store, body.actions[0].value);
-    const message = buildHiringManagerMessage(caseRecord);
-    const target = caseRecord.hiringManager?.slackUserId || caseRecord.channelId || body.user.id;
+    if (!await verifyChannel({ config, body, client })) return;
 
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, target),
-      text: message,
+    const caseRecord = await requireCase(store, body.actions[0].value);
+
+    const hmSlackUserId = await resolveHiringManagerSlackId({
+      client, caseRecord, store, logger,
     });
 
-    const updated = await store.updateCase(caseRecord.id, { status: 'Waiting for HM', hmMessage: message });
+    const record = hmSlackUserId
+      ? await store.getCase(caseRecord.id)
+      : caseRecord;
+
+    let message;
+    let channel;
+
+    if (hmSlackUserId) {
+      message = buildHiringManagerMessage(record);
+      channel = resolvePostingChannel(config, record.channelId);
+    } else {
+      message = buildHiringManagerMessage(caseRecord);
+      message += [
+        '',
+        '',
+        `⚠️ *Note:* This hiring manager (*${caseRecord.hiringManager?.name || 'Unknown'}*, ${caseRecord.hiringManager?.email || 'no email'}) is not in Slack.`,
+        'Please forward this review request to them manually.',
+      ].join('\n');
+      channel = body.user.id;
+    }
+
+    await client.chat.postMessage({ channel, text: message });
+
+    const updated = await store.updateCase(caseRecord.id, {
+      status: 'Waiting for HM',
+      hmMessage: message,
+    });
+
     await store.addAudit({
       caseId: caseRecord.id,
       actorSlackUserId: body.user.id,
       action: 'hm_message_approved',
-      recipient: target,
+      recipient: channel,
+      hmResolved: Boolean(hmSlackUserId),
     });
+
     await publishHome({ client, userId: body.user.id, store, logger });
+
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
-      text: `✏️ HM draft approved for ${updated.id}. Manual resume reminder included.`,
+      text: '✏️ HM draft approved. Manual resume reminder included.',
       blocks: caseMessageBlocks(updated),
     });
   });
@@ -435,13 +526,24 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.view('candidate_message_submit', async ({ ack, body, view, client }) => {
-    await ack();
     const caseId = view.private_metadata;
     const caseRecord = await requireCase(store, caseId);
     const plainBody = view.state.values.email_body_block.email_body.value || '';
+    const subject = view.state.values.email_subject_block.email_subject.value || '';
+    if (hasUnresolvedSchedulePlaceholders(`${subject}\n${plainBody}`)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          email_body_block: 'Schedule the interview first so Date, Time, and Zoom Link can be filled automatically.',
+        },
+      });
+      return;
+    }
+
+    await ack();
     const htmlBody = plainTextToHtml(plainBody);
     const email = {
-      subject: view.state.values.email_subject_block.email_subject.value,
+      subject,
       body: htmlBody,
       htmlBody,
       plainBody,
@@ -527,7 +629,7 @@ export function registerSlackHandlers(app, context) {
     try {
       const caseId = body.actions?.[0]?.value || body.view?.private_metadata
       const caseRecord = await requireCase(store, caseId)
-      const stageKey = resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
       const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
       const attendees = normalizeAttendees(caseRecord, stageRules)
       const recentAudits = await store.listAudits(caseRecord.id, 5)
@@ -556,7 +658,7 @@ export function registerSlackHandlers(app, context) {
       }
       const caseId = metadata.caseId
 
-      const stageKey = view.state.values.stage_block?.stage_select?.selected_option?.value || metadata.stageKey || '1st-interview'
+      const stageKey = normalizeStageKey(view.state.values.stage_block?.stage_select?.selected_option?.value || metadata.stageKey) || '1st-interview'
       const stageOverrides = metadata.stageOverrides || {}
 
       const attendeeValues = view.state.values.attendee_toggle_block?.attendee_toggle?.selected_options || []
@@ -596,6 +698,7 @@ export function registerSlackHandlers(app, context) {
       const updatedRecord = {
         ...caseRecord,
         stageKey,
+        templateId: resolveTemplateFromStage(stageKey) || caseRecord.templateId,
         stageOverrides: { ...caseRecord.stageOverrides, ...stageOverrides, durationMinutes },
         attendanceOverrides: { ...caseRecord.attendanceOverrides, ...attendanceOverrides },
         externalAttendees,
@@ -608,6 +711,7 @@ export function registerSlackHandlers(app, context) {
 
       await store.updateCase(caseRecord.id, {
         stageKey,
+        templateId: updatedRecord.templateId,
         stageOverrides: updatedRecord.stageOverrides,
         attendanceOverrides: updatedRecord.attendanceOverrides,
         externalAttendees,
@@ -656,7 +760,7 @@ export function registerSlackHandlers(app, context) {
       const resolvedCaseId = caseId || metadata.caseId
 
       const caseRecord = await requireCase(store, resolvedCaseId)
-      const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
       const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
       const attendees = normalizeAttendees(caseRecord, stageRules)
       const recentAudits = await store.listAudits(caseRecord.id, 5)
@@ -711,7 +815,7 @@ export function registerSlackHandlers(app, context) {
 
       await store.updateCase(caseId, { externalAttendees })
 
-      const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
       const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
       const updatedRecord = { ...caseRecord, externalAttendees }
       const attendees = normalizeAttendees(updatedRecord, stageRules)
@@ -761,7 +865,7 @@ export function registerSlackHandlers(app, context) {
       const externalGuests = parseEmails(view.state.values.schedule_external_guests_block?.schedule_external_guests?.value || '')
       const zoomLink = view.state.values.schedule_zoom_block?.schedule_zoom_link?.value || caseRecord.autofill?.zoomLink || ''
 
-      const stageKey = caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId) || '1st-interview'
+      const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
       const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
       const allAttendees = normalizeAttendees(caseRecord, stageRules)
       const includedEmails = allAttendees.filter((a) => a.included).map((a) => a.email).filter(Boolean)
@@ -806,6 +910,7 @@ export function registerSlackHandlers(app, context) {
         zoomLink,
         attendees: allAttendeeEmails,
         eventId: eventResult.eventId,
+        htmlLink: eventResult.googleEvent?.htmlLink || null,
       })
 
       const updated = await store.updateCase(caseRecord.id, {
@@ -821,7 +926,7 @@ export function registerSlackHandlers(app, context) {
         via: slotValue ? 'slot_selection' : 'manual_entry'
       })
 
-      const reminderEmail = buildReminderEmail(updated)
+      const reminderEmail = await buildScheduledCandidateEmail(updated)
       const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store })
       await store.updateCase(caseRecord.id, {
         reminderEmail,
@@ -838,7 +943,7 @@ export function registerSlackHandlers(app, context) {
       await publishHome({ client, userId: body.user.id, store, logger })
       await client.chat.postMessage({
         channel: resolvePostingChannel(config, body.user.id),
-        text: `📅 Scheduled ${caseRecord.id}. Calendar event ID: ${eventResult.eventId}`,
+        text: '📅 Interview scheduled',
         blocks: caseMessageBlocks(updated),
       })
     } catch (error) {
@@ -869,7 +974,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          time_block: `Select a time between 9:00 AM and 6:00 PM ${PH_TIME_ZONE}.`,
+          time_block: `Select a time between 9:00 AM and 5:00 PM ${PH_TIME_ZONE}.`,
         },
       });
       return;
@@ -918,6 +1023,7 @@ export function registerSlackHandlers(app, context) {
       zoomLink: view.state.values.zoom_block.zoom_link.value,
       attendees,
       eventId: eventResult.eventId,
+      htmlLink: eventResult.googleEvent?.htmlLink || null,
     });
     const updated = await store.updateCase(caseId, applyScheduledEvent(caseRecord, eventResult, scheduleInput));
     await store.addAudit({
@@ -927,7 +1033,7 @@ export function registerSlackHandlers(app, context) {
       eventId: eventResult.eventId,
     });
 
-    const reminderEmail = buildReminderEmail(updated);
+    const reminderEmail = await buildScheduledCandidateEmail(updated);
     const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store });
     const reminderUpdated = await store.updateCase(caseId, {
       reminderEmail,
@@ -943,7 +1049,7 @@ export function registerSlackHandlers(app, context) {
     await publishHome({ client, userId: body.user.id, store, logger });
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
-      text: `📅 Scheduled ${caseId}. Calendar event ID: ${eventResult.eventId}`,
+      text: '📅 Interview scheduled',
       blocks: caseMessageBlocks(reminderUpdated),
     });
   });
@@ -985,7 +1091,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          time_block: `Select a time between 9:00 AM and 6:00 PM ${PH_TIME_ZONE}.`,
+          time_block: `Select a time between 9:00 AM and 5:00 PM ${PH_TIME_ZONE}.`,
         },
       });
       return;
@@ -1106,7 +1212,7 @@ export function registerSlackHandlers(app, context) {
     await publishHome({ client, userId: body.user.id, store, logger });
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
-      text: `🔄 Rescheduled ${caseId}. Calendar event updated: ${eventResult.eventId}`,
+      text: '🔄 Interview rescheduled',
       blocks: caseMessageBlocks(updated),
     });
   });
@@ -1123,7 +1229,7 @@ export function registerSlackHandlers(app, context) {
     await publishHome({ client, userId: body.user.id, store, logger });
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
-      text: `⚠️ Marked ${caseRecord.id} as needing attention. Calendar cancellation is not automatic yet.`,
+      text: '⚠️ Interview marked as needing attention. Calendar cancellation is not automatic yet.',
       blocks: caseMessageBlocks(updated),
     });
   });
@@ -1133,18 +1239,16 @@ export function registerSlackHandlers(app, context) {
     if (!await verifyChannel({ config, body, client })) return
     const caseRecord = await requireCase(store, body.actions[0].value);
     const schedule = caseRecord.currentSchedule || {};
-    const eventLink = caseRecord.calendarEventHtmlLink || schedule.htmlLink || null;
+    const eventLink = caseRecord.calendarEventHtmlLink || schedule.htmlLink || calendarEventUrl(caseRecord.calendarEventId) || null;
 
     const lines = [
-      `📅 *Calendar event:* ${caseRecord.calendarEventId || 'not created yet'}`,
+      eventLink
+        ? `📅 *Calendar:* <${eventLink}|Open in Google Calendar>`
+        : (caseRecord.calendarEventId ? '📅 Calendar event created' : '📅 *Calendar:* not created yet'),
       `📅 *Date:* ${schedule.date || 'TBD'}`,
       `🕐 *Time:* ${schedule.time || 'TBD'}`,
       `🔗 *Zoom:* ${schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'}`,
     ];
-
-    if (eventLink) {
-      lines.push(`📅 <${eventLink}|Open in Google Calendar>`);
-    }
 
     await client.chat.postEphemeral({
       channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
@@ -1162,12 +1266,12 @@ async function openIntakeModal({
   timeZones = [],
   defaultTimeZone,
 }) {
-  const templates = await loadTemplates();
+  const templates = await loadSchedulingTemplates();
   logger.info('schedule_intake_opened', { templateCount: templates.length });
   await client.views.open({
     trigger_id: triggerId,
     view: {
-      ...intakeModal({ templates, timeZones, defaultTimeZone }),
+      ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getRecruiters() }),
       private_metadata: privateMetadata,
     },
   });
@@ -1188,7 +1292,7 @@ async function refreshIntakeModal({
     view_id: body.view.id,
     hash: body.view.hash,
     view: {
-      ...intakeModal({ templates, draft, timeZones, defaultTimeZone }),
+      ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getRecruiters() }),
       private_metadata: body.view.private_metadata || body.channel?.id || body.user.id,
     },
   });
@@ -1214,48 +1318,82 @@ async function requireCase(store, caseId) {
   return caseRecord;
 }
 
-function buildTemplateVariables(caseRecord) {
+async function buildScheduledCandidateEmail(caseRecord) {
+  const templates = await loadTemplates()
+  const template = templates.find((item) => item.id === caseRecord.templateId)
+  if (!template) return buildReminderEmail(caseRecord)
+  const rendered = renderTemplate(template, buildTemplateVariables(caseRecord))
+  return {
+    subject: rendered.subject,
+    body: rendered.body,
+    htmlBody: rendered.body,
+    plainBody: rendered.plainBody,
+    to: caseRecord.applicant?.email,
+    from: caseRecord.recruiter?.email,
+  }
+}
+
+export function buildTemplateVariables(caseRecord) {
   const currentSchedule = caseRecord.currentSchedule || {};
+  const date = currentSchedule.date || caseRecord.selectedInterviewDate || '';
+  const time = currentSchedule.time || caseRecord.selectedInterviewTime || '';
+  const link = currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '';
+  const hiringManagerName = caseRecord.hiringManager?.name || '';
+  const positionTitle = caseRecord.hiringManager?.positionTitle || '';
+  const resolvedStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId));
+  const interviewStage = stageLabel(resolvedStageKey);
+
   return {
     applicant_first_name: caseRecord.applicant?.firstName || '',
     job_title: caseRecord.applicant?.jobTitle || '',
-    interview_stage: caseRecord.applicant?.stage || 'Interview',
-    date: currentSchedule.date || caseRecord.selectedInterviewDate || '[Date]',
-    time: currentSchedule.time || caseRecord.selectedInterviewTime || '[Time]',
-    link: currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '[Link]',
-    signature: '[signature]',
-    hiring_manager_name: caseRecord.hiringManager?.name || '[Hiring Manager]',
-    position_title: caseRecord.hiringManager?.positionTitle || '[Position Title]',
-    schedule_your_interview_here: '[Schedule Your Interview Here]',
+    interview_stage: interviewStage,
+    date,
+    Date: date,
+    time,
+    Time: time,
+    link,
+    Link: link,
+    hiring_manager_name: hiringManagerName,
+    position_title: positionTitle,
+    schedule_your_interview_here: '',
   };
 }
 
 export function buildIntakeDraft(values, templates, overrides = {}) {
   const applicantId = overrides.applicant ?? (values.applicant_block?.applicant_select?.selected_option?.value || '');
-  const recruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
-  const hiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || '');
-  const templateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
+  const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
+  const legacyTemplateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
+  const stageKey = normalizeStageKey(selectedStageKey || resolveStageFromTemplate(legacyTemplateId));
+  const templateId = resolveTemplateFromStage(stageKey) || legacyTemplateId;
   const interviewTimezone = overrides.interviewTimezone ?? (values.timezone_block?.timezone_select?.selected_option?.value || '');
 
   const applicant = applyEmailOverride(
     findApplicant(applicantId),
     values.applicant_email_block?.applicant_email?.value?.trim(),
   );
+  const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
+  const selectedHiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || '');
+  const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
+  const hiringManagerId = selectedHiringManagerId || applicant?.hiringManagerId || '';
   const recruiter = applyEmailOverride(
-    findPerson(recruiterId),
+    findPersonById(recruiterId),
     values.recruiter_email_block?.recruiter_email?.value?.trim(),
   );
   const hiringManager = applyEmailOverride(
-    findPerson(hiringManagerId),
+    findPersonById(hiringManagerId),
     values.hm_email_block?.hm_email?.value?.trim(),
   );
   const template = templates.find((item) => item.id === templateId);
+  const stageOption = stageKey
+    ? toSlackOption(stageLabel(stageKey), stageKey)
+    : undefined;
 
   return {
     applicantId,
     recruiterId,
     hiringManagerId,
     templateId,
+    stageKey,
     applicant,
     recruiter,
     hiringManager,
@@ -1263,6 +1401,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     recruiterOption: recruiter ? toSlackOption(personPickerLabel(recruiter), recruiter.id) : undefined,
     hiringManagerOption: hiringManager ? toSlackOption(personPickerLabel(hiringManager), hiringManager.id) : undefined,
     templateOption: template ? toSlackOption(template.label, template.id) : undefined,
+    stageOption,
     applicantEmail: applicant?.email || '',
     recruiterEmail: recruiter?.email || '',
     hiringManagerEmail: hiringManager?.email || '',
@@ -1298,6 +1437,12 @@ function applyEmailOverride(person, emailOverride) {
   };
 }
 
+function findPersonById(id) {
+  const value = String(id || '').trim();
+  if (!value) return undefined;
+  return findPerson(value) || findPerson(`rec-${value}`) || findPerson(`hm-${value}`);
+}
+
 function buildHiringManagerMessage(caseRecord) {
   const applicantName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' ');
   return [
@@ -1305,7 +1450,6 @@ function buildHiringManagerMessage(caseRecord) {
     '',
     `Please review this candidate for the *${caseRecord.applicant?.jobTitle || 'the role'}*:`,
     `👤 *Candidate:* ${applicantName} (${caseRecord.applicant?.email || 'missing email'})`,
-    `📋 *Application ID:* ${caseRecord.applicant?.jazzhrApplicationId || 'N/A'}`,
     `👥 *Recruiter:* ${mentionPerson(caseRecord.recruiter, 'Recruitment Team')}`,
     `👤 *Hiring Manager:* ${mentionPerson(caseRecord.hiringManager, 'Hiring Manager')}`,
     caseRecord.notes ? `📝 *Notes:* ${caseRecord.notes}` : '',
@@ -1339,9 +1483,72 @@ function mentionPerson(person, fallback) {
   return person?.name || fallback;
 }
 
+async function resolveHiringManagerSlackId({ client, caseRecord, store, logger }) {
+  const hm = caseRecord?.hiringManager;
+  if (!hm || !hm.email) {
+    return null;
+  }
+
+  if (hm.slackUserId) {
+    return hm.slackUserId;
+  }
+
+  try {
+    const result = await client.users.lookupByEmail({ email: hm.email });
+    const slackUserId = result?.user?.id;
+
+    if (!slackUserId) {
+      logger.warn('hm_slack_lookup_empty', { email: hm.email, caseId: caseRecord.id });
+      return null;
+    }
+
+    await store.updateCase(caseRecord.id, {
+      hiringManager: { ...hm, slackUserId },
+    });
+
+    logger.info('hm_slack_lookup_success', {
+      email: hm.email,
+      slackUserId,
+      caseId: caseRecord.id,
+    });
+
+    return slackUserId;
+  } catch (error) {
+    const code = error?.data?.error || error?.code || 'unknown';
+
+    if (code === 'users_not_found') {
+      logger.info('hm_slack_lookup_not_found', {
+        email: hm.email,
+        caseId: caseRecord.id,
+      });
+      return null;
+    }
+
+    logger.error('hm_slack_lookup_error', {
+      email: hm.email,
+      caseId: caseRecord.id,
+      code,
+      message: error.message,
+    });
+    return null;
+  }
+}
+
 function parseEmails(value) {
   return String(value || '')
     .split(/[,\n;]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function hasUnresolvedSchedulePlaceholders(value) {
+  return /\[(date|time|link|zoom_link)\]/i.test(String(value || ''))
+}
+
+function previewPeople(people) {
+  if (!people || people.length === 0) return 'none'
+  return people
+    .slice(0, 3)
+    .map((person) => person.name || person.email || person.id || 'Unknown')
+    .join(', ')
 }

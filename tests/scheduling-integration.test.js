@@ -32,9 +32,9 @@ test('integration: stage rules determine attendee list correctly for 1st-intervi
   assert.equal(hm.included, false)
 })
 
-test('integration: stage rules determine attendee list correctly for 2nd-or-final', () => {
-  const record = makeCaseRecord({ stageKey: '2nd-or-final' })
-  const rules = resolveStageRules('2nd-or-final')
+test('integration: stage rules determine attendee list correctly for 2nd-interview', () => {
+  const record = makeCaseRecord({ stageKey: '2nd-interview' })
+  const rules = resolveStageRules('2nd-interview')
   const attendees = normalizeAttendees(record, rules)
 
   assert.equal(rules.hiringManagerDefault, 'included')
@@ -42,14 +42,14 @@ test('integration: stage rules determine attendee list correctly for 2nd-or-fina
   assert.equal(hm.included, true)
 })
 
-test('integration: stage rules determine attendee list correctly for final-offer', () => {
-  const record = makeCaseRecord({ stageKey: 'final-offer' })
-  const rules = resolveStageRules('final-offer')
+test('integration: stage rules determine attendee list correctly for final-interview', () => {
+  const record = makeCaseRecord({ stageKey: 'final-interview' })
+  const rules = resolveStageRules('final-interview')
   const attendees = normalizeAttendees(record, rules)
 
-  assert.equal(rules.hiringManagerDefault, 'optional')
+  assert.equal(rules.hiringManagerDefault, 'included')
   const hm = attendees.find((a) => a.role === 'hiring_manager')
-  assert.equal(hm.included, false)
+  assert.equal(hm.included, true)
 })
 
 test('integration: stage rules + overrides change attendee list', () => {
@@ -65,7 +65,7 @@ test('integration: stage rules + overrides change attendee list', () => {
   assert.equal(hm.included, true)
 })
 
-test('integration: attendanceOverrides can force include HM at final-offer stage', () => {
+test('integration: legacy final-offer alias resolves to final interview rules', () => {
   const record = makeCaseRecord({
     stageKey: 'final-offer',
     attendanceOverrides: { hiringManagerIncluded: true }
@@ -236,16 +236,16 @@ test('integration: no double-booking when cases have disjoint attendees', () => 
 // ─── End-to-end: from stage resolution to ranked slots ───────────────────────
 
 test('integration: end-to-end from stage resolution through ranked slots', () => {
-  // 1. Start with a case record for 2nd-or-final
-  const record = makeCaseRecord({ stageKey: '2nd-or-final' })
+  // 1. Start with a case record for 2nd interview
+  const record = makeCaseRecord({ stageKey: '2nd-interview' })
 
   // 2. Resolve stage rules
-  const rules = resolveStageRules('2nd-or-final')
+  const rules = resolveStageRules('2nd-interview')
 
   // 3. Normalize attendees
   const attendees = normalizeAttendees(record, rules)
 
-  // 4. Verify HM is included for 2nd-or-final
+  // 4. Verify HM is included for 2nd interview
   const hm = attendees.find((a) => a.role === 'hiring_manager')
   assert.equal(hm.included, true)
 
@@ -266,8 +266,8 @@ test('integration: end-to-end from stage resolution through ranked slots', () =>
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  // 45-min slots in a 9-hour day = 12 slots
-  assert.equal(slots.length, 12)
+  // 45-min slots in an 8-hour day = 10 slots
+  assert.equal(slots.length, 10)
 
   // 8. Intersect with empty busy (all available)
   const intersected = intersectSlotsWithBusy(slots, {}, included)
@@ -277,6 +277,6 @@ test('integration: end-to-end from stage resolution through ranked slots', () =>
 
   // 9. Rank
   const ranked = rankSlots(intersected, SYDNEY_TIME_ZONE)
-  assert.ok(ranked.length === 12)
+  assert.ok(ranked.length === 10)
   assert.ok(ranked[0].score > 0)
 })

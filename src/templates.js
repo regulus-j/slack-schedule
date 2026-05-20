@@ -3,6 +3,7 @@ import path from 'node:path';
 import { generateSignatureHTML, signaturePlainText } from './signature.js';
 
 const TEMPLATE_DIR = path.join(process.cwd(), 'email-templates');
+export const SCHEDULING_TEMPLATE_IDS = ['1st-interview-invite', '2nd-or-Final-invite'];
 
 export const TEMPLATE_LABELS = {
   '1st-interview-invite': '1st interview invite',
@@ -84,6 +85,15 @@ export async function loadTemplates(templateDir = TEMPLATE_DIR) {
   }
 
   return templates.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export async function loadSchedulingTemplates(templateDir = TEMPLATE_DIR) {
+  const templates = await loadTemplates(templateDir)
+  return templates.filter((template) => isSchedulingTemplate(template.id))
+}
+
+export function isSchedulingTemplate(templateId) {
+  return SCHEDULING_TEMPLATE_IDS.includes(templateId)
 }
 
 export function renderTemplate(template, variables) {

@@ -6,6 +6,7 @@ import {
   personLabel,
   personPickerLabel,
   searchRecords,
+  trimForSlack,
 } from '../src/data/search.js';
 
 test('formats display and picker labels differently', () => {
@@ -42,4 +43,10 @@ test('searches records case-insensitively', () => {
   );
   assert.equal(results.length, 1);
   assert.equal(results[0].name, 'A');
+});
+
+test('trims Slack option text to the requested maximum length', () => {
+  const text = 'A'.repeat(90);
+  assert.equal(trimForSlack(text).length, 75);
+  assert.equal(trimForSlack(text), `${'A'.repeat(72)}...`);
 });

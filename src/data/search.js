@@ -1,4 +1,4 @@
-import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from './sample-data.js';
+import { getApplicants, getAllPeople } from './cache.js';
 
 export function personLabel(person) {
   return formatPersonLabel(person, 'display');
@@ -28,16 +28,16 @@ export function toSlackOption(text, value) {
 
 export function trimForSlack(value, max = 75) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
-  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
-export function searchApplicants(query, applicants = SAMPLE_APPLICANTS) {
+export function searchApplicants(query, applicants = getApplicants()) {
   return searchRecords(query, applicants, (item) =>
     [item.firstName, item.lastName, item.email, item.jobTitle, item.jazzhrApplicationId].join(' '),
   );
 }
 
-export function searchPeople(query, people = SAMPLE_PEOPLE) {
+export function searchPeople(query, people = getAllPeople()) {
   return searchRecords(query, people, (item) => [item.name, item.email, item.role].join(' '));
 }
 
@@ -49,19 +49,19 @@ export function searchRecords(query, records, toHaystack) {
     .slice(0, 20);
 }
 
-export function findApplicant(id, applicants = SAMPLE_APPLICANTS) {
+export function findApplicant(id, applicants = getApplicants()) {
   return applicants.find((applicant) => applicant.id === id);
 }
 
-export function findPerson(id, people = SAMPLE_PEOPLE) {
+export function findPerson(id, people = getAllPeople()) {
   return people.find((person) => person.id === id);
 }
 
-export function personOptions(query, people = SAMPLE_PEOPLE) {
+export function personOptions(query, people = getAllPeople()) {
   return searchPeople(query, people).map((person) => toSlackOption(personPickerLabel(person), person.id));
 }
 
-export function applicantOptions(query, applicants = SAMPLE_APPLICANTS) {
+export function applicantOptions(query, applicants = getApplicants()) {
   return searchApplicants(query, applicants).map((applicant) =>
     toSlackOption(applicantPickerLabel(applicant), applicant.id),
   );

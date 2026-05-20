@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   TEMPLATE_METADATA,
+  loadSchedulingTemplates,
   normalizeTemplateText,
   parseTemplate,
   renderTemplate,
@@ -112,4 +113,13 @@ test('template metadata marks final interview resumes as required', () => {
   assert.equal(TEMPLATE_METADATA['1st-interview-invite'].resumeRequired, false)
   assert.equal(templateRequiresResume('2nd-or-Final-invite'), true)
   assert.equal(templateRequiresResume('1st-interview-invite'), false)
+})
+
+test('loadSchedulingTemplates only exposes interview invite templates', async () => {
+  const templates = await loadSchedulingTemplates()
+  assert.deepEqual(templates.map((template) => template.id).sort(), [
+    '1st-interview-invite',
+    '2nd-or-Final-invite',
+  ])
+  assert.ok(!templates.some((template) => template.id.endsWith('.eml')))
 })

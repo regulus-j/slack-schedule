@@ -10,8 +10,10 @@ import {
   visibleCaseActions,
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
-import { buildIntakeDraft } from '../src/slack/handlers.js';
+import { buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
 import { actionButtonsForCase, homeView, intakeModal } from '../src/slack/views.js';
+import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
+import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
 const baseCase = {
   id: 'case-1',
@@ -150,6 +152,22 @@ test('intake modal includes optional target window fields', () => {
   assert.equal(inputBlocks.find((block) => block.block_id === 'window_end_block').optional, true);
 });
 
+test('intake modal uses stage selection instead of template selection', () => {
+  const view = intakeModal({ templates: [] });
+  const inputBlocks = view.blocks.filter((block) => block.type === 'input');
+  const stageBlock = inputBlocks.find((block) => block.block_id === 'stage_block');
+
+  assert.ok(stageBlock);
+  assert.equal(stageBlock.label.text, 'Stage');
+  assert.equal(stageBlock.element.action_id, 'stage_select');
+  assert.deepEqual(stageBlock.element.options.map((option) => option.text.text), [
+    '1st Interview',
+    '2nd Interview',
+    'Final Interview',
+  ]);
+  assert.equal(inputBlocks.some((block) => block.block_id === 'template_block'), false);
+});
+
 test('intake modal includes a resume link field', () => {
   const view = intakeModal({
     templates: [
@@ -169,6 +187,7 @@ test('intake modal includes a resume link field', () => {
 });
 
 test('intake modal separates person names from emails', () => {
+  const recruiters = SAMPLE_PEOPLE.filter((p) => p.role === 'recruiter');
   const view = intakeModal({
     templates: [
       {
@@ -186,6 +205,7 @@ test('intake modal separates person names from emails', () => {
       hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
       hiringManagerEmail: 'ana@example.com',
     },
+    recruiters,
   });
 
   const applicantNameBlock = view.blocks.find((block) => block.block_id === 'applicant_block');
@@ -196,6 +216,7 @@ test('intake modal separates person names from emails', () => {
   const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block');
 
   assert.equal(applicantNameBlock.element.type, 'external_select');
+  assert.equal(recruiterNameBlock.element.type, 'static_select');
   assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
   assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
@@ -206,6 +227,12 @@ test('intake modal separates person names from emails', () => {
 });
 
 test('builds intake draft emails from selected people and overrides', () => {
+  setApplicants(SAMPLE_APPLICANTS);
+  const recruiters = SAMPLE_PEOPLE.filter((p) => p.role === 'recruiter');
+  const managers = SAMPLE_PEOPLE.filter((p) => p.role === 'hiring_manager');
+  setRecruiters(recruiters);
+  setHiringManagers(managers);
+
   const draft = buildIntakeDraft(
     {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
@@ -214,7 +241,7 @@ test('builds intake draft emails from selected people and overrides', () => {
       applicant_email_block: { applicant_email: { value: '' } },
       recruiter_email_block: { recruiter_email: { value: 'custom-recruiter@example.com' } },
       hm_email_block: { hm_email: { value: '' } },
-      template_block: { template_select: { selected_option: { value: 'demo-template' } } },
+      stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
       resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },
       window_start_block: { window_start: { selected_date: '2026-05-20' } },
@@ -222,8 +249,8 @@ test('builds intake draft emails from selected people and overrides', () => {
     },
     [
       {
-        id: 'demo-template',
-        label: 'Demo Template',
+        id: '2nd-or-Final-invite',
+        label: '2nd/final interview invite',
         subject: 'Subject',
         body: 'Body',
       },
@@ -236,11 +263,50 @@ test('builds intake draft emails from selected people and overrides', () => {
   assert.equal(draft.applicant.email, 'alex.reyes@example.com');
   assert.equal(draft.recruiter.email, 'custom-recruiter@example.com');
   assert.equal(draft.hiringManager.email, 'ana.cruz@example.com');
-  assert.equal(draft.templateId, 'demo-template');
+  assert.equal(draft.stageKey, 'final-interview');
+  assert.equal(draft.templateId, '2nd-or-Final-invite');
   assert.equal(draft.notes, 'Notes');
   assert.equal(draft.resumeLink, 'https://example.com/resume.pdf');
   assert.equal(draft.interviewWindowStartDate, '2026-05-20');
   assert.equal(draft.interviewWindowEndDate, '2026-05-21');
+});
+
+test('builds intake draft recruiter from the selected applicant', () => {
+  setApplicants([
+    {
+      id: 'applicant-jazz-1',
+      firstName: 'Nina',
+      lastName: 'Dela Cruz',
+      email: 'nina@example.com',
+      jobTitle: 'Support Specialist',
+      recruiterId: '123',
+    },
+  ]);
+  setRecruiters([
+    {
+      id: 'rec-123',
+      name: 'Mara Santos',
+      email: 'mara@example.com',
+      role: 'recruiter',
+    },
+  ]);
+  setHiringManagers([]);
+
+  const draft = buildIntakeDraft(
+    {
+      applicant_block: { applicant_select: { selected_option: { value: 'applicant-jazz-1' } } },
+      applicant_email_block: { applicant_email: { value: '' } },
+      recruiter_email_block: { recruiter_email: { value: '' } },
+      hm_email_block: { hm_email: { value: '' } },
+    },
+    [],
+  );
+
+  assert.equal(draft.recruiterId, '123');
+  assert.equal(draft.recruiter.name, 'Mara Santos');
+  assert.equal(draft.recruiterEmail, 'mara@example.com');
+  assert.equal(draft.recruiterOption.value, 'rec-123');
+  assert.equal(draft.recruiterOption.text.text, 'Mara Santos - mara@example.com');
 });
 
 test('builds a reminder email from the current schedule', () => {
@@ -265,4 +331,59 @@ test('builds a reminder email from the current schedule', () => {
   assert.match(email.subject, /Reminder/);
   assert.match(email.body, /2026-05-20/);
   assert.match(email.body, /09:30/);
+});
+
+test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
+  const variables = buildTemplateVariables({
+    templateId: '2nd-or-Final-invite',
+    stageKey: 'final-interview',
+    applicant: {
+      firstName: 'Alex',
+      jobTitle: 'Support Specialist',
+    },
+    hiringManager: {
+      name: 'Ana Cruz',
+      positionTitle: 'Operations Manager',
+    },
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+    },
+  });
+
+  assert.equal(variables.applicant_first_name, 'Alex');
+  assert.equal(variables.job_title, 'Support Specialist');
+  assert.equal(variables.interview_stage, 'Final Interview');
+  assert.equal(variables.date, '2026-05-20');
+  assert.equal(variables.time, '09:30');
+  assert.equal(variables.link, 'https://zoom.us/j/demo');
+  assert.equal(variables.hiring_manager_name, 'Ana Cruz');
+  assert.equal(variables.position_title, 'Operations Manager');
+});
+
+test('slack case views hide backend application id and show calendar link', () => {
+  const view = homeView({
+    myCases: [{
+      ...baseCase,
+      status: 'Scheduled',
+      calendarEventId: 'event-1',
+      calendarEventHtmlLink: 'https://calendar.google.com/event?eid=abc',
+      applicant: {
+        ...baseCase.applicant,
+        jazzhrApplicationId: 'backend-only-id',
+      },
+      currentSchedule: {
+        date: '2026-05-20',
+        time: '09:30',
+      },
+    }],
+    teamCases: [],
+  });
+
+  const text = JSON.stringify(view.blocks);
+  assert.doesNotMatch(text, /Application ID:/);
+  assert.doesNotMatch(text, /backend-only-id/);
+  assert.match(text, /Calendar event/);
+  assert.match(text, /https:\/\/calendar\.google\.com\/event\?eid=abc/);
 });

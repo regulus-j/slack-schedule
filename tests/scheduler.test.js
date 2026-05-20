@@ -7,7 +7,7 @@ import {
   rankSlots,
   formatConflictMessage
 } from '../src/workflow/scheduler.js'
-import { SYDNEY_TIME_ZONE } from '../src/time.js'
+import { formatDateForInput, SYDNEY_TIME_ZONE } from '../src/time.js'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ function makeSlot(startIso, endIso, overrides = {}) {
 
 // ─── generateCandidateSlots ──────────────────────────────────────────────────
 
-test('generates 18 slots for a single 9-5 business day with 30 min duration', () => {
+test('generates 16 slots for a single 9-5 business day with 30 min duration', () => {
   const slots = generateCandidateSlots({
     startDate: '2026-06-01',
     endDate: '2026-06-01',
@@ -36,10 +36,10 @@ test('generates 18 slots for a single 9-5 business day with 30 min duration', ()
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  assert.equal(slots.length, 18)
+  assert.equal(slots.length, 16)
 })
 
-test('generates 9 slots for a single business day with 60 min duration', () => {
+test('generates 8 slots for a single business day with 60 min duration', () => {
   const slots = generateCandidateSlots({
     startDate: '2026-06-01',
     endDate: '2026-06-01',
@@ -47,7 +47,7 @@ test('generates 9 slots for a single business day with 60 min duration', () => {
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  assert.equal(slots.length, 9)
+  assert.equal(slots.length, 8)
 })
 
 test('all generated slots have required properties', () => {
@@ -129,7 +129,25 @@ test('generates slots across multiple business days', () => {
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  assert.equal(slots.length, 27, '3 days × 9 one-hour slots = 27')
+  assert.equal(slots.length, 24, '3 days x 8 one-hour slots = 24')
+})
+
+test('does not generate slots before today in the interview timezone', () => {
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setUTCDate(today.getUTCDate() - 1)
+  const tomorrow = new Date(today)
+  tomorrow.setUTCDate(today.getUTCDate() + 1)
+  const todayStr = formatDateForInput(today, SYDNEY_TIME_ZONE)
+
+  const slots = generateCandidateSlots({
+    startDate: formatDateForInput(yesterday, SYDNEY_TIME_ZONE),
+    endDate: formatDateForInput(tomorrow, SYDNEY_TIME_ZONE),
+    durationMinutes: 60,
+    timeZone: SYDNEY_TIME_ZONE
+  })
+
+  assert.ok(slots.every((slot) => formatDateForInput(slot.start, SYDNEY_TIME_ZONE) >= todayStr))
 })
 
 test('returns empty for invalid date range (end before start)', () => {

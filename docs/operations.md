@@ -20,7 +20,9 @@ Local development can run the Slack workflow with only Slack tokens. Google and 
 
 ## Deployment
 
-Deploy the Node service as an always-on Render web service.
+For production on an Azure VM with Docker Compose, follow the deployment guide in [docs/azure-vm-docker.md](docs/azure-vm-docker.md).
+
+If you are using Render, deploy the Node service as an always-on web service.
 
 Recommended Render settings:
 
@@ -29,7 +31,7 @@ Recommended Render settings:
 - Health check path: `/health`
 - Runtime: Node 20 or newer
 
-Run `migrations/001_initial.sql` against the managed Postgres database before production launch. If `DATABASE_URL` is present, the app uses Postgres. Without it, local development falls back to JSON state in `data/runtime/state.json`.
+Run `npm run migrate` (or the Compose `migrate` service) against the Postgres database before production launch. If `DATABASE_URL` is present, the app uses Postgres. Without it, local development falls back to JSON state in `data/runtime/state.json`.
 
 ## Security
 

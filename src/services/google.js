@@ -66,9 +66,11 @@ export async function checkFreeBusy({ config, logger, attendees, windows, store,
     method: 'POST',
     headers: buildAuthHeaders(accessToken),
     body: JSON.stringify({
-      timeMin: windows[0]?.start || new Date().toISOString(),
-      timeMax: windows[0]?.end || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      items: attendees.map((email) => ({ id: email })),
+      timeMin: windows[0]?.timeMin || windows[0]?.start || new Date().toISOString(),
+      timeMax: windows[0]?.timeMax || windows[0]?.end || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      items: attendees.map((attendee) => ({
+        id: typeof attendee === 'string' ? attendee : attendee.id,
+      })),
     }),
   });
 
