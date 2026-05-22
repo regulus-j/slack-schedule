@@ -53,6 +53,7 @@ import {
   finalizeModal,
   homeView,
   intakeModal,
+  scheduleTrackerModal,
   rescheduleApprovalModal,
   rescheduleModal,
   schedulingModal,
@@ -173,6 +174,22 @@ export function registerSlackHandlers(app, context) {
       privateMetadata: body.channel?.id || body.user.id,
       timeZones: schedulingTimeZones,
       defaultTimeZone,
+    });
+  });
+
+  app.action('open_schedule_tracker', async ({ ack, body, client }) => {
+    await ack();
+    const ownerSlackUserId = body.user?.id || ''
+    const scheduledCases = await getScheduledCases(store, ownerSlackUserId, 'all')
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: scheduleTrackerModal({
+        cases: scheduledCases,
+        filters: {},
+        scope: 'all',
+        ownerSlackUserId,
+        totalCount: scheduledCases.length,
+      }),
     });
   });
 
@@ -1054,6 +1071,26 @@ export function registerSlackHandlers(app, context) {
     });
   });
 
+  app.view('schedule_tracker_submit', async ({ ack, body, view }) => {
+    const metadata = parseViewMetadata(view.private_metadata)
+    const ownerSlackUserId = metadata.ownerSlackUserId || body.user.id
+    const filters = readTrackerFilters(view.state.values)
+    const scope = filters.scope || 'all'
+    const scheduledCases = await getScheduledCases(store, ownerSlackUserId, scope)
+    const filteredCases = filterScheduledCases(scheduledCases, filters)
+
+    await ack({
+      response_action: 'update',
+      view: scheduleTrackerModal({
+        cases: filteredCases,
+        filters,
+        scope,
+        ownerSlackUserId,
+        totalCount: scheduledCases.length,
+      }),
+    });
+  });
+
   app.action('open_reschedule_modal', async ({ ack, body, client }) => {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
@@ -1331,6 +1368,87 @@ async function buildScheduledCandidateEmail(caseRecord) {
     to: caseRecord.applicant?.email,
     from: caseRecord.recruiter?.email,
   }
+}
+
+function parseViewMetadata(privateMetadata) {
+  try {
+    return JSON.parse(privateMetadata || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function readTrackerFilters(values) {
+  return {
+    scope: values.tracker_scope_block?.tracker_scope?.selected_option?.value || 'all',
+    candidate: values.tracker_candidate_block?.tracker_candidate?.value?.trim() || '',
+    recruiter: values.tracker_recruiter_block?.tracker_recruiter?.value?.trim() || '',
+    hiringManager: values.tracker_hm_block?.tracker_hm?.value?.trim() || '',
+    date: values.tracker_date_block?.tracker_date?.selected_date || '',
+    time: values.tracker_time_block?.tracker_time?.value?.trim() || '',
+  }
+}
+
+async function getScheduledCases(store, ownerSlackUserId, scope = 'all') {
+  const allCases = await store.listCases()
+  return allCases
+    .filter((item) => isScheduledCase(item))
+    .filter((item) => {
+      if (scope === 'my') return item.ownerSlackUserId === ownerSlackUserId
+      if (scope === 'team') return item.ownerSlackUserId !== ownerSlackUserId
+      return true
+    })
+    .sort(compareScheduledCases)
+}
+
+function filterScheduledCases(cases, filters) {
+  return cases.filter((caseRecord) => {
+    const schedule = caseRecord.currentSchedule || {}
+    const candidateText = buildCaseSearchText(caseRecord.applicant)
+    const recruiterText = buildCaseSearchText(caseRecord.recruiter)
+    const hiringManagerText = buildCaseSearchText(caseRecord.hiringManager)
+
+    if (filters.candidate && !candidateText.includes(filters.candidate.toLowerCase())) return false
+    if (filters.recruiter && !recruiterText.includes(filters.recruiter.toLowerCase())) return false
+    if (filters.hiringManager && !hiringManagerText.includes(filters.hiringManager.toLowerCase())) return false
+    if (filters.date && !matchesDateFilter(caseRecord, schedule, filters.date)) return false
+    if (filters.time && !matchesTimeFilter(caseRecord, schedule, filters.time)) return false
+
+    return true
+  })
+}
+
+function buildCaseSearchText(person) {
+  if (!person) return ''
+  return [person.name, person.firstName, person.lastName, person.email]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function matchesDateFilter(caseRecord, schedule, dateFilter) {
+  const date = schedule.date || caseRecord.selectedInterviewDate || ''
+  return date === dateFilter
+}
+
+function matchesTimeFilter(caseRecord, schedule, timeFilter) {
+  const time = schedule.time || caseRecord.selectedInterviewTime || ''
+  return time.toLowerCase().includes(timeFilter.toLowerCase())
+}
+
+function compareScheduledCases(left, right) {
+  const leftSort = scheduledCaseSortKey(left)
+  const rightSort = scheduledCaseSortKey(right)
+  return rightSort.localeCompare(leftSort)
+}
+
+function scheduledCaseSortKey(caseRecord) {
+  const schedule = caseRecord.currentSchedule || {}
+  const date = schedule.date || caseRecord.selectedInterviewDate || ''
+  const time = schedule.time || caseRecord.selectedInterviewTime || '00:00'
+  const scheduleKey = date ? `${date}T${time}` : ''
+  const updatedKey = caseRecord.updatedAt || caseRecord.lastActionAt || caseRecord.createdAt || ''
+  return scheduleKey || updatedKey || ''
 }
 
 export function buildTemplateVariables(caseRecord) {
