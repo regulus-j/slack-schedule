@@ -122,6 +122,17 @@ test('normalizeAttendees handles guest as string', () => {
   assert.equal(guest.email, 'guest-string@test.com')
 })
 
+test('normalizeAttendees tolerates non-array guests', () => {
+  const record = makeCaseRecord({
+    guests: { email: 'bad-shape@test.com' }
+  })
+  const rules = resolveStageRules('1st-interview')
+  const result = normalizeAttendees(record, rules)
+
+  const guestCount = result.filter((a) => a.role === 'guest').length
+  assert.equal(guestCount, 0)
+})
+
 test('normalizeAttendees includes external attendees', () => {
   const record = makeCaseRecord({
     externalAttendees: [{ id: 'ext1', name: 'External Person', email: 'external@other.com', required: true }]
@@ -134,6 +145,17 @@ test('normalizeAttendees includes external attendees', () => {
   assert.equal(ext.email, 'external@other.com')
   assert.equal(ext.included, true)
   assert.equal(ext.required, true)
+})
+
+test('normalizeAttendees tolerates non-array external attendees', () => {
+  const record = makeCaseRecord({
+    externalAttendees: { email: 'external@bad.com' }
+  })
+  const rules = resolveStageRules('1st-interview')
+  const result = normalizeAttendees(record, rules)
+
+  const externalCount = result.filter((a) => a.role === 'external').length
+  assert.equal(externalCount, 0)
 })
 
 test('normalizeAttendees applies attendanceOverrides to force include HM by role', () => {

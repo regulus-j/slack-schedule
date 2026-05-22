@@ -269,7 +269,16 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.options('hm_select', async ({ options, ack }) => {
-    await ack({ options: personOptions(options.value, getHiringManagers()) });
+    const query = String(options.value || '').trim()
+    if (!query) {
+      const hiringManagers = getHiringManagers()
+      const initialOptions = (Array.isArray(hiringManagers) ? hiringManagers : [])
+        .slice(0, 100)
+        .map((person) => toSlackOption(personPickerLabel(person), person.id))
+      await ack({ options: initialOptions })
+      return
+    }
+    await ack({ options: personOptions(query, getHiringManagers()) });
   });
 
   app.options('guest_select', async ({ options, ack }) => {

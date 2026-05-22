@@ -66,11 +66,12 @@ export function visibleCaseActions(caseRecord) {
 }
 
 export function buildScheduleSnapshot({ date, time, zoomLink, attendees, eventId, htmlLink }) {
+  const attendeeList = Array.isArray(attendees) ? attendees : []
   return {
     date,
     time,
     zoomLink,
-    attendees: attendees || [],
+    attendees: attendeeList,
     eventId: eventId || null,
     htmlLink: htmlLink || null,
   };

@@ -41,6 +41,10 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     }
   }
 
+  function normalizeArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
   function rowToCase(row) {
     return {
       id: row.id,
@@ -59,8 +63,8 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       selectedInterviewTime: row.selected_interview_time,
       resumeLink: row.resume_link || row.resume_file || null,
       autofill: row.autofill,
-      approvals: row.approvals || [],
-      guests: row.guests || [],
+      approvals: normalizeArray(row.approvals),
+      guests: normalizeArray(row.guests),
       candidateEmail: row.candidate_email,
       smsCopy: row.sms_copy,
       hmMessage: row.hm_message,
@@ -72,7 +76,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       rescheduleReason: row.reschedule_reason,
       previousSchedule: row.previous_schedule,
       currentSchedule: row.current_schedule,
-      scheduleHistory: row.schedule_history || [],
+      scheduleHistory: normalizeArray(row.schedule_history),
       lastCalendarUpdateAt: row.last_calendar_update_at?.toISOString?.() || row.last_calendar_update_at,
       reminderScheduleVersion: row.reminder_schedule_version || 0,
       reminderStatus: row.reminder_status,
@@ -86,11 +90,11 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       gmailSendStatus: row.gmail_send_status,
       createdAt: row.created_at?.toISOString?.() || row.created_at,
       updatedAt: row.updated_at?.toISOString?.() || row.updated_at,
-      attendees: row.attendees || [],
+      attendees: normalizeArray(row.attendees),
       stageKey: row.stage_key,
       stageOverrides: row.stage_overrides || {},
       attendanceOverrides: row.attendance_overrides || {},
-      externalAttendees: row.external_attendees || [],
+      externalAttendees: normalizeArray(row.external_attendees),
       lastAvailabilityCheck: row.last_availability_check,
       selectedSlot: row.selected_slot,
     };
@@ -273,7 +277,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           merged.selectedInterviewTime || null,
           merged.resumeLink || merged.resumeFile || null,
           merged.autofill || {},
-          merged.guests || [],
+          normalizeArray(merged.guests),
           merged.candidateEmail || null,
           merged.smsCopy || null,
           merged.hmMessage || null,
@@ -285,7 +289,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           merged.rescheduleReason || null,
           merged.previousSchedule || null,
           merged.currentSchedule || null,
-          merged.scheduleHistory || [],
+          normalizeArray(merged.scheduleHistory),
           merged.lastCalendarUpdateAt || null,
           merged.reminderScheduleVersion || 0,
           merged.reminderStatus || null,
@@ -297,11 +301,11 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           merged.lastActionAt || null,
           merged.lastActionBy || null,
           merged.gmailSendStatus || null,
-          merged.attendees || [],
+          normalizeArray(merged.attendees),
           merged.stageKey || null,
           merged.stageOverrides || {},
           merged.attendanceOverrides || {},
-          merged.externalAttendees || [],
+          normalizeArray(merged.externalAttendees),
           merged.lastAvailabilityCheck || null,
           merged.selectedSlot || null,
         ],
