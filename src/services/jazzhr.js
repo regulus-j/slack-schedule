@@ -1,4 +1,4 @@
-import { setApplicants, setRecruiters, getApplicants } from '../data/cache.js';
+import { setApplicants, setRecruiters, getApplicants, getRecruiters } from '../data/cache.js';
 import { searchApplicants } from '../data/search.js';
 
 const BASE = 'https://api.resumatorapi.com/v1';
@@ -7,7 +7,24 @@ export async function searchCachedApplicants(query) {
   return searchApplicants(query, getApplicants());
 }
 
-export async function refreshJazzhrCache({ config, logger, throwOnError = false }) {
+export async function fetchApplicantDetails(applicantId, { config, logger }) {
+  const apiKey = config.jazzhr.apiKey;
+  if (!apiKey) {
+    logger.warn('jazzhr_applicant_details_skipped', { reason: 'missing_api_key', applicantId });
+    return null;
+  }
+
+  try {
+    const jazzhrId = applicantId.replace(/^applicant-/, '');
+    const data = await jazzhrGetWithRetry(`/applicants/${jazzhrId}`, apiKey, logger);
+    return mapApplicantDetails(data, applicantId);
+  } catch (err) {
+    logger.error('jazzhr_applicant_details_failed', { applicantId, error: err.message });
+    return null;
+  }
+}
+
+async function refreshJazzhrCache({ config, logger, throwOnError = false }) {
   const apiKey = config.jazzhr.apiKey;
 
   if (!apiKey) {
@@ -163,6 +180,19 @@ function mapApplicant(item) {
     hiringManagerId: '',
     recruiterId: normalizeRecruiterId(item.recruiter_id),
     source: 'jazzhr',
+  };
+}
+
+function mapApplicantDetails(item, applicantId) {
+  const base = mapApplicant(item);
+  return {
+    ...base,
+    rawResume: item.resume?.text || item.resume || '',
+    resumeUrl: item.resume?.url || item.resume_url || '',
+    coverLetter: item.cover_letter || '',
+    customFields: item.custom_fields || {},
+    sourceDetail: item.source_detail || '',
+    location: item.location || '',
   };
 }
 
