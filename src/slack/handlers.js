@@ -234,23 +234,23 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.action('open_google_oauth', async ({ ack, body, client }) => {
-    await ack();
+    await ack()
     if (!await verifyChannel({ config, body, client })) return
     if (!config.google.clientId || !config.google.clientSecret || !config.google.redirectUri) {
-      await client.chat.postEphemeral({
-        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
-        user: body.user.id,
+      const dmChannel = await openDm(client, body.user.id)
+      await client.chat.postMessage({
+        channel: dmChannel,
         text: '⚠️ Google OAuth is not configured yet. Set the Google client credentials before connecting a recruiter account.',
-      });
-      return;
+      })
+      return
     }
 
-    const oauthUrl = buildGoogleOAuthUrl(config, JSON.stringify({ recruiterId: body.user.id, source: 'slack_home' }));
-    await client.chat.postEphemeral({
-      channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
-      user: body.user.id,
+    const oauthUrl = buildGoogleOAuthUrl(config, JSON.stringify({ recruiterId: body.user.id, source: 'slack_home' }))
+    const dmChannel = await openDm(client, body.user.id)
+    await client.chat.postMessage({
+      channel: dmChannel,
       text: `🔗 Connect Google Calendar and Gmail here: <${oauthUrl}>`,
-    });
+    })
   });
 
   app.options('applicant_select', async ({ options, ack }) => {
@@ -1660,6 +1660,11 @@ async function resolveHiringManagerSlackId({ client, caseRecord, store, logger }
     });
     return null;
   }
+}
+
+async function openDm(client, userId) {
+  const result = await client.conversations.open({ users: userId })
+  return result.channel.id
 }
 
 function parseEmails(value) {
