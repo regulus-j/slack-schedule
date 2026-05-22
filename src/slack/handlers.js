@@ -248,7 +248,7 @@ export function registerSlackHandlers(app, context) {
     await client.chat.postEphemeral({
       channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
       user: body.user.id,
-      text: `🔗 Connect Google Calendar and Gmail here: ${oauthUrl}`,
+      text: `🔗 Connect Google Calendar and Gmail here: <${oauthUrl}>`,
     });
   });
 
