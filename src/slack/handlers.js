@@ -32,6 +32,7 @@ import {
   buildScheduleSnapshot,
   canFinalizeSchedule,
   canStartReschedule,
+  isScheduledCase,
 } from '../workflow/reschedule.js'
 import { buildReminderEmail, buildRescheduleEmail } from '../workflow/messages.js'
 import {
