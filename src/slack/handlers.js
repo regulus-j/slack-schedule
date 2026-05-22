@@ -12,7 +12,7 @@ import {
 } from '../data/search.js'
 import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, templateRequiresResume } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
-import { refreshJazzhrCache } from '../services/jazzhr.js'
+import { refreshJazzhrCache, fetchApplicantDetails } from '../services/jazzhr.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
 import {
   PH_TIME_ZONE,
@@ -196,14 +196,40 @@ export function registerSlackHandlers(app, context) {
 
   app.action('applicant_select', async ({ ack, body, client }) => {
     await ack();
+    const selectedId = selectedOptionValue(body);
+    
+    // Fetch full applicant details from JazzHR API
+    const details = await fetchApplicantDetails(selectedId, { config, logger });
+    
+    // Attempt fuzzy matching for recruiter
+    let matchedRecruiterId = '';
+    if (details?.recruiterId) {
+      const recruiters = getRecruiters();
+      const directMatch = recruiters.find(r => r.id === details.recruiterId);
+      if (directMatch) {
+        matchedRecruiterId = directMatch.id;
+      } else {
+        // Fuzzy match by email or name
+        const jazzhrRecruiter = recruiters.find(r => 
+          (r.email && details.recruiterEmail && r.email.toLowerCase() === details.recruiterEmail.toLowerCase()) ||
+          (r.name && details.recruiterName && r.name.toLowerCase() === details.recruiterName.toLowerCase())
+        );
+        if (jazzhrRecruiter) {
+          matchedRecruiterId = jazzhrRecruiter.id;
+        }
+      }
+    }
+    
     await refreshIntakeModal({
       client,
       body,
       templates: await loadSchedulingTemplates(),
       selectedKey: 'applicant',
-      selectedId: selectedOptionValue(body),
+      selectedId,
       timeZones: schedulingTimeZones,
       defaultTimeZone,
+      applicantDetails: details,
+      matchedRecruiterId,
     });
   });
 
@@ -1332,9 +1358,23 @@ async function refreshIntakeModal({
   selectedId,
   timeZones = [],
   defaultTimeZone,
+  applicantDetails = null,
+  matchedRecruiterId = '',
 }) {
   if (!body.view?.id || !body.view?.hash) return;
   const draft = buildIntakeDraft(body.view.state.values, templates, { [selectedKey]: selectedId });
+  
+  // Apply matched recruiter from fuzzy matching if available
+  if (matchedRecruiterId && !draft.recruiterId) {
+    draft.recruiterId = matchedRecruiterId;
+    const matchedRecruiter = findPersonById(matchedRecruiterId);
+    if (matchedRecruiter) {
+      draft.recruiter = matchedRecruiter;
+      draft.recruiterEmail = matchedRecruiter.email || '';
+      draft.recruiterOption = toSlackOption(personPickerLabel(matchedRecruiter), matchedRecruiter.id);
+    }
+  }
+  
   await client.views.update({
     view_id: body.view.id,
     hash: body.view.hash,
