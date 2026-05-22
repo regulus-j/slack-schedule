@@ -54,6 +54,7 @@ import {
   finalizeModal,
   homeView,
   intakeModal,
+  applicantMetadataModal,
   scheduleTrackerModal,
   rescheduleApprovalModal,
   rescheduleModal,
@@ -230,6 +231,20 @@ export function registerSlackHandlers(app, context) {
       defaultTimeZone,
       applicantDetails: details,
       matchedRecruiterId,
+    });
+  });
+
+  app.action('view_applicant_details', async ({ ack, body, client }) => {
+    await ack();
+    const selectedId = body.actions[0].value;
+    if (!selectedId) return;
+    
+    const details = await fetchApplicantDetails(selectedId, { config, logger });
+    if (!details) return;
+    
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: applicantMetadataModal({ applicantDetails: details }),
     });
   });
 
@@ -595,6 +610,13 @@ export function registerSlackHandlers(app, context) {
 
     await ack();
     const htmlBody = plainTextToHtml(plainBody);
+    
+    // Extract CC and BCC attendees from form
+    const ccValues = view.state.values.cc_attendees_block?.cc_attendees?.selected_options || [];
+    const bccValues = view.state.values.bcc_attendees_block?.bcc_attendees?.selected_options || [];
+    const ccEmails = ccValues.map(opt => opt.value).filter(Boolean);
+    const bccEmails = bccValues.map(opt => opt.value).filter(Boolean);
+    
     const email = {
       subject,
       body: htmlBody,
@@ -602,6 +624,8 @@ export function registerSlackHandlers(app, context) {
       plainBody,
       to: caseRecord.applicant?.email,
       from: caseRecord.recruiter?.email,
+      cc: ccEmails.length > 0 ? ccEmails.join(', ') : undefined,
+      bcc: bccEmails.length > 0 ? bccEmails.join(', ') : undefined,
     };
     const smsCopy = view.state.values.sms_block.sms_copy.value || '';
     const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
