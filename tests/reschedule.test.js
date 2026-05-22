@@ -11,7 +11,7 @@ import {
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
 import { buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
-import { actionButtonsForCase, homeView, intakeModal } from '../src/slack/views.js';
+import { actionButtonsForCase, finalizeModal, homeView, intakeModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -129,6 +129,58 @@ test('home view buttons do not include empty values', () => {
 
   assert.ok(buttonElements.length > 0);
   assert.equal(buttonElements.some((button) => button.value === ''), false);
+});
+
+test('home view exposes the schedule tracker button', () => {
+  const view = homeView({ myCases: [], teamCases: [] });
+  const labels = view.blocks
+    .filter((block) => block.type === 'actions')
+    .flatMap((block) => block.elements)
+    .filter((element) => element.type === 'button')
+    .map((button) => button.text.text);
+
+  assert.ok(labels.includes('📚 Schedule tracker'));
+});
+
+test('schedule tracker modal renders scheduled case rows with action buttons', () => {
+  const scheduledCase = {
+    ...baseCase,
+    status: 'Scheduled',
+    ownerSlackUserId: 'U123',
+    currentSchedule: {
+      date: '2026-05-21',
+      time: '10:00',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com'],
+    },
+    calendarEventId: 'event-1',
+  };
+
+  const view = scheduleTrackerModal({
+    cases: [scheduledCase],
+    filters: { candidate: 'Alex' },
+    scope: 'all',
+    ownerSlackUserId: 'U123',
+    totalCount: 1,
+  });
+
+  const actionBlocks = view.blocks.filter((block) => block.type === 'actions');
+  const labels = actionBlocks.flatMap((block) => block.elements).map((element) => element.text.text);
+
+  assert.ok(view.blocks.some((block) => block.type === 'input' && block.block_id === 'tracker_candidate_block'));
+  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text.text.includes('Showing 1 of 1 scheduled cases.')));
+  assert.ok(labels.includes('🔄 Reschedule interview'));
+  assert.ok(labels.includes('❌ Cancel interview'));
+  assert.ok(labels.includes('📅 View calendar details'));
+});
+
+test('finalize modal explains that calendar descriptions are generated automatically', () => {
+  const view = finalizeModal(baseCase);
+  const sectionTexts = view.blocks
+    .filter((block) => block.type === 'section')
+    .map((block) => block.text.text);
+
+  assert.ok(sectionTexts.some((text) => text.includes('Calendar descriptions are generated automatically')));
 });
 
 test('intake modal includes optional target window fields', () => {

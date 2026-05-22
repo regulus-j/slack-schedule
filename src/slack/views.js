@@ -50,6 +50,7 @@ export function homeView({ myCases, teamCases, googleConnected = false }) {
       section(googleConnected ? '✅ Google Calendar and Gmail are connected for this Slack user.' : '⚠️ Google is not connected yet. Click Connect Google before final scheduling.') ,
       actions([
         button('🚀 Start scheduling', 'open_schedule_intake', 'primary'),
+        button('📚 Schedule tracker', 'open_schedule_tracker'),
         button('📢 Post channel button', 'post_schedule_launcher'),
         button('🔗 Connect Google', 'open_google_oauth'),
       ]),
@@ -179,6 +180,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         placeholder: plain('Optional end date'),
         ...(draft.interviewWindowEndDate ? { initial_date: draft.interviewWindowEndDate } : {}),
       }, true),
+      section('📝 Calendar descriptions are generated automatically from the schedule details. Add notes here only if you want extra intake context.'),
     ],
   };
 }
@@ -269,6 +271,7 @@ export function finalizeModal(caseRecord, recentAudits = []) {
       ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
       section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
+      section('📝 Calendar descriptions are generated automatically from the date, time, guests, and Zoom link.'),
       input('Interview date', 'date_block', {
         type: 'datepicker',
         action_id: 'date',
@@ -411,6 +414,7 @@ export function schedulingPhaseTwo(caseRecord, schedulingResult, recentAudits = 
     section(`*${caseTitle(caseRecord)}*`),
     ...caseProgressHeader(caseRecord, recentAudits),
     section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${timeZone}.`),
+    section('📝 Calendar descriptions are generated automatically from the selected schedule and attendees.'),
     section(`👥 *Attendees (${includedCount} included)*`),
     ...includedAttendeeList(attendees),
     actions([
@@ -614,6 +618,7 @@ export function rescheduleModal(caseRecord, recentAudits = []) {
       ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
       section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
+      section('📝 Calendar descriptions are generated automatically from the updated schedule details.'),
       input('Reason for reschedule', 'reschedule_reason_block', {
         type: 'plain_text_input',
         action_id: 'reschedule_reason',
@@ -709,6 +714,71 @@ export function caseMessageBlocks(caseRecord) {
     section(nextStepText(caseRecord)),
     actions(actionButtonsForCase(caseRecord)),
   ];
+}
+
+export function scheduleTrackerModal({ cases = [], filters = {}, scope = 'all', ownerSlackUserId = '', totalCount = 0 }) {
+  const rows = cases.slice(0, 8).flatMap((item) => [
+    section(caseSummary(item)),
+    actions(actionButtonsForCase(item)),
+    divider(),
+  ])
+
+  if (rows.length > 0) {
+    rows.pop()
+  }
+
+  return {
+    type: 'modal',
+    callback_id: 'schedule_tracker_submit',
+    private_metadata: JSON.stringify({ ownerSlackUserId }),
+    title: plain('📚 Schedule Tracker'),
+    submit: plain('🔎 Filter'),
+    close: plain('Close'),
+    blocks: [
+      header('📚 Schedule Tracker'),
+      section('Browse scheduled interviews newest-first, then narrow the list with filters.'),
+      section('📝 Calendar descriptions are generated automatically, so this tracker is read-only.'),
+      input('Scope', 'tracker_scope_block', {
+        type: 'static_select',
+        action_id: 'tracker_scope',
+        placeholder: plain('Choose scope'),
+        options: trackerScopeOptions(),
+        ...(trackerScopeOption(scope) ? { initial_option: trackerScopeOption(scope) } : {}),
+      }),
+      input('Candidate', 'tracker_candidate_block', {
+        type: 'plain_text_input',
+        action_id: 'tracker_candidate',
+        placeholder: plain('Name or email'),
+        ...(filters.candidate ? { initial_value: filters.candidate } : {}),
+      }, true),
+      input('Recruiter', 'tracker_recruiter_block', {
+        type: 'plain_text_input',
+        action_id: 'tracker_recruiter',
+        placeholder: plain('Name or email'),
+        ...(filters.recruiter ? { initial_value: filters.recruiter } : {}),
+      }, true),
+      input('Hiring manager', 'tracker_hm_block', {
+        type: 'plain_text_input',
+        action_id: 'tracker_hm',
+        placeholder: plain('Name or email'),
+        ...(filters.hiringManager ? { initial_value: filters.hiringManager } : {}),
+      }, true),
+      input('Date', 'tracker_date_block', {
+        type: 'datepicker',
+        action_id: 'tracker_date',
+        placeholder: plain('Filter by interview date'),
+        ...(filters.date ? { initial_date: filters.date } : {}),
+      }, true),
+      input('Time', 'tracker_time_block', {
+        type: 'plain_text_input',
+        action_id: 'tracker_time',
+        placeholder: plain('HH:MM or part of the time'),
+        ...(filters.time ? { initial_value: filters.time } : {}),
+      }, true),
+      section(`Showing ${cases.length} of ${totalCount} scheduled cases.`),
+      ...(rows.length > 0 ? rows : [section('No scheduled cases match the current filters.')]),
+    ],
+  }
 }
 
 function caseListBlocks(cases, emptyText) {
@@ -894,6 +964,18 @@ function button(text, actionId, style, value) {
   };
   if (value !== undefined && value !== null && value !== '') payload.value = value;
   return payload;
+}
+
+function trackerScopeOptions() {
+  return [
+    { text: plain('All scheduled cases'), value: 'all' },
+    { text: plain('My scheduled cases'), value: 'my' },
+    { text: plain('Team scheduled cases'), value: 'team' },
+  ]
+}
+
+function trackerScopeOption(scope) {
+  return trackerScopeOptions().find((item) => item.value === scope) || trackerScopeOptions()[0]
 }
 
 function mentionPerson(person) {
