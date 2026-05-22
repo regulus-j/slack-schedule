@@ -1,6 +1,14 @@
 import crypto from 'node:crypto'
 import { resolveStageRules } from './stage-rules.js'
 
+function normalizeArray(value, label) {
+  if (Array.isArray(value)) return value
+  if (value) {
+    console.warn('attendees_non_array', { field: label, type: typeof value })
+  }
+  return []
+}
+
 export function normalizeAttendees(caseRecord, stageRules) {
   const attendees = []
 
@@ -54,7 +62,8 @@ export function normalizeAttendees(caseRecord, stageRules) {
     })
   }
 
-  for (const guest of (caseRecord.guests || [])) {
+  const guests = normalizeArray(caseRecord.guests, 'guests')
+  for (const guest of guests) {
     const guestObj = typeof guest === 'string' ? { email: guest, name: guest } : guest
     attendees.push({
       id: guestObj.id || `guest-${crypto.randomUUID()}`,
@@ -68,7 +77,8 @@ export function normalizeAttendees(caseRecord, stageRules) {
     })
   }
 
-  for (const ext of (caseRecord.externalAttendees || [])) {
+  const externalAttendees = normalizeArray(caseRecord.externalAttendees, 'externalAttendees')
+  for (const ext of externalAttendees) {
     attendees.push({
       id: ext.id || `ext-${crypto.randomUUID()}`,
       name: ext.name || ext.email || '',

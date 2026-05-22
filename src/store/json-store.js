@@ -9,6 +9,22 @@ const DEFAULT_STATE = {
   googleTokens: {},
 };
 
+function normalizeArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function normalizeCase(record) {
+  if (!record) return record
+  return {
+    ...record,
+    approvals: normalizeArray(record.approvals),
+    guests: normalizeArray(record.guests),
+    scheduleHistory: normalizeArray(record.scheduleHistory),
+    attendees: normalizeArray(record.attendees),
+    externalAttendees: normalizeArray(record.externalAttendees),
+  }
+}
+
 export function createJsonStore(runtimeDir, encryptionKey = '') {
   const statePath = path.join(runtimeDir, 'state.json');
   let state = structuredClone(DEFAULT_STATE);
@@ -24,6 +40,7 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       try {
         const raw = await fs.readFile(statePath, 'utf8');
         state = { ...structuredClone(DEFAULT_STATE), ...JSON.parse(raw) };
+        state.cases = normalizeArray(state.cases).map(normalizeCase)
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
         await persist();
@@ -82,25 +99,25 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
     },
 
     async listCases() {
-      return [...state.cases];
+      return state.cases.map(normalizeCase);
     },
 
     async listCasesForUser(slackUserId) {
-      return state.cases.filter((item) => item.ownerSlackUserId === slackUserId);
+      return state.cases.filter((item) => item.ownerSlackUserId === slackUserId).map(normalizeCase);
     },
 
     async getCase(id) {
-      return state.cases.find((item) => item.id === id);
+      return normalizeCase(state.cases.find((item) => item.id === id));
     },
 
     async updateCase(id, patch) {
       const index = state.cases.findIndex((item) => item.id === id);
       if (index === -1) throw new Error(`Case not found: ${id}`);
-      state.cases[index] = {
+      state.cases[index] = normalizeCase({
         ...state.cases[index],
         ...patch,
         updatedAt: new Date().toISOString(),
-      };
+      });
       await persist();
       return state.cases[index];
     },
