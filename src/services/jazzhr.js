@@ -24,7 +24,7 @@ export async function fetchApplicantDetails(applicantId, { config, logger }) {
   }
 }
 
-async function refreshJazzhrCache({ config, logger, throwOnError = false }) {
+export async function refreshJazzhrCache({ config, logger, throwOnError = false }) {
   const apiKey = config.jazzhr.apiKey;
 
   if (!apiKey) {
