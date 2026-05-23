@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --test tests/time.test.js tests/reschedule.test.js tests/google.test.js tests/templates.test.js)",
+      "Bash(npm test *)",
+      "Bash(Get-ChildItem -Recurse -Depth 0 -Directory \"C:\\\\Users\\\\FPI- Jam\\\\OPG-AUTOMATION\\\\first-bolt-app\")",
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Recurse -File -Depth 0 C:\\\\Users\\\\FPI-Jam\\\\OPG-AUTOMATION\\\\first-bolt-app)",
+      "Bash(node *)",
+      "Bash(Select-String -Pattern \"pass|fail|✖\")",
+      "WebFetch(domain:www.jazzhr.com)",
+      "WebSearch",
+      "WebFetch(domain:www.resumatorapi.com)"
+    ]
+  }
+}

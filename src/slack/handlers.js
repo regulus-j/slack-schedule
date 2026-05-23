@@ -399,43 +399,47 @@ export function registerSlackHandlers(app, context) {
     }
 
     await ack();
+    try {
+      const applicant = intakeDraft.applicant;
+      const recruiter = intakeDraft.recruiter;
+      const hiringManager = intakeDraft.hiringManager;
+      const caseRecord = await store.createCase({
+        ownerSlackUserId: body.user.id,
+        channelId: body.view.private_metadata || body.user.id,
+        applicant,
+        recruiter,
+        hiringManager,
+        templateId,
+        stageKey,
+        notes,
+        resumeLink,
+        interviewWindowStartDate: interviewWindowStartDate || null,
+        interviewWindowEndDate: interviewWindowEndDate || null,
+        interviewTimezone,
+        autofill: {
+          zoomLink: recruiter?.zoomLink || '',
+          signature: recruiter?.signature || 'Recruitment Team',
+        },
+      });
 
-    const applicant = intakeDraft.applicant;
-    const recruiter = intakeDraft.recruiter;
-    const hiringManager = intakeDraft.hiringManager;
-    const caseRecord = await store.createCase({
-      ownerSlackUserId: body.user.id,
-      channelId: body.view.private_metadata || body.user.id,
-      applicant,
-      recruiter,
-      hiringManager,
-      templateId,
-      stageKey,
-      notes,
-      resumeLink,
-      interviewWindowStartDate: interviewWindowStartDate || null,
-      interviewWindowEndDate: interviewWindowEndDate || null,
-      interviewTimezone,
-      autofill: {
-        zoomLink: recruiter?.zoomLink || '',
-        signature: recruiter?.signature || 'Recruitment Team',
-      },
-    });
+      await store.addAudit({
+        caseId: caseRecord.id,
+        actorSlackUserId: body.user.id,
+        action: 'case_created',
+        templateId,
+        stageKey,
+      });
 
-    await store.addAudit({
-      caseId: caseRecord.id,
-      actorSlackUserId: body.user.id,
-      action: 'case_created',
-      templateId,
-      stageKey,
-    });
-
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: '✅ Scheduling case created',
-      blocks: caseMessageBlocks(caseRecord),
-    });
-    await publishHome({ client, userId: body.user.id, store, logger });
+      await client.chat.postMessage({
+        channel: resolvePostingChannel(config, body.user.id),
+        text: '✅ Scheduling case created',
+        blocks: caseMessageBlocks(caseRecord),
+      });
+      await publishHome({ client, userId: body.user.id, store, logger });
+    } catch (error) {
+      logger.error('schedule_intake_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not create scheduling case.' }, error })
+    }
   });
 
   app.action('approve_hm_draft', async ({ ack, body, client }) => {
@@ -505,23 +509,28 @@ export function registerSlackHandlers(app, context) {
 
   app.view('availability_submit', async ({ ack, body, view, client }) => {
     await ack();
-    const caseId = view.private_metadata;
-    const availability = view.state.values.availability_block.availability.value || '';
-    const updated = await store.updateCase(caseId, {
-      status: 'Checking Calendar',
-      hmAvailability: availability,
-    });
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'hm_availability_saved',
-    });
-    await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: `🕐 Availability saved for ${caseId}. Calendar free/busy is ready to wire once Google OAuth is connected.`,
-      blocks: caseMessageBlocks(updated),
-    });
+    try {
+      const caseId = view.private_metadata;
+      const availability = view.state.values.availability_block.availability.value || '';
+      const updated = await store.updateCase(caseId, {
+        status: 'Checking Calendar',
+        hmAvailability: availability,
+      });
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'hm_availability_saved',
+      });
+      await publishHome({ client, userId: body.user.id, store, logger });
+      await client.chat.postMessage({
+        channel: resolvePostingChannel(config, body.user.id),
+        text: `🕐 Availability saved for ${caseId}. Calendar free/busy is ready to wire once Google OAuth is connected.`,
+        blocks: caseMessageBlocks(updated),
+      });
+    } catch (error) {
+      logger.error('availability_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not save availability.' }, error })
+    }
   });
 
   app.action('open_candidate_message_modal', async ({ ack, body, client }) => {
@@ -607,87 +616,96 @@ export function registerSlackHandlers(app, context) {
       });
       return;
     }
-
     await ack();
-    const htmlBody = plainTextToHtml(plainBody);
-    
-    // Extract CC and BCC attendees from form
-    const ccValues = view.state.values.cc_attendees_block?.cc_attendees?.selected_options || [];
-    const bccValues = view.state.values.bcc_attendees_block?.bcc_attendees?.selected_options || [];
-    const ccEmails = ccValues.map(opt => opt.value).filter(Boolean);
-    const bccEmails = bccValues.map(opt => opt.value).filter(Boolean);
-    
-    const email = {
-      subject,
-      body: htmlBody,
-      htmlBody,
-      plainBody,
-      to: caseRecord.applicant?.email,
-      from: caseRecord.recruiter?.email,
-      cc: ccEmails.length > 0 ? ccEmails.join(', ') : undefined,
-      bcc: bccEmails.length > 0 ? bccEmails.join(', ') : undefined,
-    };
-    const smsCopy = view.state.values.sms_block.sms_copy.value || '';
-    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
-    const updated = await store.updateCase(caseId, {
-      status: 'Waiting for Candidate',
-      candidateEmail: email,
-      smsCopy,
-      gmailSendStatus: emailResult.mocked ? 'mocked' : 'sent',
-    });
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'candidate_email_approved',
-      templateId: caseRecord.templateId,
-    });
-    await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: `✉️ Candidate message approved for ${caseId}. SMS remains manual.`,
-      blocks: caseMessageBlocks(updated),
-    });
+    try {
+      const htmlBody = plainTextToHtml(plainBody);
+
+      // Extract CC and BCC attendees from form
+      const ccValues = view.state.values.cc_attendees_block?.cc_attendees?.selected_options || [];
+      const bccValues = view.state.values.bcc_attendees_block?.bcc_attendees?.selected_options || [];
+      const ccEmails = ccValues.map(opt => opt.value).filter(Boolean);
+      const bccEmails = bccValues.map(opt => opt.value).filter(Boolean);
+
+      const email = {
+        subject,
+        body: htmlBody,
+        htmlBody,
+        plainBody,
+        to: caseRecord.applicant?.email,
+        from: caseRecord.recruiter?.email,
+        cc: ccEmails.length > 0 ? ccEmails.join(', ') : undefined,
+        bcc: bccEmails.length > 0 ? bccEmails.join(', ') : undefined,
+      };
+      const smsCopy = view.state.values.sms_block.sms_copy.value || '';
+      const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+      const updated = await store.updateCase(caseId, {
+        status: 'Waiting for Candidate',
+        candidateEmail: email,
+        smsCopy,
+        gmailSendStatus: emailResult.mocked ? 'mocked' : 'sent',
+      });
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'candidate_email_approved',
+        templateId: caseRecord.templateId,
+      });
+      await publishHome({ client, userId: body.user.id, store, logger });
+      await client.chat.postMessage({
+        channel: resolvePostingChannel(config, body.user.id),
+        text: `✉️ Candidate message approved for ${caseId}. SMS remains manual.`,
+        blocks: caseMessageBlocks(updated),
+      });
+    } catch (error) {
+      logger.error('candidate_message_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not send candidate message.' }, error })
+    }
   });
 
   app.view('reminder_message_submit', async ({ ack, body, view, client }) => {
     await ack();
-    const caseId = view.private_metadata;
-    const caseRecord = await requireCase(store, caseId);
-    if (caseRecord.reminderStatus === 'sent' && caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion) {
+    try {
+      const caseId = view.private_metadata;
+      const caseRecord = await requireCase(store, caseId);
+      if (caseRecord.reminderStatus === 'sent' && caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion) {
+        await client.chat.postMessage({
+          channel: resolvePostingChannel(config, body.user.id),
+          text: `⚠️ A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
+        });
+        return;
+      }
+      const plainBody = view.state.values.email_body_block.email_body.value || '';
+      const htmlBody = plainTextToHtml(plainBody);
+      const email = {
+        subject: view.state.values.email_subject_block.email_subject.value,
+        body: htmlBody,
+        htmlBody,
+        plainBody,
+        to: caseRecord.applicant?.email,
+        from: caseRecord.recruiter?.email,
+      };
+      const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+      const updated = await store.updateCase(caseId, {
+        reminderEmail: email,
+        reminderStatus: emailResult.mocked ? 'mocked' : 'sent',
+        reminderScheduleVersion: caseRecord.scheduleVersion || 1,
+      });
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'reminder_sent',
+        scheduleVersion: updated.reminderScheduleVersion,
+      });
+      await publishHome({ client, userId: body.user.id, store, logger });
       await client.chat.postMessage({
         channel: resolvePostingChannel(config, body.user.id),
-        text: `⚠️ A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
+        text: `🔔 Reminder sent for ${caseId}.`,
+        blocks: caseMessageBlocks(updated),
       });
-      return;
+    } catch (error) {
+      logger.error('reminder_message_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not send reminder.' }, error })
     }
-    const plainBody = view.state.values.email_body_block.email_body.value || '';
-    const htmlBody = plainTextToHtml(plainBody);
-    const email = {
-      subject: view.state.values.email_subject_block.email_subject.value,
-      body: htmlBody,
-      htmlBody,
-      plainBody,
-      to: caseRecord.applicant?.email,
-      from: caseRecord.recruiter?.email,
-    };
-    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
-    const updated = await store.updateCase(caseId, {
-      reminderEmail: email,
-      reminderStatus: emailResult.mocked ? 'mocked' : 'sent',
-      reminderScheduleVersion: caseRecord.scheduleVersion || 1,
-    });
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'reminder_sent',
-      scheduleVersion: updated.reminderScheduleVersion,
-    });
-    await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: `🔔 Reminder sent for ${caseId}.`,
-      blocks: caseMessageBlocks(updated),
-    });
   });
 
   app.action('open_finalize_modal', async ({ ack, body, client }) => {
@@ -808,6 +826,7 @@ export function registerSlackHandlers(app, context) {
 
       await client.views.update({
         view_id: body.view.id,
+        hash: body.view?.hash,
         view: schedulingPhaseTwo(caseRecord, {
           ...result,
           phase: 2,
@@ -844,6 +863,7 @@ export function registerSlackHandlers(app, context) {
 
       await client.views.update({
         view_id: body.view.id,
+        hash: body.view?.hash,
         view: schedulingModal(caseRecord, {
           phase: 1,
           stageRules,
@@ -874,18 +894,26 @@ export function registerSlackHandlers(app, context) {
   })
 
   app.view('external_attendee_submit', async ({ ack, body, view, client }) => {
-    await ack()
+    const caseId = view.private_metadata
+    const name = view.state.values.ext_name_block?.ext_name?.value || ''
+    const email = view.state.values.ext_email_block?.ext_email?.value || ''
+    const role = view.state.values.ext_role_block?.ext_role?.selected_option?.value || 'external'
+
+    const errors = {}
+    if (!email) {
+      errors.ext_email_block = 'Enter an email address.'
+    } else if (!isValidEmail(email)) {
+      errors.ext_email_block = 'Enter a valid email.'
+    }
+
+    if (Object.keys(errors).length > 0) {
+      await ack({ response_action: 'errors', errors });
+      return;
+    }
+
+    await ack();
     try {
-      const caseId = view.private_metadata
       const caseRecord = await requireCase(store, caseId)
-
-      const name = view.state.values.ext_name_block?.ext_name?.value || ''
-      const email = view.state.values.ext_email_block?.ext_email?.value || ''
-      const role = view.state.values.ext_role_block?.ext_role?.selected_option?.value || 'external'
-
-      if (!email) {
-        return
-      }
 
       const newExternal = { name, email, role, required: false, id: `ext-${crypto.randomUUID()}` }
       const externalAttendees = [...(caseRecord.externalAttendees || []), newExternal]
@@ -900,6 +928,7 @@ export function registerSlackHandlers(app, context) {
 
       await client.views.update({
         view_id: body.view.id,
+        hash: body.view?.hash,
         view: schedulingModal(caseRecord, {
           phase: 1,
           stageRules,
@@ -910,6 +939,7 @@ export function registerSlackHandlers(app, context) {
       })
     } catch (error) {
       logger.error('external_attendee_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not add external attendee.' }, error })
     }
   })
 
@@ -1058,77 +1088,82 @@ export function registerSlackHandlers(app, context) {
     }
 
     await ack();
-    const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
-    const selectedDate = view.state.values.date_block.date.selected_date
-    const converted = convertLocalDateTimeToZone({
-      date: selectedDate,
-      time: selectedTime,
-      fromTimeZone: PH_TIME_ZONE,
-      toTimeZone: interviewTimeZone,
-    })
-    const selectedGuests =
-      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
-      [];
-    const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
-    const attendees = [
-      caseRecord.applicant?.email,
-      caseRecord.recruiter?.email,
-      caseRecord.hiringManager?.email,
-      ...selectedGuests,
-      ...externalGuests,
-    ].filter(Boolean);
+    try {
+      const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
+      const selectedDate = view.state.values.date_block.date.selected_date
+      const converted = convertLocalDateTimeToZone({
+        date: selectedDate,
+        time: selectedTime,
+        fromTimeZone: PH_TIME_ZONE,
+        toTimeZone: interviewTimeZone,
+      })
+      const selectedGuests =
+        view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
+        [];
+      const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
+      const attendees = [
+        caseRecord.applicant?.email,
+        caseRecord.recruiter?.email,
+        caseRecord.hiringManager?.email,
+        ...selectedGuests,
+        ...externalGuests,
+      ].filter(Boolean);
 
-    const eventResult = await createCalendarEvent({
-      config,
-      logger,
-      caseRecord,
-      store,
-      eventInput: {
-        candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
-        jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
-        startDate: converted.date,
-        startTime: converted.time,
+      const eventResult = await createCalendarEvent({
+        config,
+        logger,
+        caseRecord,
+        store,
+        eventInput: {
+          candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
+          jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
+          startDate: converted.date,
+          startTime: converted.time,
+          zoomLink: view.state.values.zoom_block.zoom_link.value,
+          attendees,
+          timeZone: interviewTimeZone,
+        },
+      });
+
+      const scheduleInput = buildScheduleSnapshot({
+        date: converted.date,
+        time: converted.time,
         zoomLink: view.state.values.zoom_block.zoom_link.value,
         attendees,
-        timeZone: interviewTimeZone,
-      },
-    });
+        eventId: eventResult.eventId,
+        htmlLink: eventResult.googleEvent?.htmlLink || null,
+      });
+      const updated = await store.updateCase(caseId, applyScheduledEvent(caseRecord, eventResult, scheduleInput));
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'calendar_event_approved',
+        eventId: eventResult.eventId,
+      });
 
-    const scheduleInput = buildScheduleSnapshot({
-      date: converted.date,
-      time: converted.time,
-      zoomLink: view.state.values.zoom_block.zoom_link.value,
-      attendees,
-      eventId: eventResult.eventId,
-      htmlLink: eventResult.googleEvent?.htmlLink || null,
-    });
-    const updated = await store.updateCase(caseId, applyScheduledEvent(caseRecord, eventResult, scheduleInput));
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'calendar_event_approved',
-      eventId: eventResult.eventId,
-    });
-
-    const reminderEmail = await buildScheduledCandidateEmail(updated);
-    const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store });
-    const reminderUpdated = await store.updateCase(caseId, {
-      reminderEmail,
-      reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
-      reminderScheduleVersion: updated.scheduleVersion || 1,
-    });
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'reminder_sent',
-      scheduleVersion: reminderUpdated.reminderScheduleVersion,
-    });
-    await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: '📅 Interview scheduled',
-      blocks: caseMessageBlocks(reminderUpdated),
-    });
+      const reminderEmail = await buildScheduledCandidateEmail(updated);
+      const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store });
+      const reminderUpdated = await store.updateCase(caseId, {
+        reminderEmail,
+        reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
+        reminderScheduleVersion: updated.scheduleVersion || 1,
+      });
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'reminder_sent',
+        scheduleVersion: reminderUpdated.reminderScheduleVersion,
+      });
+      await publishHome({ client, userId: body.user.id, store, logger });
+      await client.chat.postMessage({
+        channel: resolvePostingChannel(config, body.user.id),
+        text: '📅 Interview scheduled',
+        blocks: caseMessageBlocks(reminderUpdated),
+      });
+    } catch (error) {
+      logger.error('finalize_schedule_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not finalize schedule.' }, error })
+    }
   });
 
   app.view('schedule_tracker_submit', async ({ ack, body, view }) => {
@@ -1195,51 +1230,56 @@ export function registerSlackHandlers(app, context) {
     }
 
     await ack();
-    const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
-    const selectedDate = view.state.values.date_block.date.selected_date
-    const converted = convertLocalDateTimeToZone({
-      date: selectedDate,
-      time: selectedTime,
-      fromTimeZone: PH_TIME_ZONE,
-      toTimeZone: interviewTimeZone,
-    })
-    const selectedGuests =
-      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
-      [];
-    const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
-    const attendees = [
-      caseRecord.applicant?.email,
-      caseRecord.recruiter?.email,
-      caseRecord.hiringManager?.email,
-      ...selectedGuests,
-      ...externalGuests,
-    ].filter(Boolean);
+    try {
+      const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
+      const selectedDate = view.state.values.date_block.date.selected_date
+      const converted = convertLocalDateTimeToZone({
+        date: selectedDate,
+        time: selectedTime,
+        fromTimeZone: PH_TIME_ZONE,
+        toTimeZone: interviewTimeZone,
+      })
+      const selectedGuests =
+        view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
+        [];
+      const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
+      const attendees = [
+        caseRecord.applicant?.email,
+        caseRecord.recruiter?.email,
+        caseRecord.hiringManager?.email,
+        ...selectedGuests,
+        ...externalGuests,
+      ].filter(Boolean);
 
-    const request = {
-      actorSlackUserId: body.user.id,
-      reason: view.state.values.reschedule_reason_block.reschedule_reason.value,
-      date: converted.date,
-      time: converted.time,
-      zoomLink: view.state.values.zoom_block.zoom_link.value,
-      note: view.state.values.candidate_note_block.candidate_note.value || '',
-      attendees,
-    };
-    const email = buildRescheduleEmail(caseRecord, request);
-    request.email = email;
+      const request = {
+        actorSlackUserId: body.user.id,
+        reason: view.state.values.reschedule_reason_block.reschedule_reason.value,
+        date: converted.date,
+        time: converted.time,
+        zoomLink: view.state.values.zoom_block.zoom_link.value,
+        note: view.state.values.candidate_note_block.candidate_note.value || '',
+        attendees,
+      };
+      const email = buildRescheduleEmail(caseRecord, request);
+      request.email = email;
 
-    const updated = await store.updateCase(caseId, applyRescheduleRequest(caseRecord, request));
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'reschedule_requested',
-      reason: request.reason,
-    });
-    await publishHome({ client, userId: body.user.id, store, logger });
-    const recentAudits = await store.listAudits(caseId, 5);
-    await client.views.open({
-      trigger_id: body.trigger_id,
-      view: rescheduleApprovalModal({ caseRecord: updated, email, recentAudits }),
-    });
+      const updated = await store.updateCase(caseId, applyRescheduleRequest(caseRecord, request));
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'reschedule_requested',
+        reason: request.reason,
+      });
+      await publishHome({ client, userId: body.user.id, store, logger });
+      const recentAudits = await store.listAudits(caseId, 5);
+      await client.views.open({
+        trigger_id: body.trigger_id,
+        view: rescheduleApprovalModal({ caseRecord: updated, email, recentAudits }),
+      });
+    } catch (error) {
+      logger.error('reschedule_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not request reschedule.' }, error })
+    }
   });
 
   app.view('reschedule_approval_submit', async ({ ack, body, view, client }) => {
@@ -1257,61 +1297,66 @@ export function registerSlackHandlers(app, context) {
     }
 
     await ack();
-    const plainBody = view.state.values.email_body_block.email_body.value || '';
-    const htmlBody = plainTextToHtml(plainBody);
-    const email = {
-      ...request.email,
-      subject: view.state.values.email_subject_block.email_subject.value,
-      body: htmlBody,
-      htmlBody,
-      plainBody,
-    };
-    const eventResult = await updateCalendarEvent({
-      config,
-      logger,
-      caseRecord,
-      store,
-      eventInput: {
-        candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
-        jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
-        startDate: request.date,
-        startTime: request.time,
-        zoomLink: request.zoomLink,
-        attendees: request.attendees,
-        timeZone: caseRecord.interviewTimezone || SYDNEY_TIME_ZONE,
-      },
-    });
-    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
-    const completedRequest = { ...request, email };
-    const updated = await store.updateCase(
-      caseId,
-      applyCompletedReschedule(caseRecord, eventResult, completedRequest, emailResult),
-    );
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'reschedule_candidate_message_approved',
-    });
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'calendar_event_updated',
-      eventId: eventResult.eventId,
-    });
-    if (caseRecord.reminderStatus && caseRecord.reminderStatus !== 'sent') {
+    try {
+      const plainBody = view.state.values.email_body_block.email_body.value || '';
+      const htmlBody = plainTextToHtml(plainBody);
+      const email = {
+        ...request.email,
+        subject: view.state.values.email_subject_block.email_subject.value,
+        body: htmlBody,
+        htmlBody,
+        plainBody,
+      };
+      const eventResult = await updateCalendarEvent({
+        config,
+        logger,
+        caseRecord,
+        store,
+        eventInput: {
+          candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
+          jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
+          startDate: request.date,
+          startTime: request.time,
+          zoomLink: request.zoomLink,
+          attendees: request.attendees,
+          timeZone: caseRecord.interviewTimezone || SYDNEY_TIME_ZONE,
+        },
+      });
+      const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+      const completedRequest = { ...request, email };
+      const updated = await store.updateCase(
+        caseId,
+        applyCompletedReschedule(caseRecord, eventResult, completedRequest, emailResult),
+      );
       await store.addAudit({
         caseId,
         actorSlackUserId: body.user.id,
-        action: 'reminder_rescheduled',
-        scheduleVersion: updated.scheduleVersion,
+        action: 'reschedule_candidate_message_approved',
       });
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'calendar_event_updated',
+        eventId: eventResult.eventId,
+      });
+      if (caseRecord.reminderStatus && caseRecord.reminderStatus !== 'sent') {
+        await store.addAudit({
+          caseId,
+          actorSlackUserId: body.user.id,
+          action: 'reminder_rescheduled',
+          scheduleVersion: updated.scheduleVersion,
+        });
+      }
+      await publishHome({ client, userId: body.user.id, store, logger });
+      await client.chat.postMessage({
+        channel: resolvePostingChannel(config, body.user.id),
+        text: '🔄 Interview rescheduled',
+        blocks: caseMessageBlocks(updated),
+      });
+    } catch (error) {
+      logger.error('reschedule_approval_submit_error', { error: error.message })
+      await handleViewError({ client, config, body, logger, userMessage: { text: '❌ Could not complete reschedule approval.' }, error })
     }
-    await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: '🔄 Interview rescheduled',
-      blocks: caseMessageBlocks(updated),
-    });
   });
 
   app.action('cancel_interview', async ({ ack, body, client }) => {
@@ -1353,6 +1398,19 @@ export function registerSlackHandlers(app, context) {
       text: lines.join('\n'),
     });
   });
+}
+
+async function handleViewError({ client, config, body, logger, userMessage, error }) {
+  logger.error(userMessage?.logKey || 'view_handler_error', { error: error?.message || String(error) });
+  try {
+    await client.chat.postEphemeral({
+      channel: resolvePostingChannel(config, body?.channel?.id || body?.user?.id || body?.user_id || ''),
+      user: body?.user?.id || body?.user_id,
+      text: userMessage?.text || `❌ ${error?.message || 'An error occurred while processing your request.'}`,
+    });
+  } catch (err) {
+    logger.error('handleViewError_failed', { error: err?.message || String(err) });
+  }
 }
 
 async function openIntakeModal({
