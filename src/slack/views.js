@@ -1037,7 +1037,7 @@ function applicantDetailBlocks(draft) {
     blocks.push(section(`💪 *Experience:*\n> ${expPreview}`));
   }
 
-  if (detail.notes) {
+  if (typeof detail.notes === 'string' && detail.notes.trim()) {
     const notesPreview = detail.notes.length > 200
       ? detail.notes.slice(0, 200) + '...'
       : detail.notes;

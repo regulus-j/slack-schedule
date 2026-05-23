@@ -184,7 +184,7 @@ function mapApplicant(item) {
 function mapApplicantDetail(item) {
   if (!item) return null;
 
-  const resumeUrl = item.resume || item.resume_url || item.resumeUrl || '';
+  const resumeUrl = item.resume_link || item.resume || item.resume_url || item.resumeUrl || '';
   const resumeText = item.resume_text || item.resumeText || '';
 
   return {
@@ -200,15 +200,15 @@ function mapApplicantDetail(item) {
       .join(', '),
     resumeUrl,
     resumeText: resumeText ? resumeText.slice(0, 500) : '',
-    jobTitle: item.job_title || item.jobTitle || item.title || '',
-    stage: item.applicant_progress || item.applicantProgress || item.stage || '',
+    jobTitle: item.jobs?.job_title || item.job_title || item.jobTitle || item.title || '',
+    stage: item.jobs?.applicant_progress || item.applicant_progress || item.applicantProgress || item.stage || '',
     source: item.source || '',
-    rating: item.rating != null ? String(item.rating) : '',
+    rating: item.jobs?.hiring_lead_rating != null ? String(item.jobs.hiring_lead_rating) : (item.jobs?.average_rating != null ? String(item.jobs.average_rating) : ''),
     applyDate: item.apply_date || item.applyDate || item.date_applied || '',
     education: item.education || item.education_summary || '',
     experience: item.experience || item.experience_summary || item.work_history || '',
     linkedinUrl: item.linkedin_url || item.linkedin || item.linkedinUrl || '',
-    notes: item.comments || item.notes || item.internal_notes || '',
+    notes: item.notes || item.internal_notes || (Array.isArray(item.comments) ? '' : item.comments) || '',
   };
 }
 
