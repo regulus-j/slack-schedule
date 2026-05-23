@@ -60,6 +60,9 @@ import {
   rescheduleModal,
   schedulingModal,
   schedulingPhaseTwo,
+  plain,
+  section,
+  context,
 } from './views.js'
 
 export function registerSlackHandlers(app, context) {
