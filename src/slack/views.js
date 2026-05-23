@@ -951,7 +951,7 @@ function calendarEventUrl(eventId) {
   return `https://calendar.google.com/calendar/event?eid=${encodeURIComponent(eventId)}`
 }
 
-export { calendarEventUrl }
+export { calendarEventUrl, plain, section, context }
 
 function scheduleSummary(caseRecord) {
   const normalized = normalizeCaseSchedule(caseRecord);
@@ -1013,6 +1013,10 @@ function header(text) {
 
 function section(text) {
   return { type: 'section', text: mrkdwn(text) };
+}
+
+function context(text) {
+  return { type: 'context', elements: [{ type: 'mrkdwn', text }] };
 }
 
 function input(label, blockId, element, optional = false) {
