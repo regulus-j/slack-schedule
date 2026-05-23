@@ -202,6 +202,14 @@ export function registerSlackHandlers(app, context) {
     // Fetch full applicant details from JazzHR API
     const details = await fetchApplicantDetails(selectedId, { config, logger });
     
+    // Warn if email still missing after fetching details
+    if (!details?.email) {
+      logger.warn('applicant_email_missing', { 
+        applicantId: selectedId,
+        name: `${details?.firstName} ${details?.lastName}` 
+      });
+    }
+    
     // Attempt fuzzy matching for recruiter
     let matchedRecruiterId = '';
     if (details?.recruiterId) {
@@ -237,10 +245,36 @@ export function registerSlackHandlers(app, context) {
   app.action('view_applicant_details', async ({ ack, body, client }) => {
     await ack();
     const selectedId = body.actions[0].value;
-    if (!selectedId) return;
+    
+    if (!selectedId) {
+      logger.warn('view_applicant_details_missing_id', { body });
+      await client.views.open({
+        trigger_id: body.trigger_id,
+        view: {
+          type: 'modal',
+          title: plain('Error'),
+          blocks: [section('❌ Could not identify applicant.')],
+        },
+      });
+      return;
+    }
     
     const details = await fetchApplicantDetails(selectedId, { config, logger });
-    if (!details) return;
+    
+    if (!details) {
+      await client.views.open({
+        trigger_id: body.trigger_id,
+        view: {
+          type: 'modal',
+          title: plain('Error'),
+          blocks: [
+            section('❌ Could not load applicant details from JazzHR.'),
+            context('The applicant may have been deleted or the API connection failed.'),
+          ],
+        },
+      });
+      return;
+    }
     
     await client.views.open({
       trigger_id: body.trigger_id,
@@ -334,7 +368,7 @@ export function registerSlackHandlers(app, context) {
   app.view('schedule_intake_submit', async ({ ack, body, view, client }) => {
     const values = view.state.values;
     const templates = await loadSchedulingTemplates();
-    const intakeDraft = buildIntakeDraft(values, templates);
+    const intakeDraft = buildIntakeDraft(values, templates, {}, logger);
     const applicantId = intakeDraft.applicantId;
     const templateId = intakeDraft.templateId;
     const stageKey = intakeDraft.stageKey;
@@ -403,6 +437,32 @@ export function registerSlackHandlers(app, context) {
       const applicant = intakeDraft.applicant;
       const recruiter = intakeDraft.recruiter;
       const hiringManager = intakeDraft.hiringManager;
+      
+      // Verify email overrides and log warnings
+      const emailWarnings = [];
+      const originalApplicant = findApplicant(intakeDraft.applicantId);
+      if (originalApplicant && intakeDraft.applicant.email !== originalApplicant.email) {
+        emailWarnings.push(`Applicant email overridden: ${originalApplicant.email} → ${intakeDraft.applicant.email}`);
+      }
+
+      const originalRecruiter = findPersonById(intakeDraft.recruiterId);
+      if (originalRecruiter && intakeDraft.recruiter.email !== originalRecruiter.email) {
+        emailWarnings.push(`Recruiter email overridden: ${originalRecruiter.email} → ${intakeDraft.recruiter.email}`);
+      }
+
+      const originalHM = findPersonById(intakeDraft.hiringManagerId);
+      if (originalHM && intakeDraft.hiringManager.email !== originalHM.email) {
+        emailWarnings.push(`Hiring manager email overridden: ${originalHM.email} → ${intakeDraft.hiringManager.email}`);
+      }
+
+      if (emailWarnings.length > 0) {
+        logger.warn('case_created_with_email_overrides', {
+          caseId: null, // Will be set after case creation
+          userId: body.user?.id,
+          warnings: emailWarnings,
+        });
+      }
+      
       const caseRecord = await store.createCase({
         ownerSlackUserId: body.user.id,
         channelId: body.view.private_metadata || body.user.id,
@@ -421,6 +481,15 @@ export function registerSlackHandlers(app, context) {
           signature: recruiter?.signature || 'Recruitment Team',
         },
       });
+
+      // Update log with actual case ID
+      if (emailWarnings.length > 0) {
+        logger.warn('case_created_with_email_overrides', {
+          caseId: caseRecord.id,
+          userId: body.user?.id,
+          warnings: emailWarnings,
+        });
+      }
 
       await store.addAudit({
         caseId: caseRecord.id,
@@ -1444,7 +1513,7 @@ async function refreshIntakeModal({
   matchedRecruiterId = '',
 }) {
   if (!body.view?.id || !body.view?.hash) return;
-  const draft = buildIntakeDraft(body.view.state.values, templates, { [selectedKey]: selectedId });
+  const draft = buildIntakeDraft(body.view.state.values, templates, { [selectedKey]: selectedId }, logger);
   
   // Apply matched recruiter from fuzzy matching if available
   if (matchedRecruiterId && !draft.recruiterId) {
@@ -1609,7 +1678,7 @@ export function buildTemplateVariables(caseRecord) {
   };
 }
 
-export function buildIntakeDraft(values, templates, overrides = {}) {
+export function buildIntakeDraft(values, templates, overrides = {}, logger) {
   const applicantId = overrides.applicant ?? (values.applicant_block?.applicant_select?.selected_option?.value || '');
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
   const legacyTemplateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
@@ -1620,6 +1689,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const applicant = applyEmailOverride(
     findApplicant(applicantId),
     values.applicant_email_block?.applicant_email?.value?.trim(),
+    logger,
   );
   const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
   const selectedHiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || '');
@@ -1628,10 +1698,12 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const recruiter = applyEmailOverride(
     findPersonById(recruiterId),
     values.recruiter_email_block?.recruiter_email?.value?.trim(),
+    logger,
   );
   const hiringManager = applyEmailOverride(
     findPersonById(hiringManagerId),
     values.hm_email_block?.hm_email?.value?.trim(),
+    logger,
   );
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
@@ -1677,10 +1749,21 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
-function applyEmailOverride(person, emailOverride) {
+function applyEmailOverride(person, emailOverride, logger) {
   if (!person) return null;
   const email = String(emailOverride || '').trim();
   if (!email) return person;
+  
+  // Log override for audit trail
+  if (logger && person.email !== email) {
+    logger.info('email_override_applied', {
+      originalEmail: person.email,
+      overrideEmail: email,
+      personId: person.id,
+      personType: person.role ? 'recruiter_hm' : 'applicant',
+    });
+  }
+  
   return {
     ...person,
     email,
