@@ -19,7 +19,7 @@ test('formats display and picker labels differently', () => {
       email: 'alex@example.com',
       jobTitle: 'Support',
     }),
-    'Alex Reyes (alex@example.com) - Support',
+    'Alex Reyes - Support (alex@example.com)',
   );
   assert.equal(
     applicantPickerLabel({
@@ -28,7 +28,7 @@ test('formats display and picker labels differently', () => {
       email: 'alex@example.com',
       jobTitle: 'Support',
     }),
-    'Alex Reyes - alex@example.com - Support',
+    'Alex Reyes - Support - alex@example.com',
   );
 });
 

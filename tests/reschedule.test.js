@@ -307,6 +307,8 @@ test('builds intake draft emails from selected people and overrides', () => {
         body: 'Body',
       },
     ],
+    {},
+    null, // logger not needed for this test
   );
 
   assert.equal(draft.applicantEmail, 'alex.reyes@example.com');
@@ -352,6 +354,8 @@ test('builds intake draft recruiter from the selected applicant', () => {
       hm_email_block: { hm_email: { value: '' } },
     },
     [],
+    {},
+    null, // logger not needed for this test
   );
 
   assert.equal(draft.recruiterId, '123');
