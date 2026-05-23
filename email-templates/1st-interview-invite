@@ -10,7 +10,7 @@ Body:
 
 <p><strong>Interview details:</strong><br>
 Date: [Date]<br>
-Time: [Time]<br>
+Time: [Time] [Timezone]<br>
 Zoom Link: [Link]</p>
 
 <p><strong>Friendly Reminders:</strong></p>

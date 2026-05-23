@@ -10,7 +10,7 @@ Body:
 
 <p><strong>Here are your interview details:</strong><br>
 Date: [Date]<br>
-Time: [Time]<br>
+Time: [Time] [Timezone]<br>
 Platform: Zoom<br>
 Meeting Link: [Link]</p>
 

@@ -203,7 +203,7 @@ export function registerSlackHandlers(app, context) {
       try {
         const detail = await Promise.race([
           fetchApplicantDetail(config.jazzhr.apiKey, applicant.jazzhrApplicationId, logger),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
         ]);
         if (detail) {
           setApplicantDetail(selectedId, detail);
@@ -317,6 +317,10 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.options('guest_select', async ({ options, ack }) => {
+    await ack({ options: personOptions(options.value, getAllPeople()) });
+  });
+
+  app.options('schedule_guest_select', async ({ options, ack }) => {
     await ack({ options: personOptions(options.value, getAllPeople()) });
   });
 
@@ -1558,6 +1562,8 @@ export function buildTemplateVariables(caseRecord) {
     Date: date,
     time,
     Time: time,
+    timezone: caseRecord.interviewTimezone || '',
+    Timezone: caseRecord.interviewTimezone || '',
     link,
     Link: link,
     hiring_manager_name: hiringManagerName,

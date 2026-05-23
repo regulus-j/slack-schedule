@@ -863,7 +863,8 @@ function scheduleSummary(caseRecord) {
   const normalized = normalizeCaseSchedule(caseRecord);
   const lines = [];
   if (normalized.currentSchedule?.date || normalized.currentSchedule?.time) {
-    lines.push(`📅 Schedule: ${normalized.currentSchedule.date || 'date TBD'} ${normalized.currentSchedule.time || ''}`.trim());
+    const tz = caseRecord.interviewTimezone ? ` (${caseRecord.interviewTimezone})` : '';
+    lines.push(`📅 Schedule: ${normalized.currentSchedule.date || 'date TBD'} ${normalized.currentSchedule.time || ''}${tz}`.trim());
   }
   if (caseRecord.calendarEventId) {
     const link = caseRecord.calendarEventHtmlLink || caseRecord.currentSchedule?.htmlLink || calendarEventUrl(caseRecord.calendarEventId);
@@ -968,37 +969,46 @@ function applicantDetailBlocks(draft) {
   ];
 
   if (!draft.showDetails) return blocks;
-  if (!detail) {
-    blocks.push(section('⏳ Loading applicant details...'));
-    return blocks;
-  }
+
+  const applicant = draft.applicant || {};
+  const rich = detail || applicant;
 
   const lines = [];
 
-  if (detail.phone) {
-    lines.push(`📞 *Phone:* ${detail.phone}`);
+  if (rich.phone) {
+    lines.push(`📞 *Phone:* ${rich.phone}`);
   }
-  if (detail.address) {
-    lines.push(`📍 *Address:* ${detail.address}`);
+  if (rich.email) {
+    lines.push(`📧 *Email:* ${rich.email}`);
   }
-  if (detail.jobTitle) {
-    lines.push(`💼 *Position:* ${detail.jobTitle}`);
+  if (rich.jobTitle) {
+    lines.push(`💼 *Position:* ${rich.jobTitle}`);
   }
-  if (detail.stage) {
-    lines.push(`📊 *Stage:* ${detail.stage}`);
+  if (rich.stage) {
+    lines.push(`📊 *Stage:* ${rich.stage}`);
   }
-  if (detail.source) {
-    lines.push(`📥 *Source:* ${detail.source}`);
+  if (rich.source) {
+    lines.push(`📥 *Source:* ${rich.source}`);
   }
-  if (detail.applyDate) {
-    lines.push(`📅 *Applied:* ${detail.applyDate}`);
+  if (rich.applyDate) {
+    lines.push(`📅 *Applied:* ${rich.applyDate}`);
   }
-  if (detail.rating) {
-    lines.push(`⭐ *Rating:* ${detail.rating}/5`);
+  if (rich.rating) {
+    lines.push(`⭐ *Rating:* ${rich.rating}/5`);
   }
 
   if (lines.length > 0) {
     blocks.push(section(lines.join('\n')));
+  }
+
+  if (!detail) {
+    blocks.push(section('⏳ JazzHR details still loading...'));
+    blocks.push({ type: 'divider' });
+    return blocks;
+  }
+
+  if (detail.address) {
+    blocks.push(section(`📍 *Address:* ${detail.address}`));
   }
 
   if (detail.resumeUrl) {
