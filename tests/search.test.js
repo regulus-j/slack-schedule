@@ -28,7 +28,7 @@ test('formats display and picker labels differently', () => {
       email: 'alex@example.com',
       jobTitle: 'Support',
     }),
-    'Alex Reyes - alex@example.com - Support',
+    'Alex Reyes\nSupport - alex@example.com',
   );
 });
 

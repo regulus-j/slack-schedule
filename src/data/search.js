@@ -75,7 +75,13 @@ function formatPersonLabel(person, mode) {
 
 function formatApplicantLabel(applicant, mode) {
   const name = [applicant?.firstName, applicant?.lastName].filter(Boolean).join(' ') || 'Unknown';
-  const email = applicant?.email ? (mode === 'display' ? ` (${applicant.email})` : ` - ${applicant.email}`) : '';
-  const job = applicant?.jobTitle ? ` - ${applicant.jobTitle}` : '';
-  return `${name}${email}${job}`;
+  const email = applicant?.email || '';
+  const job = applicant?.jobTitle || '';
+  if (mode === 'picker') {
+    const sub = [job, email].filter(Boolean).join(' - ');
+    return sub ? `${name}\n${sub}` : name;
+  }
+  const emailPart = email ? ` (${email})` : '';
+  const jobPart = job ? ` - ${job}` : '';
+  return `${name}${emailPart}${jobPart}`;
 }
