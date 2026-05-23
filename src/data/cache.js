@@ -1,6 +1,7 @@
 let applicants = [];
 let recruiters = [];
 let hiringManagers = [];
+const applicantDetails = new Map();
 
 export function getApplicants() {
   return applicants;
@@ -28,4 +29,14 @@ export function setRecruiters(data) {
 
 export function setHiringManagers(data) {
   hiringManagers = Array.isArray(data) ? data : [];
+}
+
+export function getApplicantDetail(id) {
+  return applicantDetails.get(id) || null;
+}
+
+export function setApplicantDetail(id, data) {
+  if (id && data) {
+    applicantDetails.set(id, data);
+  }
 }

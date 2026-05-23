@@ -7,6 +7,21 @@ export async function searchCachedApplicants(query) {
   return searchApplicants(query, getApplicants());
 }
 
+export async function fetchApplicantDetail(apiKey, jazzhrApplicationId, logger) {
+  if (!apiKey || !jazzhrApplicationId) return null;
+
+  try {
+    const data = await jazzhrGetWithRetry(`/applicants/${encodeURIComponent(jazzhrApplicationId)}`, apiKey, logger);
+    return mapApplicantDetail(data);
+  } catch (err) {
+    logger.warn('jazzhr_applicant_detail_failed', {
+      jazzhrApplicationId,
+      error: err.message,
+    });
+    return null;
+  }
+}
+
 export async function refreshJazzhrCache({ config, logger, throwOnError = false }) {
   const apiKey = config.jazzhr.apiKey;
 
@@ -163,6 +178,37 @@ function mapApplicant(item) {
     hiringManagerId: '',
     recruiterId: normalizeRecruiterId(item.recruiter_id),
     source: 'jazzhr',
+  };
+}
+
+function mapApplicantDetail(item) {
+  if (!item) return null;
+
+  const resumeUrl = item.resume || item.resume_url || item.resumeUrl || '';
+  const resumeText = item.resume_text || item.resumeText || '';
+
+  return {
+    email: item.email || item.email_address || '',
+    phone: item.phone || item.prospect_phone || item.cell_phone || '',
+    address: [
+      item.address || '',
+      item.city || '',
+      item.state || item.province || '',
+      item.zip || item.postal_code || item.zipcode || '',
+    ]
+      .filter(Boolean)
+      .join(', '),
+    resumeUrl,
+    resumeText: resumeText ? resumeText.slice(0, 500) : '',
+    jobTitle: item.job_title || item.jobTitle || item.title || '',
+    stage: item.applicant_progress || item.applicantProgress || item.stage || '',
+    source: item.source || '',
+    rating: item.rating != null ? String(item.rating) : '',
+    applyDate: item.apply_date || item.applyDate || item.date_applied || '',
+    education: item.education || item.education_summary || '',
+    experience: item.experience || item.experience_summary || item.work_history || '',
+    linkedinUrl: item.linkedin_url || item.linkedin || item.linkedinUrl || '',
+    notes: item.comments || item.notes || item.internal_notes || '',
   };
 }
 

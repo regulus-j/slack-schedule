@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { getApplicants, getRecruiters, getHiringManagers, getAllPeople } from '../data/cache.js'
+import { getApplicants, getRecruiters, getHiringManagers, getAllPeople, getApplicantDetail, setApplicantDetail } from '../data/cache.js'
 import { searchTimezones } from '../data/timezones.js'
 import {
   applicantOptions,
@@ -12,7 +12,7 @@ import {
 } from '../data/search.js'
 import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, templateRequiresResume } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
-import { refreshJazzhrCache } from '../services/jazzhr.js'
+import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
 import {
   PH_TIME_ZONE,
@@ -196,12 +196,46 @@ export function registerSlackHandlers(app, context) {
 
   app.action('applicant_select', async ({ ack, body, client }) => {
     await ack();
+    const selectedId = selectedOptionValue(body);
+    const applicant = findApplicant(selectedId);
+
+    if (applicant?.jazzhrApplicationId) {
+      try {
+        const detail = await Promise.race([
+          fetchApplicantDetail(config.jazzhr.apiKey, applicant.jazzhrApplicationId, logger),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2500)),
+        ]);
+        if (detail) {
+          setApplicantDetail(selectedId, detail);
+          if (detail.email && !applicant.email) {
+            applicant.email = detail.email;
+          }
+        }
+      } catch (err) {
+        logger.warn('applicant_detail_fetch_failed', { applicantId: selectedId, error: err.message });
+      }
+    }
+
     await refreshIntakeModal({
       client,
       body,
       templates: await loadSchedulingTemplates(),
       selectedKey: 'applicant',
-      selectedId: selectedOptionValue(body),
+      selectedId,
+      showDetails: true,
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
+  app.action('toggle_applicant_details', async ({ ack, body, client }) => {
+    await ack();
+    const actionValue = body.actions?.[0]?.value || 'show';
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      showDetails: actionValue === 'show',
       timeZones: schedulingTimeZones,
       defaultTimeZone,
     });
@@ -364,7 +398,7 @@ export function registerSlackHandlers(app, context) {
     const hiringManager = intakeDraft.hiringManager;
     const caseRecord = await store.createCase({
       ownerSlackUserId: body.user.id,
-      channelId: body.view.private_metadata || body.user.id,
+      channelId: getChannelId(body.view) || body.user.id,
       applicant,
       recruiter,
       hiringManager,
@@ -1314,14 +1348,43 @@ async function openIntakeModal({
   defaultTimeZone,
 }) {
   const templates = await loadSchedulingTemplates();
+  const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false });
   logger.info('schedule_intake_opened', { templateCount: templates.length });
   await client.views.open({
     trigger_id: triggerId,
     view: {
       ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getRecruiters() }),
-      private_metadata: privateMetadata,
+      private_metadata: meta,
     },
   });
+}
+
+function parsePrivateMetadata(raw) {
+  try {
+    const parsed = JSON.parse(raw || '');
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch (_) { /* not JSON */ }
+  return null;
+}
+
+function getChannelId(view) {
+  const parsed = parsePrivateMetadata(view?.private_metadata);
+  if (parsed?.channelId) return parsed.channelId;
+  return view?.private_metadata || '';
+}
+
+function getShowDetails(view, fallback) {
+  const parsed = parsePrivateMetadata(view?.private_metadata);
+  if (parsed && 'showDetails' in parsed) return parsed.showDetails;
+  if (fallback !== undefined) return fallback;
+  return false;
+}
+
+function buildPrivateMetadata(view, overrides = {}) {
+  const parsed = parsePrivateMetadata(view?.private_metadata) || {};
+  const channelId = overrides.channelId || parsed.channelId || view?.private_metadata || '';
+  const showDetails = 'showDetails' in overrides ? overrides.showDetails : parsed.showDetails;
+  return JSON.stringify({ channelId, showDetails });
 }
 
 async function refreshIntakeModal({
@@ -1330,17 +1393,33 @@ async function refreshIntakeModal({
   templates,
   selectedKey,
   selectedId,
+  showDetails,
   timeZones = [],
   defaultTimeZone,
 }) {
   if (!body.view?.id || !body.view?.hash) return;
   const draft = buildIntakeDraft(body.view.state.values, templates, { [selectedKey]: selectedId });
+
+  const resolvedShowDetails = showDetails !== undefined
+    ? showDetails
+    : getShowDetails(body.view, false);
+
+  draft.showDetails = resolvedShowDetails;
+  if (draft.showDetails && draft.applicantId) {
+    draft.applicantDetail = getApplicantDetail(draft.applicantId) || null;
+  }
+
+  const privateMetadata = buildPrivateMetadata(body.view, {
+    channelId: getChannelId(body.view) || body.channel?.id || body.user.id,
+    showDetails: resolvedShowDetails,
+  });
+
   await client.views.update({
     view_id: body.view.id,
     hash: body.view.hash,
     view: {
       ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getRecruiters() }),
-      private_metadata: body.view.private_metadata || body.channel?.id || body.user.id,
+      private_metadata: privateMetadata,
     },
   });
 }

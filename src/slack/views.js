@@ -99,6 +99,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         },
         true,
       ),
+      ...applicantDetailBlocks(draft),
       input('Stage', 'stage_block', {
         type: 'static_select',
         action_id: 'stage_select',
@@ -949,6 +950,92 @@ function recruiterSelectElement({ recruiters, draft }) {
     placeholder: plain('Search recruiter'),
     ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
   }
+}
+
+function applicantDetailBlocks(draft) {
+  const detail = draft.applicantDetail;
+  const hasApplicant = Boolean(draft.applicantId);
+
+  if (!hasApplicant) return [];
+
+  const toggleButton = draft.showDetails
+    ? button('🔽 Hide applicant details', 'toggle_applicant_details', undefined, 'hide')
+    : button('▶️ Show applicant details', 'toggle_applicant_details', undefined, 'show');
+
+  const blocks = [
+    { type: 'divider' },
+    { type: 'actions', elements: [toggleButton] },
+  ];
+
+  if (!draft.showDetails) return blocks;
+  if (!detail) {
+    blocks.push(section('⏳ Loading applicant details...'));
+    return blocks;
+  }
+
+  const lines = [];
+
+  if (detail.phone) {
+    lines.push(`📞 *Phone:* ${detail.phone}`);
+  }
+  if (detail.address) {
+    lines.push(`📍 *Address:* ${detail.address}`);
+  }
+  if (detail.jobTitle) {
+    lines.push(`💼 *Position:* ${detail.jobTitle}`);
+  }
+  if (detail.stage) {
+    lines.push(`📊 *Stage:* ${detail.stage}`);
+  }
+  if (detail.source) {
+    lines.push(`📥 *Source:* ${detail.source}`);
+  }
+  if (detail.applyDate) {
+    lines.push(`📅 *Applied:* ${detail.applyDate}`);
+  }
+  if (detail.rating) {
+    lines.push(`⭐ *Rating:* ${detail.rating}/5`);
+  }
+
+  if (lines.length > 0) {
+    blocks.push(section(lines.join('\n')));
+  }
+
+  if (detail.resumeUrl) {
+    blocks.push(section(`📄 <${detail.resumeUrl}|View resume>`));
+  }
+
+  if (detail.resumeText) {
+    const preview = detail.resumeText.length > 300
+      ? detail.resumeText.slice(0, 300) + '...'
+      : detail.resumeText;
+    blocks.push(section(`📝 *Resume preview:*\n> ${preview}`));
+  }
+
+  if (detail.linkedinUrl) {
+    blocks.push(section(`🔗 <${detail.linkedinUrl}|LinkedIn profile>`));
+  }
+
+  if (detail.education) {
+    blocks.push(section(`🎓 *Education:* ${detail.education}`));
+  }
+
+  if (detail.experience) {
+    const expPreview = detail.experience.length > 200
+      ? detail.experience.slice(0, 200) + '...'
+      : detail.experience;
+    blocks.push(section(`💪 *Experience:*\n> ${expPreview}`));
+  }
+
+  if (detail.notes) {
+    const notesPreview = detail.notes.length > 200
+      ? detail.notes.slice(0, 200) + '...'
+      : detail.notes;
+    blocks.push(section(`📝 *Notes:*\n> ${notesPreview}`));
+  }
+
+  blocks.push({ type: 'divider' });
+  return blocks;
 }
 
 function actions(elements) {
