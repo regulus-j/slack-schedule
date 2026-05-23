@@ -88,6 +88,9 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         placeholder: plain('Search applicant'),
         ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
       }),
+      actions([
+        button('📄 View Applicant Details', 'view_applicant_details', undefined, draft.applicantOption?.value),
+      ]),
       input(
         'Applicant email',
         'applicant_email_block',
@@ -166,7 +169,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         placeholder: plain('Search by country or timezone'),
         ...(selectedTimeZoneOption ? { initial_option: selectedTimeZoneOption } : {}),
       }),
-      section(`🕐 Interview timezone drives calendar invites. Times are shown in PH (${PH_TIME_ZONE}) with interview timezone equivalents.`),
+      section(`🕐 Interview timezone drives calendar invites. Times are shown in ${selectedTimeZone} with PH (${PH_TIME_ZONE}) equivalents.`),
       section('📅 Optional target interview window for calendar planning.'),
       input('Target start date', 'window_start_block', {
         type: 'datepicker',
@@ -182,6 +185,67 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       }, true),
       section('📝 Calendar descriptions are generated automatically from the schedule details. Add notes here only if you want extra intake context.'),
     ],
+  };
+}
+
+export function applicantMetadataModal({ applicantDetails }) {
+  const blocks = [
+    section(`*${applicantDetails.firstName} ${applicantDetails.lastName}*`),
+    section(`📧 *Email:* ${applicantDetails.email || 'Not provided'}`),
+    section(`📱 *Phone:* ${applicantDetails.phone || 'Not provided'}`),
+    section(`📍 *Location:* ${applicantDetails.location || 'Not provided'}`),
+    section(`💼 *Position:* ${applicantDetails.jobTitle || 'Not provided'}`),
+    section(`📊 *Stage:* ${applicantDetails.stage || 'Not provided'}`),
+  ];
+
+  if (applicantDetails.sourceDetail) {
+    blocks.push(section(`🔍 *Source:* ${applicantDetails.sourceDetail}`));
+  }
+
+  if (applicantDetails.recruiterName || applicantDetails.recruiterEmail) {
+    const recruiterParts = [];
+    if (applicantDetails.recruiterName) recruiterParts.push(applicantDetails.recruiterName);
+    if (applicantDetails.recruiterEmail) recruiterParts.push(applicantDetails.recruiterEmail);
+    blocks.push(section(`👤 *Assigned Recruiter:* ${recruiterParts.join(' ')}`));
+  }
+
+  if (applicantDetails.coverLetter) {
+    blocks.push(
+      divider(),
+      section(`📝 *Cover Letter*`),
+      { type: 'context', elements: [{ type: 'plain_text', text: trimForSlack(applicantDetails.coverLetter, 2000) }] }
+    );
+  }
+
+  if (applicantDetails.rawResume) {
+    blocks.push(
+      divider(),
+      section(`📄 *Resume*`),
+      { type: 'context', elements: [{ type: 'plain_text', text: trimForSlack(applicantDetails.rawResume, 2000) }] }
+    );
+  }
+
+  if (applicantDetails.resumeUrl) {
+    blocks.push(
+      divider(),
+      section(`🔗 *Resume Link:* <${applicantDetails.resumeUrl}|View Resume>`),
+    );
+  }
+
+  if (applicantDetails.customFields && Object.keys(applicantDetails.customFields).length > 0) {
+    blocks.push(divider(), section(`📋 *Custom Fields*`));
+    for (const [key, value] of Object.entries(applicantDetails.customFields)) {
+      if (value) {
+        blocks.push(section(`*${key}:* ${String(value).slice(0, 500)}`));
+      }
+    }
+  }
+
+  return {
+    type: 'modal',
+    title: plain('📄 Applicant Details'),
+    close: plain('Close'),
+    blocks,
   };
 }
 
@@ -216,6 +280,15 @@ export function candidateMessageModal({
   recentAudits = [],
 }) {
   const plainBody = renderedTemplate.plainBody || renderedTemplate.body
+  const attendees = caseRecord.attendees || []
+  const internalAttendees = attendees.filter(a => a.role !== 'candidate' && a.email)
+  const externalGuests = attendees.filter(a => (a.role === 'external' || a.role === 'guest') && a.email)
+  
+  const ccOptions = [
+    ...internalAttendees.map(a => ({ text: plain(`${a.name || a.email} (${a.role})`), value: a.email })),
+    ...externalGuests.map(a => ({ text: plain(`${a.name || a.email} (external)`), value: a.email }))
+  ]
+  
   return {
     type: 'modal',
     callback_id: callbackId,
@@ -239,6 +312,28 @@ export function candidateMessageModal({
         multiline: true,
         initial_value: plainBody,
       }),
+      input(
+        'CC Attendees',
+        'cc_attendees_block',
+        {
+          type: 'multi_static_select',
+          action_id: 'cc_attendees',
+          placeholder: plain('Select attendees to CC'),
+          options: ccOptions,
+        },
+        true,
+      ),
+      input(
+        'BCC Attendees',
+        'bcc_attendees_block',
+        {
+          type: 'multi_static_select',
+          action_id: 'bcc_attendees',
+          placeholder: plain('Select attendees to BCC'),
+          options: ccOptions,
+        },
+        true,
+      ),
       section('📱 *SMS is a pre-prepared template only.* It is not sent automatically. Copy and send it manually.'),
       input(
         'SMS copy',
@@ -361,7 +456,7 @@ export function schedulingModal(caseRecord, schedulingResult, recentAudits = [])
       options: durationSelectOptions(stageRules.typicalDurationMinutes),
       initial_option: durationSelectOption(stageRules.typicalDurationMinutes)
     }),
-    section(`🕐 Interview timezone: ${caseRecord.interviewTimezone || SYDNEY_TIME_ZONE}. Times shown in PH (${PH_TIME_ZONE}).`)
+    section(`🕐 Interview timezone: ${caseRecord.interviewTimezone || SYDNEY_TIME_ZONE}. Times shown in ${caseRecord.interviewTimezone || SYDNEY_TIME_ZONE} with PH (${PH_TIME_ZONE}) equivalents.`)
   ]
 
   return {
@@ -1048,7 +1143,7 @@ function buildPhTimeOptions({ referenceDate, interviewTimeZone, stepMinutes = 30
         formatDateForInput(phInstant, PH_TIME_ZONE),
         formatDateForInput(phInstant, interviewTimeZone)
       )
-      label = `${phLabel} PH (${interviewLabel} ${interviewZone}${dayOffset})`
+      label = `${interviewLabel} ${interviewZone}${dayOffset} (${phLabel} PH)`
     }
 
     options.push({ text: plain(label), value: timeValue })
