@@ -193,6 +193,8 @@ function mapApplicantDetails(item, applicantId) {
     customFields: item.custom_fields || {},
     sourceDetail: item.source_detail || '',
     location: item.location || '',
+    recruiterEmail: item.recruiter?.email || '',
+    recruiterName: item.recruiter?.name || item.recruiter?.full_name || '',
   };
 }
 

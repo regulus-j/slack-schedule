@@ -250,6 +250,8 @@ function buildGmailRawMessage(email) {
   const subject = email.subject || ''
   const to = email.to || ''
   const from = email.from || ''
+  const cc = email.cc || ''
+  const bcc = email.bcc || ''
 
   const mixedBoundary = `mixed-${crypto.randomUUID()}`
   const altBoundary = `alt-${crypto.randomUUID()}`
@@ -258,9 +260,19 @@ function buildGmailRawMessage(email) {
     `To: ${to}`,
     `From: ${from}`,
     `Subject: ${subject}`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
   ]
+  
+  if (cc) {
+    headers.push(`Cc: ${cc}`)
+  }
+  if (bcc) {
+    headers.push(`Bcc: ${bcc}`)
+  }
+  
+  headers.push(
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`
+  )
 
   const altPart = [
     `--${mixedBoundary}`,
