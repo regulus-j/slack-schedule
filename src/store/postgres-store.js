@@ -170,22 +170,31 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 0, 'none', $19, $20, NULL, $21, $22, $23, $24, $25)
         RETURNING *`,
         [
-          id,
-          'Draft',
-          input.ownerSlackUserId,
-          input.channelId,
-          input.applicant ? JSON.stringify(input.applicant) : JSON.stringify({}),
-          input.recruiter ? JSON.stringify(input.recruiter) : JSON.stringify({}),
-          input.hiringManager ? JSON.stringify(input.hiringManager) : JSON.stringify({}),
-          input.templateId || null,
-          input.notes || '',
-          input.interviewWindowStartDate || null,
-          input.interviewWindowEndDate || null,
-          input.interviewTimezone || null,
-          input.selectedInterviewDate || null,
-          input.selectedInterviewTime || null,
-          input.resumeLink || input.resumeFile || null,
-          input.autofill ? JSON.stringify(input.autofill) : JSON.stringify({}),
+          id,                                                              // $1
+          'Draft',                                                         // $2
+          input.ownerSlackUserId,                                          // $3
+          input.channelId,                                                 // $4
+          input.applicant ? JSON.stringify(input.applicant) : JSON.stringify({}),       // $5
+          input.recruiter ? JSON.stringify(input.recruiter) : JSON.stringify({}),       // $6
+          input.hiringManager ? JSON.stringify(input.hiringManager) : JSON.stringify({}), // $7
+          input.templateId || null,                                        // $8
+          input.notes || '',                                               // $9
+          input.interviewWindowStartDate || null,                          // $10
+          input.interviewWindowEndDate || null,                            // $11
+          input.interviewTimezone || null,                                 // $12
+          input.selectedInterviewDate || null,                             // $13
+          input.selectedInterviewTime || null,                             // $14
+          input.resumeLink || input.resumeFile || null,                    // $15
+          input.autofill ? JSON.stringify(input.autofill) : JSON.stringify({}),          // $16
+          input.approvals ? JSON.stringify(input.approvals) : JSON.stringify({}),        // $17
+          input.guests ? JSON.stringify(input.guests) : JSON.stringify([]),              // $18
+          input.scheduleHistory ? JSON.stringify(input.scheduleHistory) : JSON.stringify([]), // $19
+          input.attendees ? JSON.stringify(input.attendees) : JSON.stringify([]),        // $20
+          input.stageOverrides ? JSON.stringify(input.stageOverrides) : JSON.stringify({}), // $21
+          input.attendanceOverrides ? JSON.stringify(input.attendanceOverrides) : JSON.stringify({}), // $22
+          input.externalAttendees ? JSON.stringify(input.externalAttendees) : JSON.stringify([]),    // $23
+          input.lastAvailabilityCheck || null,                             // $24
+          input.selectedSlot ? JSON.stringify(input.selectedSlot) : null,  // $25
         ],
       );
       return rowToCase(result.rows[0]);
