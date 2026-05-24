@@ -964,6 +964,7 @@ export function registerSlackHandlers(app, context) {
           jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
           startDate,
           startTime,
+          durationMinutes: stageRules.typicalDurationMinutes,
           zoomLink,
           attendees: allAttendeeEmails,
           timeZone: interviewTimeZone,
@@ -1067,6 +1068,9 @@ export function registerSlackHandlers(app, context) {
       ...externalGuests,
     ].filter(Boolean);
 
+    const finalizeStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
+    const finalizeStageRules = resolveStageRules(finalizeStageKey, caseRecord.stageOverrides)
+
     const eventResult = await createCalendarEvent({
       config,
       logger,
@@ -1077,6 +1081,7 @@ export function registerSlackHandlers(app, context) {
         jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
         startDate: converted.date,
         startTime: converted.time,
+        durationMinutes: finalizeStageRules.typicalDurationMinutes,
         zoomLink: view.state.values.zoom_block.zoom_link.value,
         attendees,
         timeZone: interviewTimeZone,
@@ -1255,6 +1260,8 @@ export function registerSlackHandlers(app, context) {
       htmlBody,
       plainBody,
     };
+    const rescheduleStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
+    const rescheduleStageRules = resolveStageRules(rescheduleStageKey, caseRecord.stageOverrides)
     const eventResult = await updateCalendarEvent({
       config,
       logger,
@@ -1265,6 +1272,7 @@ export function registerSlackHandlers(app, context) {
         jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
         startDate: request.date,
         startTime: request.time,
+        durationMinutes: rescheduleStageRules.typicalDurationMinutes,
         zoomLink: request.zoomLink,
         attendees: request.attendees,
         timeZone: caseRecord.interviewTimezone || SYDNEY_TIME_ZONE,
