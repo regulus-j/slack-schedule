@@ -954,14 +954,13 @@ function recruiterSelectElement({ recruiters, draft }) {
 }
 
 function applicantDetailBlocks(draft) {
-  const detail = draft.applicantDetail;
   const hasApplicant = Boolean(draft.applicantId);
 
   if (!hasApplicant) return [];
 
   const toggleButton = draft.showDetails
-    ? button('🔽 Hide applicant details', 'toggle_applicant_details', undefined, 'hide')
-    : button('▶️ Show applicant details', 'toggle_applicant_details', undefined, 'show');
+    ? button('🔽 Hide candidate details', 'toggle_applicant_details', undefined, 'hide')
+    : button('▶️ Show candidate details', 'toggle_applicant_details', undefined, 'show');
 
   const blocks = [
     { type: 'divider' },
@@ -970,60 +969,50 @@ function applicantDetailBlocks(draft) {
 
   if (!draft.showDetails) return blocks;
 
+  // Merge base applicant fields with richer JazzHR detail (detail wins on overlap)
   const applicant = draft.applicant || {};
-  const rich = detail || applicant;
+  const detail = draft.applicantDetail || {};
+  const rich = { ...applicant, ...detail };
 
-  const lines = [];
+  const coreLines = [];
+  if (rich.email)     coreLines.push(`📧 *Email:* ${rich.email}`);
+  if (rich.phone)     coreLines.push(`📞 *Phone:* ${rich.phone}`);
+  if (rich.jobTitle)  coreLines.push(`💼 *Position:* ${rich.jobTitle}`);
+  if (rich.stage)     coreLines.push(`📊 *Stage:* ${rich.stage}`);
+  if (rich.source)    coreLines.push(`📥 *Source:* ${rich.source}`);
+  if (rich.applyDate) coreLines.push(`📅 *Applied:* ${rich.applyDate}`);
+  if (rich.rating)    coreLines.push(`⭐ *Rating:* ${rich.rating}/5`);
 
-  if (rich.phone) {
-    lines.push(`📞 *Phone:* ${rich.phone}`);
-  }
-  if (rich.email) {
-    lines.push(`📧 *Email:* ${rich.email}`);
-  }
-  if (rich.jobTitle) {
-    lines.push(`💼 *Position:* ${rich.jobTitle}`);
-  }
-  if (rich.stage) {
-    lines.push(`📊 *Stage:* ${rich.stage}`);
-  }
-  if (rich.source) {
-    lines.push(`📥 *Source:* ${rich.source}`);
-  }
-  if (rich.applyDate) {
-    lines.push(`📅 *Applied:* ${rich.applyDate}`);
-  }
-  if (rich.rating) {
-    lines.push(`⭐ *Rating:* ${rich.rating}/5`);
+  if (coreLines.length > 0) {
+    blocks.push(section(coreLines.join('\n')));
+  } else {
+    blocks.push(section('ℹ️ No additional details available for this candidate.'));
   }
 
-  if (lines.length > 0) {
-    blocks.push(section(lines.join('\n')));
-  }
+  const hasExtended = detail.address || detail.resumeUrl || detail.resumeText ||
+    detail.linkedinUrl || detail.education || detail.experience || detail.notes;
 
-  if (!detail) {
-    blocks.push(section('⏳ JazzHR details still loading...'));
-    blocks.push({ type: 'divider' });
-    return blocks;
+  if (!hasExtended && draft.applicant?.jazzhrApplicationId) {
+    blocks.push(section('⏳ Loading extended details from JazzHR…'));
   }
 
   if (detail.address) {
     blocks.push(section(`📍 *Address:* ${detail.address}`));
   }
 
+  if (detail.linkedinUrl) {
+    blocks.push(section(`🔗 <${detail.linkedinUrl}|LinkedIn profile>`));
+  }
+
   if (detail.resumeUrl) {
-    blocks.push(section(`📄 <${detail.resumeUrl}|View resume>`));
+    blocks.push(section(`📄 <${detail.resumeUrl}|View resume in JazzHR>`));
   }
 
   if (detail.resumeText) {
     const preview = detail.resumeText.length > 300
-      ? detail.resumeText.slice(0, 300) + '...'
+      ? detail.resumeText.slice(0, 300) + '…'
       : detail.resumeText;
     blocks.push(section(`📝 *Resume preview:*\n> ${preview}`));
-  }
-
-  if (detail.linkedinUrl) {
-    blocks.push(section(`🔗 <${detail.linkedinUrl}|LinkedIn profile>`));
   }
 
   if (detail.education) {
@@ -1032,16 +1021,16 @@ function applicantDetailBlocks(draft) {
 
   if (detail.experience) {
     const expPreview = detail.experience.length > 200
-      ? detail.experience.slice(0, 200) + '...'
+      ? detail.experience.slice(0, 200) + '…'
       : detail.experience;
     blocks.push(section(`💪 *Experience:*\n> ${expPreview}`));
   }
 
   if (typeof detail.notes === 'string' && detail.notes.trim()) {
     const notesPreview = detail.notes.length > 200
-      ? detail.notes.slice(0, 200) + '...'
+      ? detail.notes.slice(0, 200) + '…'
       : detail.notes;
-    blocks.push(section(`📝 *Notes:*\n> ${notesPreview}`));
+    blocks.push(section(`🗒️ *Notes:*\n> ${notesPreview}`));
   }
 
   blocks.push({ type: 'divider' });
