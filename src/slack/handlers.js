@@ -196,6 +196,7 @@ export function registerSlackHandlers(app, context) {
 
   app.action('applicant_select', async ({ ack, body, client }) => {
     await ack();
+    logger.info('applicant_select_fired', { selectedId: selectedOptionValue(body) });
     const selectedId = selectedOptionValue(body);
     const applicant = findApplicant(selectedId);
 
@@ -1410,7 +1411,29 @@ async function refreshIntakeModal({
 
   draft.showDetails = resolvedShowDetails;
   if (draft.showDetails && draft.applicantId) {
-    draft.applicantDetail = getApplicantDetail(draft.applicantId) || null;
+    const cachedDetail = getApplicantDetail(draft.applicantId);
+    if (cachedDetail) {
+      draft.applicantDetail = cachedDetail;
+    } else if (draft.applicant) {
+      draft.applicantDetail = {
+        email: draft.applicant.email || '',
+        phone: draft.applicant.phone || '',
+        jobTitle: draft.applicant.jobTitle || '',
+        stage: draft.applicant.stage || '',
+        source: draft.applicant.source || '',
+        applyDate: '',
+        rating: '',
+        address: '',
+        resumeUrl: '',
+        resumeText: '',
+        linkedinUrl: '',
+        education: '',
+        experience: '',
+        notes: '',
+      };
+    } else {
+      draft.applicantDetail = null;
+    }
   }
 
   const privateMetadata = buildPrivateMetadata(body.view, {
