@@ -81,13 +81,19 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     submit: plain('➕ Create'),
     close: plain('Cancel'),
     blocks: [
-      input('Applicant name', 'applicant_block', {
-        type: 'external_select',
-        action_id: 'applicant_select',
-        min_query_length: 0,
-        placeholder: plain('Search applicant'),
-        ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
-      }),
+      {
+        type: 'input',
+        block_id: 'applicant_block',
+        dispatch_action: true,
+        label: plain('Applicant name'),
+        element: {
+          type: 'external_select',
+          action_id: 'applicant_select',
+          min_query_length: 0,
+          placeholder: plain('Search applicant'),
+          ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
+        },
+      },
       input(
         'Applicant email',
         'applicant_email_block',
