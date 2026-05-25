@@ -1,6 +1,7 @@
 import { getSlackRecruiters, getSlackUsers, setSlackRecruiters, setSlackUsers } from '../data/cache.js'
 
 let directoryLoaded = false
+let directoryLoadPromise = null
 
 export async function ensureSlackDirectory({ client, config, logger, force = false }) {
   if (!force && directoryLoaded) {
@@ -10,13 +11,34 @@ export async function ensureSlackDirectory({ client, config, logger, force = fal
     }
   }
 
+  if (!force && directoryLoadPromise) return directoryLoadPromise
+
+  directoryLoadPromise = loadSlackDirectory({ client, config, logger })
+  try {
+    return await directoryLoadPromise
+  } finally {
+    directoryLoadPromise = null
+  }
+}
+
+async function loadSlackDirectory({ client, config, logger }) {
   const users = await fetchAllSlackUsers({ client, logger })
   setSlackUsers(users)
 
   let recruiters = []
   const channelId = config?.slack?.recruitmentChannelId
   if (channelId) {
-    recruiters = await fetchRecruitmentChannelUsers({ client, channelId, users, logger })
+    try {
+      recruiters = await fetchRecruitmentChannelUsers({ client, channelId, users, logger })
+    } catch (error) {
+      if (error?.data?.error !== 'missing_scope') throw error
+      logger.warn('slack_recruitment_channel_missing_scope', {
+        channelId,
+        error: error.message,
+        fallback: 'all_slack_users',
+      })
+      recruiters = users.map((user) => ({ ...user, role: 'recruiter' }))
+    }
   }
   setSlackRecruiters(recruiters)
   directoryLoaded = true

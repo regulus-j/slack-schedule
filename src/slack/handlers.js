@@ -1324,8 +1324,8 @@ async function openIntakeModal({
   defaultTimeZone,
 }) {
   const templates = await loadSchedulingTemplates();
-  await ensureSlackDirectory({ client, config, logger }).catch((error) => {
-    logger.warn('slack_directory_open_intake_failed', { error: error.message })
+  ensureSlackDirectory({ client, config, logger }).catch((error) => {
+    logger.warn('slack_directory_background_failed', { error: error.message })
   })
   const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false });
   logger.info('schedule_intake_opened', { templateCount: templates.length });
