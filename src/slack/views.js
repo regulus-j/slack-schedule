@@ -89,6 +89,30 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const hiringManagerEmailBlockId = dynamicBlockId('hm_email_block', draft.hiringManagerId)
   const recruiterEmailActionId = dynamicBlockId('recruiter_email', draft.recruiterId)
   const hiringManagerEmailActionId = dynamicBlockId('hm_email', draft.hiringManagerId)
+  const hmRequired = stageRequiresHiringManager(draft.stageKey)
+  const resumeRequired = stageRequiresResumeUpload(draft.stageKey)
+  const hiringManagerBlocks = hmRequired
+    ? [
+        input('Hiring Manager name', 'hm_block', {
+          type: 'external_select',
+          action_id: 'hm_select',
+          min_query_length: 0,
+          placeholder: plain('Search active users'),
+          ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
+        }, false, true),
+        input(
+          'Hiring Manager email',
+          hiringManagerEmailBlockId,
+          {
+            type: 'plain_text_input',
+            action_id: hiringManagerEmailActionId,
+            placeholder: plain('Autofills from the selected hiring manager'),
+            ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
+          },
+          false,
+        ),
+      ]
+    : []
 
   return {
     type: 'modal',
@@ -128,7 +152,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         placeholder: plain('Choose stage'),
         options: intakeStageOptions(),
         ...(draft.stageOption ? { initial_option: draft.stageOption } : {}),
-      }),
+      }, false, true),
       input('Recruiter name', 'recruiter_block', recruiterSelect, false, true),
       input(
         'Recruiter email',
@@ -141,24 +165,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         },
         true,
       ),
-      input('Hiring Manager name', 'hm_block', {
-        type: 'external_select',
-        action_id: 'hm_select',
-        min_query_length: 0,
-        placeholder: plain('Search active users'),
-        ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
-      }, true, true),
-      input(
-        'Hiring Manager email',
-        hiringManagerEmailBlockId,
-        {
-          type: 'plain_text_input',
-          action_id: hiringManagerEmailActionId,
-          placeholder: plain('Autofills from the selected hiring manager'),
-          ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
-        },
-        true,
-      ),
+      ...hiringManagerBlocks,
       input(
         'Notes',
         'notes_block',
@@ -175,12 +182,12 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         'Resume',
         'resume_block',
         {
-          type: 'plain_text_input',
-          action_id: 'resume_link',
-          placeholder: plain('Paste a resume link'),
-          ...(draft.resumeLink ? { initial_value: draft.resumeLink } : {}),
+          type: 'file_input',
+          action_id: 'resume_file',
+          filetypes: ['pdf', 'doc', 'docx'],
+          max_files: 1,
         },
-        true,
+        !resumeRequired,
       ),
       input('Interview timezone', 'timezone_block', {
         type: 'external_select',
@@ -770,7 +777,7 @@ function caseSummary(caseRecord) {
     `${statusEmoji(caseRecord.status)} Status: *${displayStatus(caseRecord.status)}*`,
     `👤 Applicant: ${applicant ? applicantLabel(applicant) : 'Missing applicant'}`,
     `👥 Recruiter: ${recruiter ? mentionPerson(recruiter) : 'Missing recruiter'}`,
-    ...(hiringManager ? [`👤 Hiring Manager: ${mentionPerson(hiringManager)} (optional)`] : []),
+    ...(hiringManager ? [`👤 Hiring Manager: ${mentionPerson(hiringManager)}`] : []),
     ...scheduleSummary(caseRecord),
     ...resumeSummary(caseRecord),
   ].join('\n');
@@ -813,7 +820,7 @@ function nextStepText(caseRecord) {
   if (isScheduledCase(caseRecord)) {
     return '🎯 *Next:* send a reminder, view the calendar details, or reschedule if the interview time changes.';
   }
-  return '🎯 *Next:* continue the scheduling steps. Resume handling remains manual unless a resume upload flow is added.';
+  return '🎯 *Next:* continue the scheduling steps. Uploaded resumes stay attached to the case.';
 }
 
 function calendarEventUrl(eventId) {
@@ -860,7 +867,11 @@ function resumeSummary(caseRecord) {
     return ['📄 Resume: not linked yet'];
   }
 
-  return ['📄 Resume: linked', `🔗 View resume: ${caseRecord.resumeLink}`];
+  if (/^https?:\/\//i.test(String(caseRecord.resumeLink).trim())) {
+    return ['📄 Resume: linked', `🔗 View resume: ${caseRecord.resumeLink}`];
+  }
+
+  return ['📄 Resume: Slack file attached'];
 }
 
 function caseTitle(caseRecord) {
@@ -900,6 +911,15 @@ function input(label, blockId, element, optional = false, dispatchAction = false
 function dynamicBlockId(base, value) {
   const suffix = String(value || '').replace(/[^a-zA-Z0-9_-]/g, '_')
   return suffix ? `${base}_${suffix}` : base
+}
+
+function stageRequiresHiringManager(stageKey) {
+  const normalized = normalizeStageKey(stageKey)
+  return normalized === '2nd-interview' || normalized === 'final-interview'
+}
+
+function stageRequiresResumeUpload(stageKey) {
+  return stageRequiresHiringManager(stageKey)
 }
 
 function recruiterSelectElement({ recruiters, draft }) {

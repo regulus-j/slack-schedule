@@ -212,6 +212,7 @@ test('intake modal uses stage selection instead of template selection', () => {
   assert.ok(stageBlock);
   assert.equal(stageBlock.label.text, 'Stage');
   assert.equal(stageBlock.element.action_id, 'stage_select');
+  assert.equal(stageBlock.dispatch_action, true);
   assert.deepEqual(stageBlock.element.options.map((option) => option.text.text), [
     '1st Interview',
     '2nd Interview',
@@ -220,7 +221,7 @@ test('intake modal uses stage selection instead of template selection', () => {
   assert.equal(inputBlocks.some((block) => block.block_id === 'template_block'), false);
 });
 
-test('intake modal includes a resume link field', () => {
+test('intake modal includes a resume file upload field', () => {
   const view = intakeModal({
     templates: [
       {
@@ -234,11 +235,14 @@ test('intake modal includes a resume link field', () => {
 
   const resumeBlock = view.blocks.find((block) => block.block_id === 'resume_block');
   assert.ok(resumeBlock);
-  assert.equal(resumeBlock.element.type, 'plain_text_input');
+  assert.equal(resumeBlock.element.type, 'file_input');
+  assert.equal(resumeBlock.element.action_id, 'resume_file');
+  assert.deepEqual(resumeBlock.element.filetypes, ['pdf', 'doc', 'docx']);
+  assert.equal(resumeBlock.element.max_files, 1);
   assert.equal(resumeBlock.optional, true);
 });
 
-test('intake modal separates applicant, recruiter, and HM names from emails', () => {
+test('intake modal hides HM fields before a later-stage interview is selected', () => {
   const recruiters = SAMPLE_PEOPLE.filter((p) => p.role === 'recruiter');
   const view = intakeModal({
     templates: [
@@ -254,8 +258,6 @@ test('intake modal separates applicant, recruiter, and HM names from emails', ()
       applicantEmail: 'alex@example.com',
       recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
       recruiterEmail: 'jamal@example.com',
-      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
-      hiringManagerEmail: 'ana@example.com',
     },
     recruiters,
   });
@@ -272,18 +274,42 @@ test('intake modal separates applicant, recruiter, and HM names from emails', ()
   assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
   assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
-  assert.equal(hmNameBlock.element.type, 'external_select');
-  assert.equal(hmEmailBlock.element.type, 'plain_text_input');
-  assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
+  assert.equal(hmNameBlock, undefined);
+  assert.equal(hmEmailBlock, undefined);
   assert.equal(applicantNameBlock.element.initial_option.value, 'applicant-demo-1');
   assert.equal(recruiterNameBlock.element.initial_option.value, 'rec-jam');
+});
+
+test('intake modal requires HM fields and resume upload for later-stage interviews', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      stageKey: 'final-interview',
+      stageOption: { text: { type: 'plain_text', text: 'Final Interview' }, value: 'final-interview' },
+      hiringManagerId: 'hm-ana',
+      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+      hiringManagerEmail: 'ana@example.com',
+    },
+  });
+
+  const hmNameBlock = view.blocks.find((block) => block.block_id === 'hm_block');
+  const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block_hm-ana');
+  const resumeBlock = view.blocks.find((block) => block.block_id === 'resume_block');
+
+  assert.equal(hmNameBlock.element.type, 'external_select');
+  assert.equal(hmNameBlock.optional, false);
+  assert.equal(hmEmailBlock.element.type, 'plain_text_input');
+  assert.equal(hmEmailBlock.optional, false);
   assert.equal(hmNameBlock.element.initial_option.value, 'hm-ana');
+  assert.equal(resumeBlock.element.type, 'file_input');
+  assert.equal(resumeBlock.optional, false);
 });
 
 test('intake modal refreshes recruiter and HM email fields after selection', () => {
   const view = intakeModal({
     templates: [],
     draft: {
+      stageKey: 'final-interview',
       recruiterId: 'rec-jam',
       recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
       recruiterEmail: 'jamal@example.com',
@@ -321,7 +347,7 @@ test('builds intake draft emails from selected people and overrides', () => {
       'hm_email_block_hm-ana': { 'hm_email_hm-ana': { value: 'custom-hm@example.com' } },
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
-      resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },
+      resume_block: { resume_file: { files: [{ id: 'F123', url_private: 'https://files.slack.com/resume.pdf' }] } },
       window_start_block: { window_start: { selected_date: '2026-05-20' } },
       window_end_block: { window_end: { selected_date: '2026-05-21' } },
     },
@@ -344,7 +370,7 @@ test('builds intake draft emails from selected people and overrides', () => {
   assert.equal(draft.stageKey, 'final-interview');
   assert.equal(draft.templateId, '2nd-or-Final-invite');
   assert.equal(draft.notes, 'Notes');
-  assert.equal(draft.resumeLink, 'https://example.com/resume.pdf');
+  assert.equal(draft.resumeLink, 'https://files.slack.com/resume.pdf');
   assert.equal(draft.interviewWindowStartDate, '2026-05-20');
   assert.equal(draft.interviewWindowEndDate, '2026-05-21');
 });
@@ -409,6 +435,7 @@ test('builds intake draft selection email from Slack profile override', () => {
 
   const draft = buildIntakeDraft(
     {
+      stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'U-REC' } } },
       hm_block: { hm_select: { selected_option: { value: 'U-HM' } } },
       recruiter_email_block: { recruiter_email: { value: 'stale-recruiter@example.com' } },
@@ -441,6 +468,34 @@ test('builds intake draft selection email from Slack profile override', () => {
   assert.equal(draft.recruiterEmail, 'slack-recruiter@example.com');
   assert.equal(draft.hiringManager.name, 'Slack HM');
   assert.equal(draft.hiringManagerEmail, 'slack-hm@example.com');
+});
+
+test('builds intake draft ignores stale hidden HM values for 1st interviews', () => {
+  setApplicants([]);
+  setRecruiters([]);
+  setHiringManagers([
+    {
+      id: 'U-HM',
+      slackUserId: 'U-HM',
+      name: 'Local HM',
+      email: 'local-hm@example.com',
+      role: 'hiring_manager',
+    },
+  ]);
+
+  const draft = buildIntakeDraft(
+    {
+      stage_block: { stage_select: { selected_option: { value: '1st-interview' } } },
+      hm_block: { hm_select: { selected_option: { value: 'U-HM' } } },
+      hm_email_block: { hm_email: { value: 'stale-hm@example.com' } },
+    },
+    [],
+  );
+
+  assert.equal(draft.stageKey, '1st-interview');
+  assert.equal(draft.hiringManagerId, '');
+  assert.equal(draft.hiringManager, null);
+  assert.equal(draft.hiringManagerEmail, '');
 });
 
 test('finalize and reschedule forms use a single attendees selector', () => {

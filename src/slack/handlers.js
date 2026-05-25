@@ -17,7 +17,7 @@ import {
   personPickerLabel,
   toSlackOption,
 } from '../data/search.js'
-import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, templateRequiresResume } from '../templates.js'
+import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
 import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
@@ -251,6 +251,20 @@ export function registerSlackHandlers(app, context) {
     });
   });
 
+  app.action('stage_select', async ({ ack, body, client }) => {
+    await ack()
+    if (body.view?.callback_id !== 'schedule_intake_submit') return
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      selectedKey: 'stageKey',
+      selectedId: selectedOptionValue(body),
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
   app.action('recruiter_select', async ({ ack, body, client }) => {
     await ack();
     const selectedId = selectedOptionValue(body)
@@ -364,7 +378,8 @@ export function registerSlackHandlers(app, context) {
     const interviewWindowStartDate = intakeDraft.interviewWindowStartDate;
     const interviewWindowEndDate = intakeDraft.interviewWindowEndDate;
     const interviewTimezone = intakeDraft.interviewTimezone || defaultTimeZone;
-    const requiresResume = templateRequiresResume(templateId);
+    const requiresHiringManager = stageRequiresHiringManager(stageKey)
+    const requiresResume = stageRequiresResumeUpload(stageKey)
     const errors = {};
 
     if (!stageKey) {
@@ -377,7 +392,12 @@ export function registerSlackHandlers(app, context) {
     if (intakeDraft.recruiterEmail && !isValidEmail(intakeDraft.recruiterEmail)) {
       errors[findInputBlockId(values, 'recruiter_email', 'recruiter_email_block')] = 'Enter a valid recruiter email.';
     }
-    if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
+    if (requiresHiringManager && !intakeDraft.hiringManagerId) {
+      errors.hm_block = 'Choose a hiring manager.';
+    }
+    if (requiresHiringManager && !intakeDraft.hiringManagerEmail) {
+      errors[findInputBlockId(values, 'hm_email', 'hm_email_block')] = 'Enter hiring manager email.';
+    } else if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
       errors[findInputBlockId(values, 'hm_email', 'hm_email_block')] = 'Enter a valid hiring manager email.';
     }
     if (Object.keys(errors).length > 0) {
@@ -410,7 +430,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          resume_block: 'Paste a resume link for the 2nd/final interview.',
+          resume_block: 'Upload a resume for the 2nd/final interview.',
         },
       });
       return;
@@ -511,7 +531,9 @@ export function registerSlackHandlers(app, context) {
       return;
     }
 
-    const details = [`📄 Resume for ${caseRecord.id}:`, `🔗 <${caseRecord.resumeLink}|Open resume>`].join('\n');
+    const details = canOpenResumeReference(caseRecord.resumeLink)
+      ? [`📄 Resume for ${caseRecord.id}:`, `🔗 <${caseRecord.resumeLink}|Open resume>`].join('\n')
+      : [`📄 Resume for ${caseRecord.id}:`, `Slack file attached: ${caseRecord.resumeLink}`].join('\n');
 
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
@@ -1599,21 +1621,28 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     findApplicant(applicantId),
     getInputValue(values, 'applicant_email'),
   );
+  const requiresHiringManager = stageRequiresHiringManager(stageKey)
   const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
-  const hiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || applicant?.hiringManagerId || '');
+  const hiringManagerId = requiresHiringManager
+    ? overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || applicant?.hiringManagerId || '')
+    : ''
   const recruiterEmailOverride =
     overrides.recruiterEmail !== undefined ? overrides.recruiterEmail : getInputValue(values, 'recruiter_email')
   const hiringManagerEmailOverride =
-    overrides.hiringManagerEmail !== undefined ? overrides.hiringManagerEmail : getInputValue(values, 'hm_email')
+    requiresHiringManager
+      ? (overrides.hiringManagerEmail !== undefined ? overrides.hiringManagerEmail : getInputValue(values, 'hm_email'))
+      : ''
   const recruiter = applyEmailOverride(
     overrides.recruiterPerson || findPersonById(recruiterId),
     recruiterEmailOverride,
   );
-  const hiringManager = applyEmailOverride(
-    overrides.hiringManagerPerson || findPersonById(hiringManagerId),
-    hiringManagerEmailOverride,
-  );
+  const hiringManager = requiresHiringManager
+    ? applyEmailOverride(
+        overrides.hiringManagerPerson || findPersonById(hiringManagerId),
+        hiringManagerEmailOverride,
+      )
+    : null
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
     ? toSlackOption(stageLabel(stageKey), stageKey)
@@ -1701,6 +1730,19 @@ function findPersonInList(id, people) {
   return people.find((person) => person.id === value || person.slackUserId === value) || null
 }
 
+function stageRequiresHiringManager(stageKey) {
+  const normalized = normalizeStageKey(stageKey)
+  return normalized === '2nd-interview' || normalized === 'final-interview'
+}
+
+function stageRequiresResumeUpload(stageKey) {
+  return stageRequiresHiringManager(stageKey)
+}
+
+function canOpenResumeReference(value) {
+  return /^https?:\/\//i.test(String(value || '').trim())
+}
+
 function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
@@ -1759,8 +1801,12 @@ function buildSmsDraft(caseRecord) {
 }
 
 function extractResumeLink(values) {
-  const resumeElement = values.resume_block?.resume_link;
-  return resumeElement?.value?.trim() || '';
+  const resumeElement = values.resume_block?.resume_file
+  const file = resumeElement?.files?.[0]
+  if (file) return file.url_private || file.permalink || file.id || ''
+
+  const legacyElement = values.resume_block?.resume_link
+  return legacyElement?.value?.trim() || ''
 }
 
 async function openDm(client, userId) {
