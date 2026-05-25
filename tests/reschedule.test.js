@@ -384,6 +384,63 @@ test('builds intake draft recruiter from the selected applicant', () => {
   assert.equal(draft.recruiterOption.text.text, 'Mara Santos - mara@example.com');
 });
 
+test('builds intake draft selection email from Slack profile override', () => {
+  setApplicants([]);
+  setRecruiters([
+    {
+      id: 'U-REC',
+      slackUserId: 'U-REC',
+      name: 'Local Recruiter',
+      email: 'local-recruiter@example.com',
+      role: 'recruiter',
+    },
+  ]);
+  setHiringManagers([
+    {
+      id: 'U-HM',
+      slackUserId: 'U-HM',
+      name: 'Local HM',
+      email: 'local-hm@example.com',
+      role: 'hiring_manager',
+    },
+  ]);
+
+  const draft = buildIntakeDraft(
+    {
+      recruiter_block: { recruiter_select: { selected_option: { value: 'U-REC' } } },
+      hm_block: { hm_select: { selected_option: { value: 'U-HM' } } },
+      recruiter_email_block: { recruiter_email: { value: 'stale-recruiter@example.com' } },
+      hm_email_block: { hm_email: { value: 'stale-hm@example.com' } },
+    },
+    [],
+    {
+      recruiter: 'U-REC',
+      recruiterPerson: {
+        id: 'U-REC',
+        slackUserId: 'U-REC',
+        name: 'Slack Recruiter',
+        email: 'slack-recruiter@example.com',
+        role: 'recruiter',
+      },
+      recruiterEmail: 'slack-recruiter@example.com',
+      hiringManager: 'U-HM',
+      hiringManagerPerson: {
+        id: 'U-HM',
+        slackUserId: 'U-HM',
+        name: 'Slack HM',
+        email: 'slack-hm@example.com',
+        role: 'hiring_manager',
+      },
+      hiringManagerEmail: 'slack-hm@example.com',
+    },
+  );
+
+  assert.equal(draft.recruiter.name, 'Slack Recruiter');
+  assert.equal(draft.recruiterEmail, 'slack-recruiter@example.com');
+  assert.equal(draft.hiringManager.name, 'Slack HM');
+  assert.equal(draft.hiringManagerEmail, 'slack-hm@example.com');
+});
+
 test('finalize and reschedule forms use a single attendees selector', () => {
   const finalize = finalizeModal(baseCase);
   const reschedule = rescheduleModal({

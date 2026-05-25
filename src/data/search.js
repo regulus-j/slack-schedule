@@ -38,7 +38,7 @@ export function searchApplicants(query, applicants = getApplicants()) {
 }
 
 export function searchPeople(query, people = getAllPeople()) {
-  return searchRecords(query, people, (item) => [item.name, item.email, item.role].join(' '));
+  return searchRecords(query, people, (item) => [item.name, item.email, item.role, item.positionTitle].join(' '));
 }
 
 export function searchRecords(query, records, toHaystack) {

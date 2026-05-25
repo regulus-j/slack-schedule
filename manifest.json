@@ -31,6 +31,7 @@
     "scopes": {
       "bot": [
         "app_mentions:read",
+        "channels:read",
         "channels:history",
         "chat:write",
         "commands",

@@ -1,5 +1,12 @@
 import crypto from 'node:crypto'
-import { getApplicants, getRecruiters, getHiringManagers, getAllPeople, getApplicantDetail, setApplicantDetail } from '../data/cache.js'
+import {
+  getApplicants,
+  getRecruiters,
+  getHiringManagers,
+  getApplicantDetail,
+  getSlackRecruiters,
+  setApplicantDetail,
+} from '../data/cache.js'
 import { searchTimezones } from '../data/timezones.js'
 import {
   applicantOptions,
@@ -13,6 +20,7 @@ import {
 import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, templateRequiresResume } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
+import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
 import {
   PH_TIME_ZONE,
@@ -243,12 +251,15 @@ export function registerSlackHandlers(app, context) {
 
   app.action('recruiter_select', async ({ ack, body, client }) => {
     await ack();
+    const selectedId = selectedOptionValue(body)
+    const selectedUser = await resolveSlackUser({ client, userId: selectedId, logger })
     await refreshIntakeModal({
       client,
       body,
       templates: await loadSchedulingTemplates(),
       selectedKey: 'recruiter',
-      selectedId: selectedOptionValue(body),
+      selectedId,
+      selectedPerson: selectedUser ? asRecruiter(selectedUser) : null,
       timeZones: schedulingTimeZones,
       defaultTimeZone,
     });
@@ -256,12 +267,15 @@ export function registerSlackHandlers(app, context) {
 
   app.action('hm_select', async ({ ack, body, client }) => {
     await ack();
+    const selectedId = selectedOptionValue(body)
+    const selectedUser = await resolveSlackUser({ client, userId: selectedId, logger })
     await refreshIntakeModal({
       client,
       body,
       templates: await loadSchedulingTemplates(),
       selectedKey: 'hiringManager',
-      selectedId: selectedOptionValue(body),
+      selectedId,
+      selectedPerson: selectedUser ? asHiringManager(selectedUser) : null,
       timeZones: schedulingTimeZones,
       defaultTimeZone,
     });
@@ -291,8 +305,8 @@ export function registerSlackHandlers(app, context) {
     await ack({ options: applicantOptions(options.value, getApplicants()) });
   });
 
-  app.options('recruiter_select', async ({ options, ack }) => {
-    const recruiters = getRecruiters()
+  app.options('recruiter_select', async ({ options, ack, client }) => {
+    const { recruiters } = await ensureSlackDirectory({ client, config, logger })
     const slackOptions = personOptions(options.value, recruiters)
     logger.info('recruiter_options_requested', {
       query: options.value,
@@ -303,20 +317,24 @@ export function registerSlackHandlers(app, context) {
     await ack({ options: slackOptions });
   });
 
-  app.options('hm_select', async ({ options, ack }) => {
-    await ack({ options: personOptions(options.value, getAllPeople()) });
+  app.options('hm_select', async ({ options, ack, client }) => {
+    const { users } = await ensureSlackDirectory({ client, config, logger })
+    await ack({ options: personOptions(options.value, users) });
   });
 
-  app.options('guest_select', async ({ options, ack }) => {
-    await ack({ options: personOptions(options.value, getAllPeople()) });
+  app.options('guest_select', async ({ options, ack, client }) => {
+    const { users } = await ensureSlackDirectory({ client, config, logger })
+    await ack({ options: personOptions(options.value, users) });
   });
 
-  app.options('schedule_guest_select', async ({ options, ack }) => {
-    await ack({ options: personOptions(options.value, getAllPeople()) });
+  app.options('schedule_guest_select', async ({ options, ack, client }) => {
+    const { users } = await ensureSlackDirectory({ client, config, logger })
+    await ack({ options: personOptions(options.value, users) });
   });
 
-  app.options('attendee_select', async ({ options, ack }) => {
-    await ack({ options: personOptions(options.value, getAllPeople()) });
+  app.options('attendee_select', async ({ options, ack, client }) => {
+    const { users } = await ensureSlackDirectory({ client, config, logger })
+    await ack({ options: personOptions(options.value, users) });
   });
 
   app.options('timezone_select', async ({ options, ack }) => {
@@ -1303,12 +1321,15 @@ async function openIntakeModal({
   defaultTimeZone,
 }) {
   const templates = await loadSchedulingTemplates();
+  await ensureSlackDirectory({ client, config, logger }).catch((error) => {
+    logger.warn('slack_directory_open_intake_failed', { error: error.message })
+  })
   const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false });
   logger.info('schedule_intake_opened', { templateCount: templates.length });
   await client.views.open({
     trigger_id: triggerId,
     view: {
-      ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getRecruiters() }),
+      ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getSlackRecruiters() }),
       private_metadata: meta,
     },
   });
@@ -1348,12 +1369,22 @@ async function refreshIntakeModal({
   templates,
   selectedKey,
   selectedId,
+  selectedPerson,
   showDetails,
   timeZones = [],
   defaultTimeZone,
 }) {
   if (!body.view?.id || !body.view?.hash) return;
-  const draft = buildIntakeDraft(body.view.state.values, templates, { [selectedKey]: selectedId });
+  const overrides = { [selectedKey]: selectedId }
+  if (selectedKey === 'recruiter' && selectedPerson) {
+    overrides.recruiterPerson = selectedPerson
+    overrides.recruiterEmail = selectedPerson.email || ''
+  }
+  if (selectedKey === 'hiringManager' && selectedPerson) {
+    overrides.hiringManagerPerson = selectedPerson
+    overrides.hiringManagerEmail = selectedPerson.email || ''
+  }
+  const draft = buildIntakeDraft(body.view.state.values, templates, overrides);
 
   const resolvedShowDetails = showDetails !== undefined
     ? showDetails
@@ -1395,7 +1426,7 @@ async function refreshIntakeModal({
     view_id: body.view.id,
     hash: body.view.hash,
     view: {
-      ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getRecruiters() }),
+      ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getSlackRecruiters() }),
       private_metadata: privateMetadata,
     },
   });
@@ -1560,13 +1591,17 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
   const hiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || applicant?.hiringManagerId || '');
+  const recruiterEmailOverride =
+    overrides.recruiterEmail !== undefined ? overrides.recruiterEmail : getInputValue(values, 'recruiter_email')
+  const hiringManagerEmailOverride =
+    overrides.hiringManagerEmail !== undefined ? overrides.hiringManagerEmail : getInputValue(values, 'hm_email')
   const recruiter = applyEmailOverride(
-    findPersonById(recruiterId),
-    getInputValue(values, 'recruiter_email'),
+    overrides.recruiterPerson || findPersonById(recruiterId),
+    recruiterEmailOverride,
   );
   const hiringManager = applyEmailOverride(
-    findPersonById(hiringManagerId),
-    getInputValue(values, 'hm_email'),
+    overrides.hiringManagerPerson || findPersonById(hiringManagerId),
+    hiringManagerEmailOverride,
   );
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
@@ -1649,6 +1684,22 @@ function buildAttendeeDraft(person) {
     attendeeOption: toSlackOption(personPickerLabel(person), person.id),
     email: person.email || '',
     role: person.positionTitle || person.department || person.role || '',
+  }
+}
+
+function asRecruiter(person) {
+  if (!person) return null
+  return {
+    ...person,
+    role: 'recruiter',
+  }
+}
+
+function asHiringManager(person) {
+  if (!person) return null
+  return {
+    ...person,
+    role: 'hiring_manager',
   }
 }
 
