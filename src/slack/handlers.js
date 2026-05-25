@@ -4,7 +4,7 @@ import {
   getRecruiters,
   getHiringManagers,
   getApplicantDetail,
-  getSlackRecruiters,
+  getTalentRecruiters,
   setApplicantDetail,
 } from '../data/cache.js'
 import { searchTimezones } from '../data/timezones.js'
@@ -254,12 +254,11 @@ export function registerSlackHandlers(app, context) {
   app.action('recruiter_select', async ({ ack, body, client }) => {
     await ack();
     const selectedId = selectedOptionValue(body)
-    const { recruiters } = await ensureSlackDirectory({ client, config, logger })
+    const recruiters = getTalentRecruiters()
     const selectedRecruiter = findPersonInList(selectedId, recruiters)
     if (!selectedRecruiter) {
-      logger.warn('recruiter_selection_not_in_channel', {
+      logger.warn('recruiter_selection_not_in_talent_directory', {
         selectedId,
-        channelId: config.slack.recruitmentChannelId,
       })
     }
     await refreshIntakeModal({
@@ -316,8 +315,8 @@ export function registerSlackHandlers(app, context) {
     await ack({ options: applicantOptions(options.value, getApplicants()) });
   });
 
-  app.options('recruiter_select', async ({ options, ack, client }) => {
-    const { recruiters } = await ensureSlackDirectory({ client, config, logger })
+  app.options('recruiter_select', async ({ options, ack }) => {
+    const recruiters = getTalentRecruiters()
     const slackOptions = personOptions(options.value, recruiters)
     logger.info('recruiter_options_requested', {
       query: options.value,
@@ -1341,7 +1340,7 @@ async function openIntakeModal({
   await client.views.open({
     trigger_id: triggerId,
     view: {
-      ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getSlackRecruiters() }),
+      ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getTalentRecruiters() }),
       private_metadata: meta,
     },
   });
@@ -1438,7 +1437,7 @@ async function refreshIntakeModal({
     view_id: body.view.id,
     hash: body.view.hash,
     view: {
-      ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getSlackRecruiters() }),
+      ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getTalentRecruiters() }),
       private_metadata: privateMetadata,
     },
   });

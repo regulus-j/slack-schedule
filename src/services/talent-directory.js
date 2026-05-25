@@ -1,26 +1,46 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { logger } from '../logger.js';
-import { setHiringManagers } from '../data/cache.js';
+import { setHiringManagers, setTalentRecruiters } from '../data/cache.js';
 
-export function loadTalentDirectory(config) {
-  const filePath = path.join(config.runtimeDir, 'talent_directory.sql');
+export async function loadTalentDirectory(config, store) {
+  let people
+  let source
 
-  let sql;
-  try {
-    sql = readFileSync(filePath, 'utf8');
-  } catch (err) {
-    throw new Error(`Cannot read talent directory file at ${filePath}: ${err.message}`);
+  if (typeof store?.listTalentDirectory === 'function') {
+    try {
+      people = await store.listTalentDirectory()
+      source = 'postgres:talent_directory'
+    } catch (err) {
+      logger.warn('talent_directory_postgres_failed', { error: err.message })
+    }
   }
 
-  const people = parseTalentDirectory(sql);
-  setHiringManagers(people);
+  if (!people) {
+    const filePath = path.join(config.runtimeDir, 'talent_directory.sql');
+    let sql;
+    try {
+      sql = readFileSync(filePath, 'utf8');
+    } catch (err) {
+      throw new Error(`Cannot read talent directory file at ${filePath}: ${err.message}`);
+    }
+    people = parseTalentDirectory(sql)
+    source = filePath
+  }
 
-  logger.info('talent_directory_loaded', { count: people.length, source: filePath });
+  setHiringManagers(people);
+  const talentRecruiters = people.filter(isRecruitmentTalent).map((person) => ({
+    ...person,
+    id: person.id.replace(/^hm-/, 'talent-rec-'),
+    role: 'recruiter',
+  }))
+  setTalentRecruiters(talentRecruiters)
+
+  logger.info('talent_directory_loaded', { count: people.length, recruiters: talentRecruiters.length, source });
   return people;
 }
 
-function parseTalentDirectory(sql) {
+export function parseTalentDirectory(sql) {
   const people = [];
   let counter = 1;
 
@@ -38,28 +58,52 @@ function parseTalentDirectory(sql) {
       }
 
       const [firstName, lastName, designation, department, workEmail] = fields;
-      const name = [firstName, lastName].filter(Boolean).join(' ').trim();
+      const person = normalizeTalentPerson({ firstName, lastName, designation, department, workEmail }, counter)
 
-      if (!name || !workEmail) {
+      if (!person) {
+        const name = [firstName, lastName].filter(Boolean).join(' ').trim()
         logger.warn('talent_directory_skip_row', { name, email: workEmail });
         continue;
       }
 
-      people.push({
-        id: `hm-${counter}`,
-        name,
-        email: workEmail,
-        role: 'hiring_manager',
-        slackUserId: '',
-        positionTitle: designation,
-        department,
-      });
+      people.push(person);
 
       counter++;
     }
   }
 
   return people;
+}
+
+export function normalizeTalentPerson(row, counter = 1) {
+  const firstName = row.first_name ?? row.firstName ?? row.first ?? ''
+  const lastName = row.last_name ?? row.lastName ?? row.last ?? ''
+  const designation = row.designation ?? row.position_title ?? row.positionTitle ?? row.title ?? ''
+  const department = row.department ?? ''
+  const workEmail = row.work_email ?? row.workEmail ?? row.email ?? ''
+  const name = [firstName, lastName].filter(Boolean).join(' ').trim() || row.name || ''
+
+  if (!name || !workEmail) return null
+
+  return {
+    id: `hm-${counter}`,
+    name,
+    email: workEmail,
+    role: 'hiring_manager',
+    slackUserId: '',
+    positionTitle: designation,
+    department,
+  }
+}
+
+export function isRecruitmentTalent(person) {
+  const haystack = [
+    person?.role,
+    person?.positionTitle,
+    person?.designation,
+    person?.department,
+  ].join(' ').toLowerCase()
+  return haystack.includes('recruitment')
 }
 
 function extractTuples(valuesBlock) {

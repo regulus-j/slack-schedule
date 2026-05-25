@@ -1,6 +1,7 @@
 let applicants = [];
 let recruiters = [];
 let hiringManagers = [];
+let talentRecruiters = [];
 let slackUsers = [];
 let slackRecruiters = [];
 const applicantDetails = new Map();
@@ -17,6 +18,10 @@ export function getHiringManagers() {
   return hiringManagers;
 }
 
+export function getTalentRecruiters() {
+  return talentRecruiters;
+}
+
 export function getSlackUsers() {
   return slackUsers;
 }
@@ -26,7 +31,7 @@ export function getSlackRecruiters() {
 }
 
 export function getAllPeople() {
-  return [...slackUsers, ...recruiters, ...hiringManagers];
+  return [...slackUsers, ...talentRecruiters, ...recruiters, ...hiringManagers];
 }
 
 export function setApplicants(data) {
@@ -39,6 +44,10 @@ export function setRecruiters(data) {
 
 export function setHiringManagers(data) {
   hiringManagers = Array.isArray(data) ? data : [];
+}
+
+export function setTalentRecruiters(data) {
+  talentRecruiters = Array.isArray(data) ? data : [];
 }
 
 export function setSlackUsers(data) {

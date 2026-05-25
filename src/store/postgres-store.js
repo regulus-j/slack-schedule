@@ -110,6 +110,29 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       return { cases: result.rows[0].cases };
     },
 
+    async listTalentDirectory() {
+      const result = await query(
+        `SELECT first_name, last_name, designation, department, work_email
+         FROM talent_directory
+         ORDER BY first_name, last_name`,
+      );
+      return result.rows
+        .map((row, index) => {
+          const name = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+          if (!name || !row.work_email) return null;
+          return {
+            id: `hm-${index + 1}`,
+            name,
+            email: row.work_email,
+            role: 'hiring_manager',
+            slackUserId: '',
+            positionTitle: row.designation || '',
+            department: row.department || '',
+          };
+        })
+        .filter(Boolean);
+    },
+
     async getGoogleToken(recruiterId) {
       const result = await query('SELECT encrypted_payload FROM encrypted_google_tokens WHERE recruiter_id = $1', [recruiterId]);
       return result.rows[0] ? decodeTokenPayload(result.rows[0].encrypted_payload) : null;

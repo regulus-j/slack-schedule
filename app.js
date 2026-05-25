@@ -13,7 +13,7 @@ validateStartupConfig(config);
 const store = await createStore(config);
 await store.init();
 
-loadTalentDirectory(config);
+await loadTalentDirectory(config, store);
 
 await refreshJazzhrCache({ config, logger, throwOnError: true });
 
