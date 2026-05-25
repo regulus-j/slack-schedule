@@ -102,6 +102,7 @@ export function registerSlackHandlers(app, context) {
     await openIntakeModal({
       client,
       triggerId: command.trigger_id,
+      config,
       logger,
       privateMetadata: command.channel_id,
       timeZones: schedulingTimeZones,
@@ -178,6 +179,7 @@ export function registerSlackHandlers(app, context) {
     await openIntakeModal({
       client,
       triggerId: body.trigger_id,
+      config,
       logger,
       privateMetadata: body.channel?.id || body.user.id,
       timeZones: schedulingTimeZones,
@@ -1315,6 +1317,7 @@ export function registerSlackHandlers(app, context) {
 async function openIntakeModal({
   client,
   triggerId,
+  config,
   logger,
   privateMetadata = '',
   timeZones = [],
