@@ -85,6 +85,8 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     value: selectedTimeZone,
   }
   const recruiterSelect = recruiterSelectElement({ recruiters, draft })
+  const recruiterEmailBlockId = dynamicBlockId('recruiter_email_block', draft.recruiterId)
+  const hiringManagerEmailBlockId = dynamicBlockId('hm_email_block', draft.hiringManagerId)
 
   return {
     type: 'modal',
@@ -128,12 +130,30 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       input('Recruiter name', 'recruiter_block', recruiterSelect),
       input(
         'Recruiter email',
-        'recruiter_email_block',
+        recruiterEmailBlockId,
         {
           type: 'plain_text_input',
           action_id: 'recruiter_email',
           placeholder: plain('Autofills from the selected recruiter'),
           ...(draft.recruiterEmail ? { initial_value: draft.recruiterEmail } : {}),
+        },
+        true,
+      ),
+      input('Hiring Manager name', 'hm_block', {
+        type: 'external_select',
+        action_id: 'hm_select',
+        min_query_length: 0,
+        placeholder: plain('Search active users'),
+        ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
+      }, true),
+      input(
+        'Hiring Manager email',
+        hiringManagerEmailBlockId,
+        {
+          type: 'plain_text_input',
+          action_id: 'hm_email',
+          placeholder: plain('Autofills from the selected hiring manager'),
+          ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
         },
         true,
       ),
@@ -250,7 +270,7 @@ export function finalizeModal(caseRecord, recentAudits = []) {
       ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
       section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
-      section('📝 Calendar descriptions are generated automatically from the date, time, guests, and Zoom link.'),
+      section('📝 Calendar descriptions are generated automatically from the date, time, attendees, and Zoom link.'),
       input('Interview date', 'date_block', {
         type: 'datepicker',
         action_id: 'date',
@@ -262,23 +282,12 @@ export function finalizeModal(caseRecord, recentAudits = []) {
         placeholder: plain('Select time'),
         options: timeOptions,
       }),
-      input('Internal guests', 'guest_block', {
+      input('Attendees', 'guest_block', {
         type: 'multi_external_select',
         action_id: 'guest_select',
         min_query_length: 0,
-        placeholder: plain('Search guests'),
+        placeholder: plain('Search active users'),
       }, true),
-      input(
-        'External guest emails',
-        'external_guests_block',
-        {
-          type: 'plain_text_input',
-          action_id: 'external_guests',
-          multiline: true,
-          placeholder: plain('One email per line or comma separated'),
-        },
-        true,
-      ),
       input('Zoom link', 'zoom_block', {
         type: 'plain_text_input',
         action_id: 'zoom_link',
@@ -317,7 +326,7 @@ export function schedulingModal(caseRecord, schedulingResult, recentAudits = [])
     header('👥 Attendees'),
     attendeeCheckboxes(attendees),
     actions([
-      button('➕ Add External Attendee', 'scheduling_add_external', undefined, caseRecord.id)
+      button('➕ Add Attendee', 'scheduling_add_external', undefined, caseRecord.id)
     ]),
     divider(),
     header('🕐 Time Window'),
@@ -441,17 +450,11 @@ export function schedulingPhaseTwo(caseRecord, schedulingResult, recentAudits = 
     action_id: 'schedule_zoom_link',
     initial_value: caseRecord.autofill?.zoomLink || ''
   }))
-  blocks.push(input('Internal Guests', 'schedule_guest_block', {
+  blocks.push(input('Attendees', 'schedule_guest_block', {
     type: 'multi_external_select',
     action_id: 'schedule_guest_select',
     min_query_length: 0,
-    placeholder: plain('Search guests')
-  }, true))
-  blocks.push(input('External Guests', 'schedule_external_guests_block', {
-    type: 'plain_text_input',
-    action_id: 'schedule_external_guests',
-    multiline: true,
-    placeholder: plain('One email per line or comma separated')
+    placeholder: plain('Search active users')
   }, true))
 
   return {
@@ -546,36 +549,35 @@ export function buildConflictBlock(conflict) {
   }
 }
 
-export function externalAttendeeModal(caseRecord, recentAudits = []) {
+export function externalAttendeeModal(caseRecord, recentAudits = [], draft = {}) {
   return {
     type: 'modal',
     callback_id: 'external_attendee_submit',
     private_metadata: caseRecord.id,
-    title: plain('➕ Add External Attendee'),
+    title: plain('➕ Add Attendee'),
     submit: plain('➕ Add'),
     close: plain('Cancel'),
     blocks: [
       ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
-      input('Name', 'ext_name_block', {
-        type: 'plain_text_input',
-        action_id: 'ext_name',
-        placeholder: plain('Attendee name')
+      input('Attendee', 'attendee_select_block', {
+        type: 'external_select',
+        action_id: 'attendee_select',
+        min_query_length: 0,
+        placeholder: plain('Search active users'),
+        ...(draft.attendeeOption ? { initial_option: draft.attendeeOption } : {})
       }),
       input('Email', 'ext_email_block', {
         type: 'plain_text_input',
         action_id: 'ext_email',
-        placeholder: plain('Attendee email')
+        placeholder: plain('Autofills from selected attendee'),
+        ...(draft.email ? { initial_value: draft.email } : {})
       }),
       input('Role', 'ext_role_block', {
-        type: 'static_select',
+        type: 'plain_text_input',
         action_id: 'ext_role',
-        options: [
-          { text: plain('Interviewer'), value: 'external' },
-          { text: plain('Observer'), value: 'observer' },
-          { text: plain('Coordinator'), value: 'coordinator' }
-        ],
-        initial_option: { text: plain('Interviewer'), value: 'external' }
+        placeholder: plain('Autofills from selected attendee'),
+        ...(draft.role ? { initial_value: draft.role } : {})
       })
     ]
   }
@@ -616,24 +618,13 @@ export function rescheduleModal(caseRecord, recentAudits = []) {
         options: timeOptions,
       }),
       input(
-        'Internal guests',
+        'Attendees',
         'guest_block',
         {
           type: 'multi_external_select',
           action_id: 'guest_select',
           min_query_length: 0,
-          placeholder: plain('Search guests'),
-        },
-        true,
-      ),
-      input(
-        'External guest emails',
-        'external_guests_block',
-        {
-          type: 'plain_text_input',
-          action_id: 'external_guests',
-          multiline: true,
-          placeholder: plain('One email per line or comma separated'),
+          placeholder: plain('Search active users'),
         },
         true,
       ),
@@ -901,6 +892,11 @@ function input(label, blockId, element, optional = false) {
     label: plain(label),
     element,
   };
+}
+
+function dynamicBlockId(base, value) {
+  const suffix = String(value || '').replace(/[^a-zA-Z0-9_-]/g, '_')
+  return suffix ? `${base}_${suffix}` : base
 }
 
 function recruiterSelectElement({ recruiters, draft }) {

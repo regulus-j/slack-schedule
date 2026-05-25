@@ -254,6 +254,19 @@ export function registerSlackHandlers(app, context) {
     });
   });
 
+  app.action('hm_select', async ({ ack, body, client }) => {
+    await ack();
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      selectedKey: 'hiringManager',
+      selectedId: selectedOptionValue(body),
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
   app.action('open_google_oauth', async ({ ack, body, client }) => {
     await ack()
     if (!await verifyChannel({ config, body, client })) return
@@ -290,11 +303,19 @@ export function registerSlackHandlers(app, context) {
     await ack({ options: slackOptions });
   });
 
+  app.options('hm_select', async ({ options, ack }) => {
+    await ack({ options: personOptions(options.value, getAllPeople()) });
+  });
+
   app.options('guest_select', async ({ options, ack }) => {
     await ack({ options: personOptions(options.value, getAllPeople()) });
   });
 
   app.options('schedule_guest_select', async ({ options, ack }) => {
+    await ack({ options: personOptions(options.value, getAllPeople()) });
+  });
+
+  app.options('attendee_select', async ({ options, ack }) => {
     await ack({ options: personOptions(options.value, getAllPeople()) });
   });
 
@@ -326,7 +347,10 @@ export function registerSlackHandlers(app, context) {
       errors.applicant_email_block = 'Enter a valid applicant email.';
     }
     if (intakeDraft.recruiterEmail && !isValidEmail(intakeDraft.recruiterEmail)) {
-      errors.recruiter_email_block = 'Enter a valid recruiter email.';
+      errors[findInputBlockId(values, 'recruiter_email', 'recruiter_email_block')] = 'Enter a valid recruiter email.';
+    }
+    if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
+      errors[findInputBlockId(values, 'hm_email', 'hm_email_block')] = 'Enter a valid hiring manager email.';
     }
     if (Object.keys(errors).length > 0) {
       await ack({ response_action: 'errors', errors });
@@ -744,22 +768,62 @@ export function registerSlackHandlers(app, context) {
     }
   })
 
-  app.view('external_attendee_submit', async ({ ack, body, view, client }) => {
+  app.action('attendee_select', async ({ ack, body, client }) => {
     await ack()
+    try {
+      const caseId = body.view?.private_metadata
+      const caseRecord = await requireCase(store, caseId)
+      const recentAudits = await store.listAudits(caseRecord.id, 5)
+      const person = findPersonById(selectedOptionValue(body))
+
+      await client.views.update({
+        view_id: body.view.id,
+        hash: body.view.hash,
+        view: externalAttendeeModal(caseRecord, recentAudits, buildAttendeeDraft(person))
+      })
+    } catch (error) {
+      logger.error('attendee_select_error', { error: error.message })
+    }
+  })
+
+  app.view('external_attendee_submit', async ({ ack, body, view, client }) => {
     try {
       const caseId = view.private_metadata
       const caseRecord = await requireCase(store, caseId)
 
-      const name = view.state.values.ext_name_block?.ext_name?.value || ''
+      const selectedAttendeeId = view.state.values.attendee_select_block?.attendee_select?.selected_option?.value || ''
+      const selectedPerson = findPersonById(selectedAttendeeId)
+      const name = selectedPerson?.name || selectedPerson?.email || ''
       const email = view.state.values.ext_email_block?.ext_email?.value || ''
-      const role = view.state.values.ext_role_block?.ext_role?.selected_option?.value || 'external'
+      const role = view.state.values.ext_role_block?.ext_role?.value ||
+        selectedPerson?.positionTitle ||
+        selectedPerson?.department ||
+        selectedPerson?.role ||
+        ''
 
       if (!email) {
+        await ack({
+          response_action: 'errors',
+          errors: {
+            ext_email_block: 'Select an attendee with an email address.',
+          },
+        })
         return
       }
 
-      const newExternal = { name, email, role, required: false, id: `ext-${crypto.randomUUID()}` }
-      const externalAttendees = [...(caseRecord.externalAttendees || []), newExternal]
+      const newExternal = {
+        id: selectedPerson?.id || `attendee-${crypto.randomUUID()}`,
+        name,
+        email,
+        role: role || 'attendee',
+        required: false
+      }
+      const externalAttendees = [
+        ...(caseRecord.externalAttendees || []).filter((attendee) =>
+          String(attendee.email || '').toLowerCase() !== String(email).toLowerCase()
+        ),
+        newExternal
+      ]
 
       await store.updateCase(caseId, { externalAttendees })
 
@@ -769,8 +833,8 @@ export function registerSlackHandlers(app, context) {
       const attendees = normalizeAttendees(updatedRecord, stageRules)
       const recentAudits = await store.listAudits(caseId, 5)
 
-      await client.views.update({
-        view_id: body.view.id,
+      await ack({
+        response_action: 'update',
         view: schedulingModal(caseRecord, {
           phase: 1,
           stageRules,
@@ -780,6 +844,7 @@ export function registerSlackHandlers(app, context) {
         }, recentAudits)
       })
     } catch (error) {
+      await ack()
       logger.error('external_attendee_submit_error', { error: error.message })
     }
   })
@@ -810,7 +875,6 @@ export function registerSlackHandlers(app, context) {
       const selectedGuests =
         view.state.values.schedule_guest_block?.schedule_guest_select?.selected_options?.map((option) => findPerson(option.value)?.email) ||
         []
-      const externalGuests = parseEmails(view.state.values.schedule_external_guests_block?.schedule_external_guests?.value || '')
       const zoomLink = view.state.values.schedule_zoom_block?.schedule_zoom_link?.value || caseRecord.autofill?.zoomLink || ''
 
       const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
@@ -818,7 +882,7 @@ export function registerSlackHandlers(app, context) {
       const allAttendees = normalizeAttendees(caseRecord, stageRules)
       const includedEmails = allAttendees.filter((a) => a.included).map((a) => a.email).filter(Boolean)
 
-      const allAttendeeEmails = [...new Set([...includedEmails, ...selectedGuests, ...externalGuests])].filter(Boolean)
+      const allAttendeeEmails = [...new Set([...includedEmails, ...selectedGuests])].filter(Boolean)
 
       const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
       let startDate, startTime
@@ -941,13 +1005,11 @@ export function registerSlackHandlers(app, context) {
     const selectedGuests =
       view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
       [];
-    const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
     const attendees = [
       caseRecord.applicant?.email,
       caseRecord.recruiter?.email,
       caseRecord.hiringManager?.email,
       ...selectedGuests,
-      ...externalGuests,
     ].filter(Boolean);
 
     const finalizeStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
@@ -1082,13 +1144,11 @@ export function registerSlackHandlers(app, context) {
     const selectedGuests =
       view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
       [];
-    const externalGuests = parseEmails(view.state.values.external_guests_block.external_guests.value || '');
     const attendees = [
       caseRecord.applicant?.email,
       caseRecord.recruiter?.email,
       caseRecord.hiringManager?.email,
       ...selectedGuests,
-      ...externalGuests,
     ].filter(Boolean);
 
     const request = {
@@ -1495,18 +1555,18 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
 
   const applicant = applyEmailOverride(
     findApplicant(applicantId),
-    values.applicant_email_block?.applicant_email?.value?.trim(),
+    getInputValue(values, 'applicant_email'),
   );
   const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
-  const hiringManagerId = overrides.hiringManager ?? (applicant?.hiringManagerId || '');
+  const hiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || applicant?.hiringManagerId || '');
   const recruiter = applyEmailOverride(
     findPersonById(recruiterId),
-    values.recruiter_email_block?.recruiter_email?.value?.trim(),
+    getInputValue(values, 'recruiter_email'),
   );
   const hiringManager = applyEmailOverride(
     findPersonById(hiringManagerId),
-    '',
+    getInputValue(values, 'hm_email'),
   );
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
@@ -1530,12 +1590,27 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     applicantEmail: applicant?.email || '',
     recruiterEmail: recruiter?.email || '',
     hiringManagerEmail: hiringManager?.email || '',
-    notes: values.notes_block?.notes?.value || '',
+    notes: getInputValue(values, 'notes'),
     resumeLink: extractResumeLink(values),
     interviewWindowStartDate: values.window_start_block?.window_start?.selected_date || '',
     interviewWindowEndDate: values.window_end_block?.window_end?.selected_date || '',
     interviewTimezone,
   };
+}
+
+function getInputValue(values, actionId) {
+  for (const block of Object.values(values || {})) {
+    const element = block?.[actionId]
+    if (element && 'value' in element) return element.value?.trim() || ''
+  }
+  return ''
+}
+
+function findInputBlockId(values, actionId, fallback) {
+  for (const [blockId, block] of Object.entries(values || {})) {
+    if (block?.[actionId]) return blockId
+  }
+  return fallback
 }
 
 function resolveSchedulingTimeZones(config) {
@@ -1568,6 +1643,15 @@ function findPersonById(id) {
   return findPerson(value) || findPerson(`rec-${value}`) || findPerson(`hm-${value}`);
 }
 
+function buildAttendeeDraft(person) {
+  if (!person) return {}
+  return {
+    attendeeOption: toSlackOption(personPickerLabel(person), person.id),
+    email: person.email || '',
+    role: person.positionTitle || person.department || person.role || '',
+  }
+}
+
 function buildSmsDraft(caseRecord) {
   return [
     `Hi, ${caseRecord.applicant?.firstName || '[Candidate]'}!`,
@@ -1588,13 +1672,6 @@ function extractResumeLink(values) {
 async function openDm(client, userId) {
   const result = await client.conversations.open({ users: userId })
   return result.channel.id
-}
-
-function parseEmails(value) {
-  return String(value || '')
-    .split(/[,\n;]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function hasUnresolvedSchedulePlaceholders(value) {

@@ -11,7 +11,7 @@ import {
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
 import { buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
-import { actionButtonsForCase, finalizeModal, homeView, intakeModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { actionButtonsForCase, externalAttendeeModal, finalizeModal, homeView, intakeModal, rescheduleModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -238,7 +238,7 @@ test('intake modal includes a resume link field', () => {
   assert.equal(resumeBlock.optional, true);
 });
 
-test('intake modal separates applicant and recruiter names from emails', () => {
+test('intake modal separates applicant, recruiter, and HM names from emails', () => {
   const recruiters = SAMPLE_PEOPLE.filter((p) => p.role === 'recruiter');
   const view = intakeModal({
     templates: [
@@ -254,6 +254,8 @@ test('intake modal separates applicant and recruiter names from emails', () => {
       applicantEmail: 'alex@example.com',
       recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
       recruiterEmail: 'jamal@example.com',
+      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+      hiringManagerEmail: 'ana@example.com',
     },
     recruiters,
   });
@@ -270,10 +272,34 @@ test('intake modal separates applicant and recruiter names from emails', () => {
   assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
   assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
+  assert.equal(hmNameBlock.element.type, 'external_select');
+  assert.equal(hmEmailBlock.element.type, 'plain_text_input');
+  assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
   assert.equal(applicantNameBlock.element.initial_option.value, 'applicant-demo-1');
   assert.equal(recruiterNameBlock.element.initial_option.value, 'rec-jam');
-  assert.equal(hmNameBlock, undefined);
-  assert.equal(hmEmailBlock, undefined);
+  assert.equal(hmNameBlock.element.initial_option.value, 'hm-ana');
+});
+
+test('intake modal refreshes recruiter and HM email fields after selection', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      recruiterId: 'rec-jam',
+      recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
+      recruiterEmail: 'jamal@example.com',
+      hiringManagerId: 'hm-ana',
+      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+      hiringManagerEmail: 'ana@example.com',
+    },
+  });
+
+  const recruiterEmailBlock = view.blocks.find((block) => block.element?.action_id === 'recruiter_email');
+  const hmEmailBlock = view.blocks.find((block) => block.element?.action_id === 'hm_email');
+
+  assert.equal(recruiterEmailBlock.block_id, 'recruiter_email_block_rec-jam');
+  assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
+  assert.equal(hmEmailBlock.block_id, 'hm_email_block_hm-ana');
+  assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
 });
 
 test('builds intake draft emails from selected people and overrides', () => {
@@ -288,7 +314,9 @@ test('builds intake draft emails from selected people and overrides', () => {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'rec-jam' } } },
       applicant_email_block: { applicant_email: { value: '' } },
-      recruiter_email_block: { recruiter_email: { value: 'custom-recruiter@example.com' } },
+      'recruiter_email_block_rec-jam': { recruiter_email: { value: 'custom-recruiter@example.com' } },
+      hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
+      'hm_email_block_hm-ana': { hm_email: { value: 'custom-hm@example.com' } },
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
       resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },
@@ -307,10 +335,10 @@ test('builds intake draft emails from selected people and overrides', () => {
 
   assert.equal(draft.applicantEmail, 'alex.reyes@example.com');
   assert.equal(draft.recruiterEmail, 'custom-recruiter@example.com');
-  assert.equal(draft.hiringManagerEmail, 'ana.cruz@example.com');
+  assert.equal(draft.hiringManagerEmail, 'custom-hm@example.com');
   assert.equal(draft.applicant.email, 'alex.reyes@example.com');
   assert.equal(draft.recruiter.email, 'custom-recruiter@example.com');
-  assert.equal(draft.hiringManager.email, 'ana.cruz@example.com');
+  assert.equal(draft.hiringManager.email, 'custom-hm@example.com');
   assert.equal(draft.stageKey, 'final-interview');
   assert.equal(draft.templateId, '2nd-or-Final-invite');
   assert.equal(draft.notes, 'Notes');
@@ -354,6 +382,44 @@ test('builds intake draft recruiter from the selected applicant', () => {
   assert.equal(draft.recruiterEmail, 'mara@example.com');
   assert.equal(draft.recruiterOption.value, 'rec-123');
   assert.equal(draft.recruiterOption.text.text, 'Mara Santos - mara@example.com');
+});
+
+test('finalize and reschedule forms use a single attendees selector', () => {
+  const finalize = finalizeModal(baseCase);
+  const reschedule = rescheduleModal({
+    ...baseCase,
+    status: 'Scheduled',
+    calendarEventId: 'event-1',
+  });
+
+  for (const view of [finalize, reschedule]) {
+    const labels = view.blocks
+      .filter((block) => block.type === 'input')
+      .map((block) => block.label.text);
+
+    assert.ok(labels.includes('Attendees'));
+    assert.equal(labels.includes('Internal guests'), false);
+    assert.equal(labels.includes('External guest emails'), false);
+  }
+});
+
+test('add attendee modal fills email and role from selected active user', () => {
+  const view = externalAttendeeModal(baseCase, [], {
+    attendeeOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+    email: 'ana@example.com',
+    role: 'Operations Manager',
+  });
+
+  const attendeeBlock = view.blocks.find((block) => block.block_id === 'attendee_select_block');
+  const emailBlock = view.blocks.find((block) => block.block_id === 'ext_email_block');
+  const roleBlock = view.blocks.find((block) => block.block_id === 'ext_role_block');
+
+  assert.equal(view.title.text, '➕ Add Attendee');
+  assert.equal(attendeeBlock.element.type, 'external_select');
+  assert.equal(attendeeBlock.element.action_id, 'attendee_select');
+  assert.equal(emailBlock.element.initial_value, 'ana@example.com');
+  assert.equal(roleBlock.element.type, 'plain_text_input');
+  assert.equal(roleBlock.element.initial_value, 'Operations Manager');
 });
 
 test('builds a reminder email from the current schedule', () => {
