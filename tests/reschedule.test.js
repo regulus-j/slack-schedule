@@ -238,7 +238,7 @@ test('intake modal includes a resume link field', () => {
   assert.equal(resumeBlock.optional, true);
 });
 
-test('intake modal separates person names from emails', () => {
+test('intake modal separates applicant and recruiter names from emails', () => {
   const recruiters = SAMPLE_PEOPLE.filter((p) => p.role === 'recruiter');
   const view = intakeModal({
     templates: [
@@ -254,8 +254,6 @@ test('intake modal separates person names from emails', () => {
       applicantEmail: 'alex@example.com',
       recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
       recruiterEmail: 'jamal@example.com',
-      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
-      hiringManagerEmail: 'ana@example.com',
     },
     recruiters,
   });
@@ -272,10 +270,10 @@ test('intake modal separates person names from emails', () => {
   assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
   assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
-  assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
   assert.equal(applicantNameBlock.element.initial_option.value, 'applicant-demo-1');
   assert.equal(recruiterNameBlock.element.initial_option.value, 'rec-jam');
-  assert.equal(hmNameBlock.element.initial_option.value, 'hm-ana');
+  assert.equal(hmNameBlock, undefined);
+  assert.equal(hmEmailBlock, undefined);
 });
 
 test('builds intake draft emails from selected people and overrides', () => {
@@ -289,10 +287,8 @@ test('builds intake draft emails from selected people and overrides', () => {
     {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'rec-jam' } } },
-      hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
       applicant_email_block: { applicant_email: { value: '' } },
       recruiter_email_block: { recruiter_email: { value: 'custom-recruiter@example.com' } },
-      hm_email_block: { hm_email: { value: '' } },
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
       resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },
@@ -349,7 +345,6 @@ test('builds intake draft recruiter from the selected applicant', () => {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-jazz-1' } } },
       applicant_email_block: { applicant_email: { value: '' } },
       recruiter_email_block: { recruiter_email: { value: '' } },
-      hm_email_block: { hm_email: { value: '' } },
     },
     [],
   );

@@ -51,8 +51,6 @@ export function visibleCaseActions(caseRecord) {
   }
 
   const actions = [
-    'approve_hm_draft',
-    'open_availability_modal',
     'open_candidate_message_modal',
     'scheduling_open',
     'open_finalize_modal',

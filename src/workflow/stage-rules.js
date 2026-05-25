@@ -2,27 +2,18 @@ import { TEMPLATE_METADATA } from '../templates.js'
 
 export const DEFAULT_STAGE_RULES = {
   '1st-interview': {
-    hiringManagerRequired: false,
-    hiringManagerDefault: 'excluded',
     typicalDurationMinutes: 30,
     bufferMinutes: 15,
-    maxInterviewers: 2,
     description: '1st Interview'
   },
   '2nd-interview': {
-    hiringManagerRequired: true,
-    hiringManagerDefault: 'included',
     typicalDurationMinutes: 45,
     bufferMinutes: 15,
-    maxInterviewers: 3,
     description: '2nd Interview'
   },
   'final-interview': {
-    hiringManagerRequired: true,
-    hiringManagerDefault: 'included',
     typicalDurationMinutes: 45,
     bufferMinutes: 15,
-    maxInterviewers: 3,
     description: 'Final Interview'
   }
 }
@@ -73,11 +64,8 @@ export function resolveStageRules(stageKey, stageOverrides = {}) {
   const normalized = normalizeStageKey(stageKey)
   const defaults = DEFAULT_STAGE_RULES[normalized] || DEFAULT_STAGE_RULES['1st-interview']
   const base = structuredClone(defaults)
-  if (stageOverrides.hiringManagerRequired !== undefined) base.hiringManagerRequired = stageOverrides.hiringManagerRequired
-  if (stageOverrides.hiringManagerDefault !== undefined) base.hiringManagerDefault = stageOverrides.hiringManagerDefault
   if (stageOverrides.typicalDurationMinutes !== undefined) base.typicalDurationMinutes = stageOverrides.typicalDurationMinutes
   if (stageOverrides.durationMinutes !== undefined) base.typicalDurationMinutes = stageOverrides.durationMinutes
   if (stageOverrides.bufferMinutes !== undefined) base.bufferMinutes = stageOverrides.bufferMinutes
-  if (stageOverrides.maxInterviewers !== undefined) base.maxInterviewers = stageOverrides.maxInterviewers
   return base
 }

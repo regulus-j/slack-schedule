@@ -45,7 +45,6 @@ import {
 import { normalizeAttendees, refreshAttendees } from '../workflow/attendees.js'
 import { runSchedulingPipeline } from '../workflow/scheduler.js'
 import {
-  availabilityModal,
   calendarEventUrl,
   checkingAvailabilityModal,
   candidateMessageModal,
@@ -255,19 +254,6 @@ export function registerSlackHandlers(app, context) {
     });
   });
 
-  app.action('hm_select', async ({ ack, body, client }) => {
-    await ack();
-    await refreshIntakeModal({
-      client,
-      body,
-      templates: await loadSchedulingTemplates(),
-      selectedKey: 'hiringManager',
-      selectedId: selectedOptionValue(body),
-      timeZones: schedulingTimeZones,
-      defaultTimeZone,
-    });
-  });
-
   app.action('open_google_oauth', async ({ ack, body, client }) => {
     await ack()
     if (!await verifyChannel({ config, body, client })) return
@@ -304,19 +290,6 @@ export function registerSlackHandlers(app, context) {
     await ack({ options: slackOptions });
   });
 
-  app.options('hm_select', async ({ options, ack }) => {
-    const query = String(options.value || '').trim()
-    if (!query) {
-      const hiringManagers = getHiringManagers()
-      const initialOptions = (Array.isArray(hiringManagers) ? hiringManagers : [])
-        .slice(0, 100)
-        .map((person) => toSlackOption(personPickerLabel(person), person.id))
-      await ack({ options: initialOptions })
-      return
-    }
-    await ack({ options: personOptions(query, getHiringManagers()) });
-  });
-
   app.options('guest_select', async ({ options, ack }) => {
     await ack({ options: personOptions(options.value, getAllPeople()) });
   });
@@ -337,7 +310,6 @@ export function registerSlackHandlers(app, context) {
     const templateId = intakeDraft.templateId;
     const stageKey = intakeDraft.stageKey;
     const recruiterId = intakeDraft.recruiterId;
-    const hiringManagerId = intakeDraft.hiringManagerId;
     const notes = intakeDraft.notes;
     const resumeLink = intakeDraft.resumeLink;
     const interviewWindowStartDate = intakeDraft.interviewWindowStartDate;
@@ -356,10 +328,6 @@ export function registerSlackHandlers(app, context) {
     if (intakeDraft.recruiterEmail && !isValidEmail(intakeDraft.recruiterEmail)) {
       errors.recruiter_email_block = 'Enter a valid recruiter email.';
     }
-    if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
-      errors.hm_email_block = 'Enter a valid hiring manager email.';
-    }
-
     if (Object.keys(errors).length > 0) {
       await ack({ response_action: 'errors', errors });
       return;
@@ -434,92 +402,6 @@ export function registerSlackHandlers(app, context) {
       blocks: caseMessageBlocks(caseRecord),
     });
     await publishHome({ client, userId: body.user.id, store, logger });
-  });
-
-  app.action('approve_hm_draft', async ({ ack, body, client }) => {
-    await ack();
-    if (!await verifyChannel({ config, body, client })) return;
-
-    const caseRecord = await requireCase(store, body.actions[0].value);
-
-    const hmSlackUserId = await resolveHiringManagerSlackId({
-      client, caseRecord, store, logger,
-    });
-
-    const record = hmSlackUserId
-      ? await store.getCase(caseRecord.id)
-      : caseRecord;
-
-    let message;
-    let channel;
-
-    if (hmSlackUserId) {
-      message = buildHiringManagerMessage(record);
-      channel = resolvePostingChannel(config, record.channelId);
-    } else {
-      message = buildHiringManagerMessage(caseRecord);
-      message += [
-        '',
-        '',
-        `⚠️ *Note:* This hiring manager (*${caseRecord.hiringManager?.name || 'Unknown'}*, ${caseRecord.hiringManager?.email || 'no email'}) is not in Slack.`,
-        'Please forward this review request to them manually.',
-      ].join('\n');
-      channel = body.user.id;
-    }
-
-    await client.chat.postMessage({ channel, text: message });
-
-    const updated = await store.updateCase(caseRecord.id, {
-      status: 'Waiting for HM',
-      hmMessage: message,
-    });
-
-    await store.addAudit({
-      caseId: caseRecord.id,
-      actorSlackUserId: body.user.id,
-      action: 'hm_message_approved',
-      recipient: channel,
-      hmResolved: Boolean(hmSlackUserId),
-    });
-
-    await publishHome({ client, userId: body.user.id, store, logger });
-
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: '✏️ HM draft approved. Manual resume reminder included.',
-      blocks: caseMessageBlocks(updated),
-    });
-  });
-
-  app.action('open_availability_modal', async ({ ack, body, client }) => {
-    await ack();
-    const caseRecord = await requireCase(store, body.actions[0].value);
-    const recentAudits = await store.listAudits(caseRecord.id, 5);
-    await client.views.open({
-      trigger_id: body.trigger_id,
-      view: availabilityModal(caseRecord, recentAudits),
-    });
-  });
-
-  app.view('availability_submit', async ({ ack, body, view, client }) => {
-    await ack();
-    const caseId = view.private_metadata;
-    const availability = view.state.values.availability_block.availability.value || '';
-    const updated = await store.updateCase(caseId, {
-      status: 'Checking Calendar',
-      hmAvailability: availability,
-    });
-    await store.addAudit({
-      caseId,
-      actorSlackUserId: body.user.id,
-      action: 'hm_availability_saved',
-    });
-    await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: `🕐 Availability saved for ${caseId}. Calendar free/busy is ready to wire once Google OAuth is connected.`,
-      blocks: caseMessageBlocks(updated),
-    });
   });
 
   app.action('open_candidate_message_modal', async ({ ack, body, client }) => {
@@ -1616,16 +1498,15 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     values.applicant_email_block?.applicant_email?.value?.trim(),
   );
   const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
-  const selectedHiringManagerId = overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || '');
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
-  const hiringManagerId = selectedHiringManagerId || applicant?.hiringManagerId || '';
+  const hiringManagerId = overrides.hiringManager ?? (applicant?.hiringManagerId || '');
   const recruiter = applyEmailOverride(
     findPersonById(recruiterId),
     values.recruiter_email_block?.recruiter_email?.value?.trim(),
   );
   const hiringManager = applyEmailOverride(
     findPersonById(hiringManagerId),
-    values.hm_email_block?.hm_email?.value?.trim(),
+    '',
   );
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
@@ -1687,24 +1568,6 @@ function findPersonById(id) {
   return findPerson(value) || findPerson(`rec-${value}`) || findPerson(`hm-${value}`);
 }
 
-function buildHiringManagerMessage(caseRecord) {
-  const applicantName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' ');
-  return [
-    `👋 Hi ${mentionPerson(caseRecord.hiringManager, 'there')},`,
-    '',
-    `Please review this candidate for the *${caseRecord.applicant?.jobTitle || 'the role'}*:`,
-    `👤 *Candidate:* ${applicantName} (${caseRecord.applicant?.email || 'missing email'})`,
-    `👥 *Recruiter:* ${mentionPerson(caseRecord.recruiter, 'Recruitment Team')}`,
-    `👤 *Hiring Manager:* ${mentionPerson(caseRecord.hiringManager, 'Hiring Manager')}`,
-    caseRecord.notes ? `📝 *Notes:* ${caseRecord.notes}` : '',
-    '',
-    '📄 *Manual resume step:* the recruiter will share the resume link separately.',
-    '🕐 *Please reply with your availability* for the interview.',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
 function buildSmsDraft(caseRecord) {
   return [
     `Hi, ${caseRecord.applicant?.firstName || '[Candidate]'}!`,
@@ -1720,62 +1583,6 @@ function buildSmsDraft(caseRecord) {
 function extractResumeLink(values) {
   const resumeElement = values.resume_block?.resume_link;
   return resumeElement?.value?.trim() || '';
-}
-
-function mentionPerson(person, fallback) {
-  if (person?.slackUserId) return `<@${person.slackUserId}>`;
-  return person?.name || fallback;
-}
-
-async function resolveHiringManagerSlackId({ client, caseRecord, store, logger }) {
-  const hm = caseRecord?.hiringManager;
-  if (!hm || !hm.email) {
-    return null;
-  }
-
-  if (hm.slackUserId) {
-    return hm.slackUserId;
-  }
-
-  try {
-    const result = await client.users.lookupByEmail({ email: hm.email });
-    const slackUserId = result?.user?.id;
-
-    if (!slackUserId) {
-      logger.warn('hm_slack_lookup_empty', { email: hm.email, caseId: caseRecord.id });
-      return null;
-    }
-
-    await store.updateCase(caseRecord.id, {
-      hiringManager: { ...hm, slackUserId },
-    });
-
-    logger.info('hm_slack_lookup_success', {
-      email: hm.email,
-      slackUserId,
-      caseId: caseRecord.id,
-    });
-
-    return slackUserId;
-  } catch (error) {
-    const code = error?.data?.error || error?.code || 'unknown';
-
-    if (code === 'users_not_found') {
-      logger.info('hm_slack_lookup_not_found', {
-        email: hm.email,
-        caseId: caseRecord.id,
-      });
-      return null;
-    }
-
-    logger.error('hm_slack_lookup_error', {
-      email: hm.email,
-      caseId: caseRecord.id,
-      code,
-      message: error.message,
-    });
-    return null;
-  }
 }
 
 async function openDm(client, userId) {

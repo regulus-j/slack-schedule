@@ -39,15 +39,6 @@ export function normalizeAttendees(caseRecord, stageRules) {
     source: 'case'
   })
 
-  const hmDefault = stageRules.hiringManagerDefault || 'excluded'
-  const hmRequired = stageRules.hiringManagerRequired || false
-  let hmIncluded = false
-  if (hmDefault === 'included') {
-    hmIncluded = true
-  } else if (hmDefault === 'optional') {
-    hmIncluded = Boolean(caseRecord.attendanceOverrides?.hiringManagerIncluded)
-  }
-
   const hm = caseRecord.hiringManager
   if (hm) {
     attendees.push({
@@ -55,8 +46,8 @@ export function normalizeAttendees(caseRecord, stageRules) {
       name: hm.name || hm.email || '',
       email: hm.email || '',
       role: 'hiring_manager',
-      required: hmRequired,
-      included: hmIncluded,
+      required: false,
+      included: Boolean(caseRecord.attendanceOverrides?.hiringManagerIncluded),
       slackUserId: hm.slackUserId || null,
       source: 'case'
     })

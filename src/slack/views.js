@@ -17,28 +17,40 @@ import {
 
 export const STATUSES = [
   'Draft',
-  'Waiting for HM',
-  'Checking Calendar',
+  'Coordinator Review',
+  'Checking Availability',
   'Waiting for Candidate',
+  'Calendly Sent',
   'Ready to Schedule',
   'Scheduled',
-  'Reschedule Requested',
-  'Needs Attention',
+  'Post-Interview Follow-up',
+  'Closed',
 ];
 
 const STATUS_EMOJI = {
   'Draft': '📄',
-  'Waiting for HM': '💬',
+  'Coordinator Review': '🧭',
+  'Waiting for HM': '🧭',
+  'Checking Availability': '🔍',
   'Checking Calendar': '🔍',
   'Waiting for Candidate': '👤',
+  'Calendly Sent': '🔗',
   'Ready to Schedule': '✅',
   'Scheduled': '📅',
+  'Post-Interview Follow-up': '🔔',
+  'Closed': '✅',
   'Reschedule Requested': '🔄',
   'Needs Attention': '⚠️',
 };
 
+function displayStatus(status) {
+  if (status === 'Waiting for HM') return 'Coordinator Review'
+  if (status === 'Checking Calendar') return 'Checking Availability'
+  return status
+}
+
 function statusEmoji(status) {
-  return STATUS_EMOJI[status] || '';
+  return STATUS_EMOJI[status] || STATUS_EMOJI[displayStatus(status)] || '';
 }
 
 export function homeView({ myCases, teamCases, googleConnected = false }) {
@@ -125,24 +137,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         },
         true,
       ),
-      input('Hiring Manager name', 'hm_block', {
-        type: 'external_select',
-        action_id: 'hm_select',
-        min_query_length: 0,
-        placeholder: plain('Search hiring manager'),
-        ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
-      }),
-      input(
-        'Hiring Manager email',
-        'hm_email_block',
-        {
-          type: 'plain_text_input',
-          action_id: 'hm_email',
-          placeholder: plain('Autofills from the selected hiring manager'),
-          ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
-        },
-        true,
-      ),
       input(
         'Notes',
         'notes_block',
@@ -150,7 +144,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           type: 'plain_text_input',
           action_id: 'notes',
           multiline: true,
-          placeholder: plain('Optional context for the hiring manager'),
+          placeholder: plain('Optional scheduling context'),
           ...(draft.notes ? { initial_value: draft.notes } : {}),
         },
         true,
@@ -188,28 +182,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ...(draft.interviewWindowEndDate ? { initial_date: draft.interviewWindowEndDate } : {}),
       }, true),
       section('📝 Calendar descriptions are generated automatically from the schedule details. Add notes here only if you want extra intake context.'),
-    ],
-  };
-}
-
-export function availabilityModal(caseRecord, recentAudits = []) {
-  return {
-    type: 'modal',
-    callback_id: 'availability_submit',
-    private_metadata: caseRecord.id,
-    title: plain('🕐 HM Availability'),
-    submit: plain('✅ Save'),
-    close: plain('Cancel'),
-    blocks: [
-      ...caseProgressHeader(caseRecord, recentAudits),
-      section(`*${caseTitle(caseRecord)}*`),
-      input('Availability', 'availability_block', {
-        type: 'plain_text_input',
-        action_id: 'availability',
-        multiline: true,
-        placeholder: plain('Paste or summarize the hiring manager availability'),
-        initial_value: caseRecord.hmAvailability || '',
-      }),
     ],
   };
 }
@@ -802,10 +774,10 @@ function caseSummary(caseRecord) {
   const hiringManager = caseRecord.hiringManager;
   return [
     `*${caseTitle(caseRecord)}*`,
-    `${statusEmoji(caseRecord.status)} Status: *${caseRecord.status}*`,
+    `${statusEmoji(caseRecord.status)} Status: *${displayStatus(caseRecord.status)}*`,
     `👤 Applicant: ${applicant ? applicantLabel(applicant) : 'Missing applicant'}`,
     `👥 Recruiter: ${recruiter ? mentionPerson(recruiter) : 'Missing recruiter'}`,
-    `👤 Hiring Manager: ${hiringManager ? mentionPerson(hiringManager) : 'Missing hiring manager'}`,
+    ...(hiringManager ? [`👤 Hiring Manager: ${mentionPerson(hiringManager)} (optional)`] : []),
     ...scheduleSummary(caseRecord),
     ...resumeSummary(caseRecord),
   ].join('\n');
@@ -813,13 +785,6 @@ function caseSummary(caseRecord) {
 
 export function actionButtonsForCase(caseRecord, compact = false) {
   const actionMap = {
-    approve_hm_draft: button(compact ? '✏️ HM review' : '✏️ Send HM review request', 'approve_hm_draft', 'primary', caseRecord.id),
-    open_availability_modal: button(
-      compact ? '🕐 Availability' : '🕐 Record HM availability',
-      'open_availability_modal',
-      undefined,
-      caseRecord.id,
-    ),
     open_candidate_message_modal: button(
       compact ? '✉️ Candidate' : '✉️ Prepare candidate message',
       'open_candidate_message_modal',
@@ -1255,8 +1220,8 @@ function conflictSummary(slot) {
 
 const ACTION_LABELS = {
   case_created: 'Case created',
-  hm_message_approved: 'HM review sent',
-  hm_availability_saved: 'Availability saved',
+  hm_message_approved: 'Legacy HM review sent',
+  hm_availability_saved: 'Legacy availability saved',
   candidate_email_approved: 'Candidate email approved',
   calendar_event_approved: 'Calendar event created',
   calendar_event_updated: 'Calendar updated',
@@ -1285,12 +1250,13 @@ function formatTimeAgo(isoString) {
 }
 
 function caseProgressHeader(caseRecord, recentAudits = []) {
-  const statusIndex = STATUSES.indexOf(caseRecord.status)
+  const shownStatus = displayStatus(caseRecord.status)
+  const statusIndex = STATUSES.indexOf(shownStatus)
   const emoji = statusEmoji(caseRecord.status)
   const stepLabel = statusIndex >= 0 ? `(step ${statusIndex + 1} of ${STATUSES.length})` : ''
   const statusText = stepLabel
-    ? `${emoji} *Status: ${caseRecord.status}*  ${stepLabel}`
-    : `${emoji} *Status: ${caseRecord.status}*`
+    ? `${emoji} *Status: ${shownStatus}*  ${stepLabel}`
+    : `${emoji} *Status: ${shownStatus}*`
 
   const blocks = [
     { type: 'section', text: { type: 'mrkdwn', text: statusText } },

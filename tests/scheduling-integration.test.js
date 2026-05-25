@@ -27,40 +27,39 @@ test('integration: stage rules determine attendee list correctly for 1st-intervi
   const rules = resolveStageRules('1st-interview')
   const attendees = normalizeAttendees(record, rules)
 
-  assert.equal(rules.hiringManagerDefault, 'excluded')
+  assert.equal('hiringManagerDefault' in rules, false)
   const hm = attendees.find((a) => a.role === 'hiring_manager')
   assert.equal(hm.included, false)
 })
 
-test('integration: stage rules determine attendee list correctly for 2nd-interview', () => {
+test('integration: stage rules keep HM optional for 2nd-interview', () => {
   const record = makeCaseRecord({ stageKey: '2nd-interview' })
   const rules = resolveStageRules('2nd-interview')
   const attendees = normalizeAttendees(record, rules)
 
-  assert.equal(rules.hiringManagerDefault, 'included')
+  assert.equal('hiringManagerDefault' in rules, false)
   const hm = attendees.find((a) => a.role === 'hiring_manager')
-  assert.equal(hm.included, true)
+  assert.equal(hm.included, false)
 })
 
-test('integration: stage rules determine attendee list correctly for final-interview', () => {
+test('integration: stage rules keep HM optional for final-interview', () => {
   const record = makeCaseRecord({ stageKey: 'final-interview' })
   const rules = resolveStageRules('final-interview')
   const attendees = normalizeAttendees(record, rules)
 
-  assert.equal(rules.hiringManagerDefault, 'included')
+  assert.equal('hiringManagerDefault' in rules, false)
   const hm = attendees.find((a) => a.role === 'hiring_manager')
-  assert.equal(hm.included, true)
+  assert.equal(hm.included, false)
 })
 
-test('integration: stage rules + overrides change attendee list', () => {
+test('integration: attendance overrides include optional HM', () => {
   const record = makeCaseRecord({
     stageKey: '1st-interview',
-    stageOverrides: { hiringManagerDefault: 'included' }
+    attendanceOverrides: { hiring_manager: true }
   })
   const rules = resolveStageRules('1st-interview', record.stageOverrides)
   const attendees = normalizeAttendees(record, rules)
 
-  // With override, HM should now be included even for 1st-interview
   const hm = attendees.find((a) => a.role === 'hiring_manager')
   assert.equal(hm.included, true)
 })
@@ -245,17 +244,17 @@ test('integration: end-to-end from stage resolution through ranked slots', () =>
   // 3. Normalize attendees
   const attendees = normalizeAttendees(record, rules)
 
-  // 4. Verify HM is included for 2nd interview
+  // 4. Verify HM remains optional for 2nd interview
   const hm = attendees.find((a) => a.role === 'hiring_manager')
-  assert.equal(hm.included, true)
+  assert.equal(hm.included, false)
 
   // 5. Filter to included
   const included = includedAttendees(attendees)
-  assert.ok(included.length >= 3, 'at least candidate + recruiter + HM should be included')
+  assert.ok(included.length >= 2, 'at least candidate + recruiter should be included')
 
   // 6. Get free/busy format
   const fbAttendees = attendeesForFreeBusy(included)
-  assert.ok(fbAttendees.length >= 3)
+  assert.ok(fbAttendees.length >= 2)
   assert.deepEqual(fbAttendees[0], { id: 'jane@test.com' })
 
   // 7. Generate slots with 45 min duration (2nd-or-final typical)
