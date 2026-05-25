@@ -268,7 +268,7 @@ test('intake modal separates applicant, recruiter, and HM names from emails', ()
   const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block');
 
   assert.equal(applicantNameBlock.element.type, 'external_select');
-  assert.equal(recruiterNameBlock.element.type, 'static_select');
+  assert.equal(recruiterNameBlock.element.type, 'external_select');
   assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
   assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
@@ -293,12 +293,14 @@ test('intake modal refreshes recruiter and HM email fields after selection', () 
     },
   });
 
-  const recruiterEmailBlock = view.blocks.find((block) => block.element?.action_id === 'recruiter_email');
-  const hmEmailBlock = view.blocks.find((block) => block.element?.action_id === 'hm_email');
+  const recruiterEmailBlock = view.blocks.find((block) => block.block_id === 'recruiter_email_block_rec-jam');
+  const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block_hm-ana');
 
   assert.equal(recruiterEmailBlock.block_id, 'recruiter_email_block_rec-jam');
+  assert.equal(recruiterEmailBlock.element.action_id, 'recruiter_email_rec-jam');
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
   assert.equal(hmEmailBlock.block_id, 'hm_email_block_hm-ana');
+  assert.equal(hmEmailBlock.element.action_id, 'hm_email_hm-ana');
   assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
 });
 
@@ -314,9 +316,9 @@ test('builds intake draft emails from selected people and overrides', () => {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'rec-jam' } } },
       applicant_email_block: { applicant_email: { value: '' } },
-      'recruiter_email_block_rec-jam': { recruiter_email: { value: 'custom-recruiter@example.com' } },
+      'recruiter_email_block_rec-jam': { 'recruiter_email_rec-jam': { value: 'custom-recruiter@example.com' } },
       hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
-      'hm_email_block_hm-ana': { hm_email: { value: 'custom-hm@example.com' } },
+      'hm_email_block_hm-ana': { 'hm_email_hm-ana': { value: 'custom-hm@example.com' } },
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
       resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },

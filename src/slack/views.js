@@ -87,6 +87,8 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const recruiterSelect = recruiterSelectElement({ recruiters, draft })
   const recruiterEmailBlockId = dynamicBlockId('recruiter_email_block', draft.recruiterId)
   const hiringManagerEmailBlockId = dynamicBlockId('hm_email_block', draft.hiringManagerId)
+  const recruiterEmailActionId = dynamicBlockId('recruiter_email', draft.recruiterId)
+  const hiringManagerEmailActionId = dynamicBlockId('hm_email', draft.hiringManagerId)
 
   return {
     type: 'modal',
@@ -127,13 +129,13 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         options: intakeStageOptions(),
         ...(draft.stageOption ? { initial_option: draft.stageOption } : {}),
       }),
-      input('Recruiter name', 'recruiter_block', recruiterSelect),
+      input('Recruiter name', 'recruiter_block', recruiterSelect, false, true),
       input(
         'Recruiter email',
         recruiterEmailBlockId,
         {
           type: 'plain_text_input',
-          action_id: 'recruiter_email',
+          action_id: recruiterEmailActionId,
           placeholder: plain('Autofills from the selected recruiter'),
           ...(draft.recruiterEmail ? { initial_value: draft.recruiterEmail } : {}),
         },
@@ -145,13 +147,13 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         min_query_length: 0,
         placeholder: plain('Search active users'),
         ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
-      }, true),
+      }, true, true),
       input(
         'Hiring Manager email',
         hiringManagerEmailBlockId,
         {
           type: 'plain_text_input',
-          action_id: 'hm_email',
+          action_id: hiringManagerEmailActionId,
           placeholder: plain('Autofills from the selected hiring manager'),
           ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
         },
@@ -884,11 +886,12 @@ function section(text) {
   return { type: 'section', text: mrkdwn(text) };
 }
 
-function input(label, blockId, element, optional = false) {
+function input(label, blockId, element, optional = false, dispatchAction = false) {
   return {
     type: 'input',
     block_id: blockId,
     optional,
+    ...(dispatchAction ? { dispatch_action: true } : {}),
     label: plain(label),
     element,
   };
@@ -900,17 +903,6 @@ function dynamicBlockId(base, value) {
 }
 
 function recruiterSelectElement({ recruiters, draft }) {
-  const options = personOptions('', recruiters)
-  if (options.length > 0 && options.length <= 100) {
-    return {
-      type: 'static_select',
-      action_id: 'recruiter_select',
-      placeholder: plain('Choose recruiter'),
-      options,
-      ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
-    }
-  }
-
   return {
     type: 'external_select',
     action_id: 'recruiter_select',

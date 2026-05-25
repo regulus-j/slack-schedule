@@ -66,3 +66,48 @@ test('ensureSlackDirectory limits recruiters to recruitment channel members', as
   assert.equal(getSlackUsers().length, 2)
   assert.equal(getSlackRecruiters().length, 1)
 })
+
+test('ensureSlackDirectory does not fall back to all users when recruiter channel scope is missing', async () => {
+  setSlackUsers([])
+  setSlackRecruiters([])
+
+  const client = {
+    users: {
+      async list() {
+        return {
+          members: [
+            { id: 'U1', profile: { real_name_normalized: 'Recruiter One', email: 'rec1@opg.com' } },
+            { id: 'U2', profile: { real_name_normalized: 'HM Two', email: 'hm2@opg.com' } },
+          ],
+          response_metadata: { next_cursor: '' },
+        }
+      },
+    },
+    conversations: {
+      async members() {
+        const error = new Error('An API error occurred: missing_scope')
+        error.data = { error: 'missing_scope' }
+        throw error
+      },
+    },
+  }
+
+  const warnings = []
+  const logger = {
+    info() {},
+    warn(event, data) {
+      warnings.push({ event, data })
+    },
+  }
+  const result = await ensureSlackDirectory({
+    client,
+    logger,
+    force: true,
+    config: { slack: { recruitmentChannelId: 'C-recruiting' } },
+  })
+
+  assert.equal(result.users.length, 2)
+  assert.equal(result.recruiters.length, 0)
+  assert.equal(getSlackRecruiters().length, 0)
+  assert.equal(warnings[0].event, 'slack_recruitment_channel_missing_scope')
+})

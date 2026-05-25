@@ -254,14 +254,23 @@ export function registerSlackHandlers(app, context) {
   app.action('recruiter_select', async ({ ack, body, client }) => {
     await ack();
     const selectedId = selectedOptionValue(body)
-    const selectedUser = await resolveSlackUser({ client, userId: selectedId, logger })
+    const { recruiters } = await ensureSlackDirectory({ client, config, logger })
+    const selectedRecruiter = findPersonInList(selectedId, recruiters)
+    if (!selectedRecruiter) {
+      logger.warn('recruiter_selection_not_in_channel', {
+        selectedId,
+        channelId: config.slack.recruitmentChannelId,
+      })
+    }
     await refreshIntakeModal({
       client,
       body,
       templates: await loadSchedulingTemplates(),
       selectedKey: 'recruiter',
       selectedId,
-      selectedPerson: selectedUser ? asRecruiter(selectedUser) : null,
+      selectedPerson: selectedRecruiter
+        ? asRecruiter(selectedRecruiter)
+        : asRecruiter(personFromSelectedOption(body)),
       timeZones: schedulingTimeZones,
       defaultTimeZone,
     });
@@ -1638,7 +1647,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
 
 function getInputValue(values, actionId) {
   for (const block of Object.values(values || {})) {
-    const element = block?.[actionId]
+    const element = findElementByActionId(block, actionId)
     if (element && 'value' in element) return element.value?.trim() || ''
   }
   return ''
@@ -1646,9 +1655,17 @@ function getInputValue(values, actionId) {
 
 function findInputBlockId(values, actionId, fallback) {
   for (const [blockId, block] of Object.entries(values || {})) {
-    if (block?.[actionId]) return blockId
+    if (findElementByActionId(block, actionId)) return blockId
   }
   return fallback
+}
+
+function findElementByActionId(block, actionId) {
+  if (!block) return null
+  if (block[actionId]) return block[actionId]
+  const dynamicPrefix = `${actionId}_`
+  const matchedActionId = Object.keys(block).find((key) => key.startsWith(dynamicPrefix))
+  return matchedActionId ? block[matchedActionId] : null
 }
 
 function resolveSchedulingTimeZones(config) {
@@ -1659,6 +1676,30 @@ function resolveSchedulingTimeZones(config) {
 
 function selectedOptionValue(body) {
   return body.actions?.[0]?.selected_option?.value || '';
+}
+
+function selectedOptionLabel(body) {
+  return body.actions?.[0]?.selected_option?.text?.text || ''
+}
+
+function personFromSelectedOption(body) {
+  const id = selectedOptionValue(body)
+  if (!id) return null
+  const label = selectedOptionLabel(body)
+  const name = label.split('\n')[0].split(' - ')[0].trim() || id
+  return {
+    id,
+    slackUserId: id,
+    name,
+    email: '',
+    source: 'slack',
+  }
+}
+
+function findPersonInList(id, people) {
+  const value = String(id || '').trim()
+  if (!value) return null
+  return people.find((person) => person.id === value || person.slackUserId === value) || null
 }
 
 function isValidEmail(value) {

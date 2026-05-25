@@ -35,9 +35,9 @@ async function loadSlackDirectory({ client, config, logger }) {
       logger.warn('slack_recruitment_channel_missing_scope', {
         channelId,
         error: error.message,
-        fallback: 'all_slack_users',
+        recruiters: 0,
       })
-      recruiters = users.map((user) => ({ ...user, role: 'recruiter' }))
+      recruiters = []
     }
   }
   setSlackRecruiters(recruiters)
