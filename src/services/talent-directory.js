@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { logger } from '../logger.js';
 import { setHiringManagers, setTalentRecruiters } from '../data/cache.js';
+import { fetchRecruiterPhoneRows, mergeRecruiterPhones } from './recruiter-phone-export.js';
 
 export async function loadTalentDirectory(config, store) {
   let people
@@ -29,11 +30,13 @@ export async function loadTalentDirectory(config, store) {
   }
 
   setHiringManagers(people);
-  const talentRecruiters = people.filter(isRecruitmentTalent).map((person) => ({
+  const baseRecruiters = people.filter(isRecruitmentTalent).map((person) => ({
     ...person,
     id: person.id.replace(/^hm-/, 'talent-rec-'),
     role: 'recruiter',
   }))
+  const phoneRows = await fetchRecruiterPhoneRows({ config, logger })
+  const talentRecruiters = mergeRecruiterPhones(baseRecruiters, phoneRows)
   setTalentRecruiters(talentRecruiters)
 
   logger.info('talent_directory_loaded', { count: people.length, recruiters: talentRecruiters.length, source });

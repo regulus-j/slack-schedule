@@ -21,6 +21,7 @@ import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
 import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
+import { recruiterPhoneLine } from '../services/recruiter-phone-export.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
 import {
   PH_TIME_ZONE,
@@ -379,7 +380,7 @@ export function registerSlackHandlers(app, context) {
     const interviewWindowEndDate = intakeDraft.interviewWindowEndDate;
     const interviewTimezone = intakeDraft.interviewTimezone || defaultTimeZone;
     const requiresHiringManager = stageRequiresHiringManager(stageKey)
-    const requiresResume = stageRequiresResumeUpload(stageKey)
+    const requiresResume = stageRequiresResumeLink(stageKey)
     const errors = {};
 
     if (!stageKey) {
@@ -430,7 +431,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          resume_block: 'Upload a resume for the 2nd/final interview.',
+          resume_block: 'Paste a resume link for the 2nd/final interview.',
         },
       });
       return;
@@ -1046,6 +1047,7 @@ export function registerSlackHandlers(app, context) {
     await ack();
     const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
     const selectedDate = view.state.values.date_block.date.selected_date
+    const zoomLink = view.state.values.zoom_block.zoom_link.value || resolveCaseZoomLink(caseRecord)
     const converted = convertLocalDateTimeToZone({
       date: selectedDate,
       time: selectedTime,
@@ -1076,7 +1078,7 @@ export function registerSlackHandlers(app, context) {
         startDate: converted.date,
         startTime: converted.time,
         durationMinutes: finalizeStageRules.typicalDurationMinutes,
-        zoomLink: view.state.values.zoom_block.zoom_link.value,
+        zoomLink,
         attendees,
         timeZone: interviewTimeZone,
       },
@@ -1085,7 +1087,7 @@ export function registerSlackHandlers(app, context) {
     const scheduleInput = buildScheduleSnapshot({
       date: converted.date,
       time: converted.time,
-      zoomLink: view.state.values.zoom_block.zoom_link.value,
+      zoomLink,
       attendees,
       eventId: eventResult.eventId,
       htmlLink: eventResult.googleEvent?.htmlLink || null,
@@ -1606,6 +1608,7 @@ export function buildTemplateVariables(caseRecord) {
     hiring_manager_name: hiringManagerName,
     position_title: positionTitle,
     schedule_your_interview_here: '',
+    recruiter_phone_line: recruiterPhoneLine(caseRecord.recruiter),
   };
 }
 
@@ -1735,12 +1738,19 @@ function stageRequiresHiringManager(stageKey) {
   return normalized === '2nd-interview' || normalized === 'final-interview'
 }
 
-function stageRequiresResumeUpload(stageKey) {
+function stageRequiresResumeLink(stageKey) {
   return stageRequiresHiringManager(stageKey)
 }
 
 function canOpenResumeReference(value) {
   return /^https?:\/\//i.test(String(value || '').trim())
+}
+
+function resolveCaseZoomLink(caseRecord) {
+  return caseRecord.currentSchedule?.zoomLink ||
+    caseRecord.autofill?.zoomLink ||
+    caseRecord.recruiter?.zoomLink ||
+    ''
 }
 
 function isValidEmail(value) {
@@ -1801,12 +1811,8 @@ function buildSmsDraft(caseRecord) {
 }
 
 function extractResumeLink(values) {
-  const resumeElement = values.resume_block?.resume_file
-  const file = resumeElement?.files?.[0]
-  if (file) return file.url_private || file.permalink || file.id || ''
-
-  const legacyElement = values.resume_block?.resume_link
-  return legacyElement?.value?.trim() || ''
+  const resumeElement = values.resume_block?.resume_link
+  return resumeElement?.value?.trim() || ''
 }
 
 async function openDm(client, userId) {

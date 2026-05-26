@@ -35,7 +35,6 @@
         "channels:history",
         "chat:write",
         "commands",
-        "files:read",
         "im:history",
         "im:write",
         "users:read",

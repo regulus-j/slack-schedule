@@ -1316,7 +1316,6 @@ function extractResumeLink(values) {
 }
 
 function mentionPerson(person, fallback) {
-  if (person?.slackUserId) return `<@${person.slackUserId}>`;
   return person?.name || fallback;
 }
 

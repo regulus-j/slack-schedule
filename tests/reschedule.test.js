@@ -142,6 +142,34 @@ test('home view exposes the schedule tracker button', () => {
   assert.ok(labels.includes('📚 Schedule tracker'));
 });
 
+test('case summaries and progress headers never mention Slack users', () => {
+  const caseWithSlackIds = {
+    ...baseCase,
+    recruiter: {
+      ...baseCase.recruiter,
+      slackUserId: 'U-REC',
+    },
+    hiringManager: {
+      ...baseCase.hiringManager,
+      slackUserId: 'U-HM',
+    },
+  };
+  const home = homeView({ myCases: [caseWithSlackIds], teamCases: [] });
+  const finalize = finalizeModal(caseWithSlackIds, [
+    {
+      action: 'case_created',
+      actorSlackUserId: 'U-ACTOR',
+      at: new Date().toISOString(),
+    },
+  ]);
+
+  const text = JSON.stringify([home.blocks, finalize.blocks]);
+  assert.equal(text.includes('<@'), false);
+  assert.match(text, /Jamal Al Badi/);
+  assert.match(text, /Ana Cruz/);
+  assert.match(text, /Slack user U-ACTOR/);
+});
+
 test('schedule tracker modal renders scheduled case rows with action buttons', () => {
   const scheduledCase = {
     ...baseCase,
@@ -183,6 +211,20 @@ test('finalize modal explains that calendar descriptions are generated automatic
   assert.ok(sectionTexts.some((text) => text.includes('Calendar descriptions are generated automatically')));
 });
 
+test('finalize modal prepopulates zoom link from recruiter sheet data when autofill is missing', () => {
+  const view = finalizeModal({
+    ...baseCase,
+    autofill: {},
+    recruiter: {
+      ...baseCase.recruiter,
+      zoomLink: 'https://zoom.us/j/from-sheet',
+    },
+  });
+  const zoomBlock = view.blocks.find((block) => block.block_id === 'zoom_block');
+
+  assert.equal(zoomBlock.element.initial_value, 'https://zoom.us/j/from-sheet');
+});
+
 test('intake modal includes optional target window fields', () => {
   const view = intakeModal({
     templates: [
@@ -221,7 +263,7 @@ test('intake modal uses stage selection instead of template selection', () => {
   assert.equal(inputBlocks.some((block) => block.block_id === 'template_block'), false);
 });
 
-test('intake modal includes a resume file upload field', () => {
+test('intake modal includes a resume link field', () => {
   const view = intakeModal({
     templates: [
       {
@@ -235,10 +277,8 @@ test('intake modal includes a resume file upload field', () => {
 
   const resumeBlock = view.blocks.find((block) => block.block_id === 'resume_block');
   assert.ok(resumeBlock);
-  assert.equal(resumeBlock.element.type, 'file_input');
-  assert.equal(resumeBlock.element.action_id, 'resume_file');
-  assert.deepEqual(resumeBlock.element.filetypes, ['pdf', 'doc', 'docx']);
-  assert.equal(resumeBlock.element.max_files, 1);
+  assert.equal(resumeBlock.element.type, 'plain_text_input');
+  assert.equal(resumeBlock.element.action_id, 'resume_link');
   assert.equal(resumeBlock.optional, true);
 });
 
@@ -280,7 +320,7 @@ test('intake modal hides HM fields before a later-stage interview is selected', 
   assert.equal(recruiterNameBlock.element.initial_option.value, 'rec-jam');
 });
 
-test('intake modal requires HM fields and resume upload for later-stage interviews', () => {
+test('intake modal requires HM fields and resume link for later-stage interviews', () => {
   const view = intakeModal({
     templates: [],
     draft: {
@@ -301,7 +341,8 @@ test('intake modal requires HM fields and resume upload for later-stage intervie
   assert.equal(hmEmailBlock.element.type, 'plain_text_input');
   assert.equal(hmEmailBlock.optional, false);
   assert.equal(hmNameBlock.element.initial_option.value, 'hm-ana');
-  assert.equal(resumeBlock.element.type, 'file_input');
+  assert.equal(resumeBlock.element.type, 'plain_text_input');
+  assert.equal(resumeBlock.element.action_id, 'resume_link');
   assert.equal(resumeBlock.optional, false);
 });
 
@@ -347,7 +388,7 @@ test('builds intake draft emails from selected people and overrides', () => {
       'hm_email_block_hm-ana': { 'hm_email_hm-ana': { value: 'custom-hm@example.com' } },
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
-      resume_block: { resume_file: { files: [{ id: 'F123', url_private: 'https://files.slack.com/resume.pdf' }] } },
+      resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },
       window_start_block: { window_start: { selected_date: '2026-05-20' } },
       window_end_block: { window_end: { selected_date: '2026-05-21' } },
     },
@@ -370,7 +411,7 @@ test('builds intake draft emails from selected people and overrides', () => {
   assert.equal(draft.stageKey, 'final-interview');
   assert.equal(draft.templateId, '2nd-or-Final-invite');
   assert.equal(draft.notes, 'Notes');
-  assert.equal(draft.resumeLink, 'https://files.slack.com/resume.pdf');
+  assert.equal(draft.resumeLink, 'https://example.com/resume.pdf');
   assert.equal(draft.interviewWindowStartDate, '2026-05-20');
   assert.equal(draft.interviewWindowEndDate, '2026-05-21');
 });
@@ -572,6 +613,10 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
       name: 'Ana Cruz',
       positionTitle: 'Operations Manager',
     },
+    recruiter: {
+      name: 'Jamal Al Badi',
+      phone: '+63 900 111 2222',
+    },
     currentSchedule: {
       date: '2026-05-20',
       time: '09:30',
@@ -587,6 +632,7 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.link, 'https://zoom.us/j/demo');
   assert.equal(variables.hiring_manager_name, 'Ana Cruz');
   assert.equal(variables.position_title, 'Operations Manager');
+  assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222');
 });
 
 test('slack case views hide backend application id and show calendar link', () => {

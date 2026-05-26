@@ -90,7 +90,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const recruiterEmailActionId = dynamicBlockId('recruiter_email', draft.recruiterId)
   const hiringManagerEmailActionId = dynamicBlockId('hm_email', draft.hiringManagerId)
   const hmRequired = stageRequiresHiringManager(draft.stageKey)
-  const resumeRequired = stageRequiresResumeUpload(draft.stageKey)
+  const resumeRequired = stageRequiresResumeLink(draft.stageKey)
   const hiringManagerBlocks = hmRequired
     ? [
         input('Hiring Manager name', 'hm_block', {
@@ -182,10 +182,10 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         'Resume',
         'resume_block',
         {
-          type: 'file_input',
-          action_id: 'resume_file',
-          filetypes: ['pdf', 'doc', 'docx'],
-          max_files: 1,
+          type: 'plain_text_input',
+          action_id: 'resume_link',
+          placeholder: plain('Paste a resume link'),
+          ...(draft.resumeLink ? { initial_value: draft.resumeLink } : {}),
         },
         !resumeRequired,
       ),
@@ -267,6 +267,7 @@ export function finalizeModal(caseRecord, recentAudits = []) {
   const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
   const referenceDate = resolveReferenceDate(caseRecord)
   const timeOptions = buildPhTimeOptions({ referenceDate, interviewTimeZone })
+  const zoomLink = resolveCaseZoomLink(caseRecord)
 
   return {
     type: 'modal',
@@ -300,7 +301,7 @@ export function finalizeModal(caseRecord, recentAudits = []) {
       input('Zoom link', 'zoom_block', {
         type: 'plain_text_input',
         action_id: 'zoom_link',
-        initial_value: caseRecord.autofill?.zoomLink || '',
+        ...(zoomLink ? { initial_value: zoomLink } : {}),
       }),
     ],
   };
@@ -918,8 +919,15 @@ function stageRequiresHiringManager(stageKey) {
   return normalized === '2nd-interview' || normalized === 'final-interview'
 }
 
-function stageRequiresResumeUpload(stageKey) {
+function stageRequiresResumeLink(stageKey) {
   return stageRequiresHiringManager(stageKey)
+}
+
+function resolveCaseZoomLink(caseRecord) {
+  return caseRecord.currentSchedule?.zoomLink ||
+    caseRecord.autofill?.zoomLink ||
+    caseRecord.recruiter?.zoomLink ||
+    ''
 }
 
 function recruiterSelectElement({ recruiters, draft }) {
@@ -1044,7 +1052,6 @@ function trackerScopeOption(scope) {
 }
 
 function mentionPerson(person) {
-  if (person?.slackUserId) return `<@${person.slackUserId}>`;
   return personLabel(person);
 }
 
@@ -1272,7 +1279,7 @@ function caseProgressHeader(caseRecord, recentAudits = []) {
 
   if (recentAudits.length > 0) {
     const last = recentAudits[0]
-    const actorRef = last.actorSlackUserId ? `<@${last.actorSlackUserId}>` : 'system'
+    const actorRef = last.actorSlackUserId ? `Slack user ${last.actorSlackUserId}` : 'system'
     const elements = [
       { type: 'mrkdwn', text: `📝 *Last:* ${formatActionLabel(last.action)} by ${actorRef} • ${formatTimeAgo(last.at)}` },
     ]

@@ -33,6 +33,10 @@ export function loadConfig(env = process.env) {
       redirectUri: mergedEnv.GOOGLE_REDIRECT_URI,
       sharedCalendarId: mergedEnv.GOOGLE_SHARED_CALENDAR_ID,
     },
+    recruiterPhoneExport: {
+      url: mergedEnv.RECRUITER_PHONE_EXPORT_URL || null,
+      token: mergedEnv.RECRUITER_PHONE_EXPORT_TOKEN || null,
+    },
     security: {
       encryptionKey: mergedEnv.APP_ENCRYPTION_KEY,
     },

@@ -115,6 +115,14 @@ test('template metadata marks final interview resumes as required', () => {
   assert.equal(templateRequiresResume('1st-interview-invite'), false)
 })
 
+test('replaceVariables renders recruiter phone line', () => {
+  const result = replaceVariables('<p>[recruiter_phone_line]</p>', {
+    recruiter_phone_line: 'Christiana Dela Cruz: +63 900 111 2222',
+  })
+
+  assert.equal(result, '<p>Christiana Dela Cruz: +63 900 111 2222</p>')
+})
+
 test('loadSchedulingTemplates only exposes interview invite templates', async () => {
   const templates = await loadSchedulingTemplates()
   assert.deepEqual(templates.map((template) => template.id).sort(), [
