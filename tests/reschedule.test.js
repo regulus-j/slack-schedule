@@ -11,7 +11,7 @@ import {
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
 import { buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
-import { actionButtonsForCase, externalAttendeeModal, finalizeModal, homeView, intakeModal, rescheduleModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -225,6 +225,34 @@ test('finalize modal prepopulates zoom link from recruiter sheet data when autof
   assert.equal(zoomBlock.element.initial_value, 'https://zoom.us/j/from-sheet');
 });
 
+test('finalize email preview modal shows formatted email before creating invite', () => {
+  const view = finalizeEmailPreviewModal({
+    caseRecord: baseCase,
+    scheduleInput: {
+      startDate: '2026-05-20',
+      startTime: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'jamal@example.com'],
+    },
+    renderedTemplate: {
+      subject: 'Interview for Support Specialist',
+      plainBody: 'Hi Alex,\n\nDate: 2026-05-20\nTime: 09:30',
+      body: '<p>Hi Alex</p>',
+    },
+  });
+
+  const subjectBlock = view.blocks.find((block) => block.block_id === 'email_subject_block');
+  const bodyBlock = view.blocks.find((block) => block.block_id === 'email_body_block');
+  const metadata = JSON.parse(view.private_metadata);
+
+  assert.equal(view.callback_id, 'finalize_email_preview_submit');
+  assert.equal(view.submit.text, 'Create Invite');
+  assert.equal(subjectBlock.element.initial_value, 'Interview for Support Specialist');
+  assert.match(bodyBlock.element.initial_value, /Date: 2026-05-20/);
+  assert.equal(metadata.caseId, 'case-1');
+  assert.equal(metadata.scheduleInput.zoomLink, 'https://zoom.us/j/demo');
+});
+
 test('intake modal includes optional target window fields', () => {
   const view = intakeModal({
     templates: [
@@ -261,6 +289,33 @@ test('intake modal uses stage selection instead of template selection', () => {
     'Final Interview',
   ]);
   assert.equal(inputBlocks.some((block) => block.block_id === 'template_block'), false);
+});
+
+test('intake modal candidate details hides JazzHR resume and rating fields', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      applicantId: 'applicant-demo-1',
+      applicantOption: { text: { type: 'plain_text', text: 'Alex Reyes - alex@example.com' }, value: 'applicant-demo-1' },
+      showDetails: true,
+      applicant: {
+        email: 'alex@example.com',
+        jobTitle: 'Support Specialist',
+      },
+      applicantDetail: {
+        rating: '5',
+        resumeUrl: 'https://jazzhr.example.com/resume',
+        resumeText: 'Resume text that should not be shown',
+        linkedinUrl: 'https://linkedin.example.com/alex',
+      },
+    },
+  });
+
+  const text = JSON.stringify(view.blocks);
+  assert.doesNotMatch(text, /Rating/);
+  assert.doesNotMatch(text, /View resume in JazzHR/);
+  assert.doesNotMatch(text, /Resume text that should not be shown/);
+  assert.match(text, /LinkedIn profile/);
 });
 
 test('intake modal includes a resume link field', () => {

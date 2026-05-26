@@ -20,6 +20,7 @@ import {
 import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
+import { loadTalentDirectory } from '../services/talent-directory.js'
 import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
 import { recruiterPhoneLine } from '../services/recruiter-phone-export.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
@@ -59,6 +60,7 @@ import {
   candidateMessageModal,
   caseMessageBlocks,
   externalAttendeeModal,
+  finalizeEmailPreviewModal,
   finalizeModal,
   homeView,
   intakeModal,
@@ -118,11 +120,23 @@ export function registerSlackHandlers(app, context) {
     if (text === 'refresh-jazz') {
       const result = await refreshJazzhrCache({ config, logger });
       const recruiters = getRecruiters();
+      await loadTalentDirectory(config, store)
+      const talentRecruiters = getTalentRecruiters()
       await client.chat.postMessage({
         channel: command.channel_id,
         text: result.refreshed
-          ? `JazzHR cache refreshed: ${result.records} applicants and ${recruiters.length} recruiters loaded.`
+          ? `JazzHR cache refreshed: ${result.records} applicants and ${recruiters.length} JazzHR users loaded. Talent recruiters refreshed: ${talentRecruiters.length}.`
           : 'JazzHR refresh completed with warnings (check logs for details).',
+      });
+      return;
+    }
+
+    if (text === 'refresh-directory') {
+      await loadTalentDirectory(config, store)
+      const talentRecruiters = getTalentRecruiters()
+      await client.chat.postMessage({
+        channel: command.channel_id,
+        text: `Talent directory refreshed: ${talentRecruiters.length} recruitment records loaded.`,
       });
       return;
     }
@@ -130,17 +144,20 @@ export function registerSlackHandlers(app, context) {
     if (text === 'status') {
       const applicants = getApplicants();
       const recruiters = getRecruiters();
+      const talentRecruiters = getTalentRecruiters();
       const managers = getHiringManagers();
+      const totalPeople = talentRecruiters.length + managers.length
       await client.chat.postEphemeral({
         channel: command.channel_id,
         user: command.user_id,
         text: [
           `*Cache status:*`,
-          `• Applicants: ${applicants.length}`,
-          `• Recruiters (JazzHR): ${recruiters.length}`,
-          `• Hiring Managers (SQL): ${managers.length}`,
-          `• Total people: ${recruiters.length + managers.length}`,
-          `• Recruiter preview: ${previewPeople(recruiters)}`,
+          `Applicants: ${applicants.length}`,
+          `Recruiters (JazzHR): ${recruiters.length}`,
+          `Recruiters (talent directory): ${talentRecruiters.length}`,
+          `Hiring Managers (talent directory): ${managers.length}`,
+          `Total directory people: ${totalPeople}`,
+          `Recruiter preview: ${previewPeople(talentRecruiters)}`,
         ].join('\n'),
       });
       return;
@@ -149,7 +166,7 @@ export function registerSlackHandlers(app, context) {
     await client.chat.postEphemeral({
       channel: command.channel_id,
       user: command.user_id,
-      text: 'Available subcommands: `refresh-jazz` — reload JazzHR applicant and recruiter cache, `status` — show cache counts.',
+      text: 'Available subcommands: `refresh-jazz` reload JazzHR and talent directory caches, `refresh-directory` reload talent directory only, `status` show cache counts.',
     });
   });
 
@@ -1044,7 +1061,6 @@ export function registerSlackHandlers(app, context) {
       return;
     }
 
-    await ack();
     const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
     const selectedDate = view.state.values.date_block.date.selected_date
     const zoomLink = view.state.values.zoom_block.zoom_link.value || resolveCaseZoomLink(caseRecord)
@@ -1066,33 +1082,73 @@ export function registerSlackHandlers(app, context) {
 
     const finalizeStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
     const finalizeStageRules = resolveStageRules(finalizeStageKey, caseRecord.stageOverrides)
+    const scheduleInput = {
+      candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
+      jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
+      startDate: converted.date,
+      startTime: converted.time,
+      durationMinutes: finalizeStageRules.typicalDurationMinutes,
+      zoomLink,
+      attendees,
+      timeZone: interviewTimeZone,
+    }
+    const previewCaseRecord = {
+      ...caseRecord,
+      selectedInterviewDate: converted.date,
+      selectedInterviewTime: converted.time,
+      currentSchedule: buildScheduleSnapshot({
+        date: converted.date,
+        time: converted.time,
+        zoomLink,
+        attendees,
+      }),
+    }
+    const renderedTemplate = await buildScheduledCandidateEmail(previewCaseRecord)
+    const recentAudits = await store.listAudits(caseId, 5)
+    await ack({
+      response_action: 'update',
+      view: finalizeEmailPreviewModal({
+        caseRecord,
+        scheduleInput,
+        renderedTemplate,
+        recentAudits,
+      }),
+    })
+  });
 
+  app.view('finalize_email_preview_submit', async ({ ack, body, view, client }) => {
+    const metadata = parseRequiredPrivateMetadata(view.private_metadata)
+    const caseId = metadata.caseId
+    const scheduleInput = metadata.scheduleInput
+    const caseRecord = await requireCase(store, caseId)
+    if (!canFinalizeSchedule(caseRecord)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          email_subject_block: 'This case is already scheduled. Use Reschedule interview instead.',
+        },
+      })
+      return
+    }
+
+    await ack()
     const eventResult = await createCalendarEvent({
       config,
       logger,
       caseRecord,
       store,
-      eventInput: {
-        candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
-        jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
-        startDate: converted.date,
-        startTime: converted.time,
-        durationMinutes: finalizeStageRules.typicalDurationMinutes,
-        zoomLink,
-        attendees,
-        timeZone: interviewTimeZone,
-      },
+      eventInput: scheduleInput,
     });
 
-    const scheduleInput = buildScheduleSnapshot({
-      date: converted.date,
-      time: converted.time,
-      zoomLink,
-      attendees,
+    const scheduleSnapshot = buildScheduleSnapshot({
+      date: scheduleInput.startDate,
+      time: scheduleInput.startTime,
+      zoomLink: scheduleInput.zoomLink,
+      attendees: scheduleInput.attendees,
       eventId: eventResult.eventId,
       htmlLink: eventResult.googleEvent?.htmlLink || null,
     });
-    const updated = await store.updateCase(caseId, applyScheduledEvent(caseRecord, eventResult, scheduleInput));
+    const updated = await store.updateCase(caseId, applyScheduledEvent(caseRecord, eventResult, scheduleSnapshot));
     await store.addAudit({
       caseId,
       actorSlackUserId: body.user.id,
@@ -1100,7 +1156,14 @@ export function registerSlackHandlers(app, context) {
       eventId: eventResult.eventId,
     });
 
-    const reminderEmail = await buildScheduledCandidateEmail(updated);
+    const emailSubject = view.state.values.email_subject_block.email_subject.value
+    const emailBody = view.state.values.email_body_block.email_body.value
+    const reminderEmail = {
+      ...(await buildScheduledCandidateEmail(updated)),
+      subject: emailSubject,
+      body: plainTextToHtml(emailBody),
+      plainBody: emailBody,
+    }
     const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store });
     const reminderUpdated = await store.updateCase(caseId, {
       reminderEmail,
@@ -1376,6 +1439,12 @@ function parsePrivateMetadata(raw) {
     if (parsed && typeof parsed === 'object') return parsed;
   } catch (_) { /* not JSON */ }
   return null;
+}
+
+function parseRequiredPrivateMetadata(raw) {
+  const parsed = parsePrivateMetadata(raw)
+  if (!parsed) throw new Error('Invalid view metadata')
+  return parsed
 }
 
 function getChannelId(view) {

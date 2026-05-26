@@ -307,6 +307,34 @@ export function finalizeModal(caseRecord, recentAudits = []) {
   };
 }
 
+export function finalizeEmailPreviewModal({ caseRecord, scheduleInput, renderedTemplate, recentAudits = [] }) {
+  const plainBody = renderedTemplate.plainBody || renderedTemplate.body
+  return {
+    type: 'modal',
+    callback_id: 'finalize_email_preview_submit',
+    private_metadata: JSON.stringify({ caseId: caseRecord.id, scheduleInput }),
+    title: plain('Preview Email'),
+    submit: plain('Create Invite'),
+    close: plain('Cancel'),
+    blocks: [
+      ...caseProgressHeader(caseRecord, recentAudits),
+      section(`*${caseTitle(caseRecord)}*`),
+      section('Email preview before calendar invite creation.'),
+      input('Email subject', 'email_subject_block', {
+        type: 'plain_text_input',
+        action_id: 'email_subject',
+        initial_value: renderedTemplate.subject,
+      }),
+      input('Email body', 'email_body_block', {
+        type: 'plain_text_input',
+        action_id: 'email_body',
+        multiline: true,
+        initial_value: plainBody,
+      }),
+    ],
+  }
+}
+
 export function schedulingModal(caseRecord, schedulingResult, recentAudits = []) {
   const phase = schedulingResult?.phase || 1
   const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
@@ -968,7 +996,6 @@ function applicantDetailBlocks(draft) {
   if (rich.stage)     coreLines.push(`📊 *Stage:* ${rich.stage}`);
   if (rich.source)    coreLines.push(`📥 *Source:* ${rich.source}`);
   if (rich.applyDate) coreLines.push(`📅 *Applied:* ${rich.applyDate}`);
-  if (rich.rating)    coreLines.push(`⭐ *Rating:* ${rich.rating}/5`);
 
   if (coreLines.length > 0) {
     blocks.push(section(coreLines.join('\n')));
@@ -976,7 +1003,7 @@ function applicantDetailBlocks(draft) {
     blocks.push(section('ℹ️ No additional details available for this candidate.'));
   }
 
-  const hasExtended = detail.address || detail.resumeUrl || detail.resumeText ||
+  const hasExtended = detail.address ||
     detail.linkedinUrl || detail.education || detail.experience || detail.notes;
 
   if (!hasExtended && draft.applicant?.jazzhrApplicationId) {
@@ -989,17 +1016,6 @@ function applicantDetailBlocks(draft) {
 
   if (detail.linkedinUrl) {
     blocks.push(section(`🔗 <${detail.linkedinUrl}|LinkedIn profile>`));
-  }
-
-  if (detail.resumeUrl) {
-    blocks.push(section(`📄 <${detail.resumeUrl}|View resume in JazzHR>`));
-  }
-
-  if (detail.resumeText) {
-    const preview = detail.resumeText.length > 300
-      ? detail.resumeText.slice(0, 300) + '…'
-      : detail.resumeText;
-    blocks.push(section(`📝 *Resume preview:*\n> ${preview}`));
   }
 
   if (detail.education) {
