@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { getSlackRecruiters, getSlackUsers, setSlackRecruiters, setSlackUsers } from '../src/data/cache.js'
+import { getSlackUsers, setSlackUsers } from '../src/data/cache.js'
 import { ensureSlackDirectory, normalizeSlackUser } from '../src/services/slack-directory.js'
 
 test('normalizeSlackUser maps Slack profile email and skips inactive users', () => {
@@ -23,9 +23,8 @@ test('normalizeSlackUser maps Slack profile email and skips inactive users', () 
   assert.equal(normalizeSlackUser({ id: 'D1', deleted: true, profile: {} }), null)
 })
 
-test('ensureSlackDirectory limits recruiters to recruitment channel members', async () => {
+test('ensureSlackDirectory loads active Slack users without recruitment channel lookup', async () => {
   setSlackUsers([])
-  setSlackRecruiters([])
 
   const client = {
     users: {
@@ -41,12 +40,8 @@ test('ensureSlackDirectory limits recruiters to recruitment channel members', as
       },
     },
     conversations: {
-      async members({ channel }) {
-        assert.equal(channel, 'C-recruiting')
-        return {
-          members: ['U1', 'B1'],
-          response_metadata: { next_cursor: '' },
-        }
+      async members() {
+        throw new Error('conversations.members should not be called')
       },
     },
   }
@@ -56,20 +51,16 @@ test('ensureSlackDirectory limits recruiters to recruitment channel members', as
     client,
     logger,
     force: true,
-    config: { slack: { recruitmentChannelId: 'C-recruiting' } },
+    config: { slack: {} },
   })
 
   assert.equal(result.users.length, 2)
-  assert.equal(result.recruiters.length, 1)
-  assert.equal(result.recruiters[0].id, 'U1')
-  assert.equal(result.recruiters[0].email, 'rec1@opg.com')
+  assert.equal(result.recruiters.length, 0)
   assert.equal(getSlackUsers().length, 2)
-  assert.equal(getSlackRecruiters().length, 1)
 })
 
-test('ensureSlackDirectory does not fall back to all users when recruiter channel scope is missing', async () => {
+test('ensureSlackDirectory ignores recruitment channel config and does not warn on missing scope', async () => {
   setSlackUsers([])
-  setSlackRecruiters([])
 
   const client = {
     users: {
@@ -103,11 +94,10 @@ test('ensureSlackDirectory does not fall back to all users when recruiter channe
     client,
     logger,
     force: true,
-    config: { slack: { recruitmentChannelId: 'C-recruiting' } },
+    config: { slack: {} },
   })
 
   assert.equal(result.users.length, 2)
   assert.equal(result.recruiters.length, 0)
-  assert.equal(getSlackRecruiters().length, 0)
-  assert.equal(warnings[0].event, 'slack_recruitment_channel_missing_scope')
+  assert.equal(warnings.length, 0)
 })

@@ -1,4 +1,4 @@
-import { getSlackRecruiters, getSlackUsers, setSlackRecruiters, setSlackUsers } from '../data/cache.js'
+import { getSlackUsers, setSlackUsers } from '../data/cache.js'
 
 let directoryLoaded = false
 let directoryLoadPromise = null
@@ -7,7 +7,7 @@ export async function ensureSlackDirectory({ client, config, logger, force = fal
   if (!force && directoryLoaded) {
     return {
       users: getSlackUsers(),
-      recruiters: getSlackRecruiters(),
+      recruiters: [],
     }
   }
 
@@ -25,31 +25,13 @@ async function loadSlackDirectory({ client, config, logger }) {
   const users = await fetchAllSlackUsers({ client, logger })
   setSlackUsers(users)
 
-  let recruiters = []
-  const channelId = config?.slack?.recruitmentChannelId
-  if (channelId) {
-    try {
-      recruiters = await fetchRecruitmentChannelUsers({ client, channelId, users, logger })
-    } catch (error) {
-      if (error?.data?.error !== 'missing_scope') throw error
-      logger.warn('slack_recruitment_channel_missing_scope', {
-        channelId,
-        error: error.message,
-        recruiters: 0,
-      })
-      recruiters = []
-    }
-  }
-  setSlackRecruiters(recruiters)
   directoryLoaded = true
 
   logger.info('slack_directory_refreshed', {
     users: users.length,
-    recruiters: recruiters.length,
-    channelId,
   })
 
-  return { users, recruiters }
+  return { users, recruiters: [] }
 }
 
 export async function resolveSlackUser({ client, userId, logger }) {
@@ -108,38 +90,6 @@ async function fetchAllSlackUsers({ client, logger }) {
 
   logger.info('slack_users_loaded', { count: users.length })
   return users
-}
-
-async function fetchRecruitmentChannelUsers({ client, channelId, users, logger }) {
-  const memberIds = []
-  let cursor
-
-  do {
-    const result = await client.conversations.members({
-      channel: channelId,
-      limit: 200,
-      ...(cursor ? { cursor } : {}),
-    })
-    memberIds.push(...(result.members || []))
-    cursor = result.response_metadata?.next_cursor || ''
-  } while (cursor)
-
-  const bySlackId = new Map(users.map((user) => [user.slackUserId, user]))
-  const recruiters = memberIds
-    .map((id) => bySlackId.get(id))
-    .filter(Boolean)
-    .map((user) => ({
-      ...user,
-      role: 'recruiter',
-    }))
-
-  logger.info('slack_recruitment_channel_loaded', {
-    channelId,
-    members: memberIds.length,
-    recruiters: recruiters.length,
-  })
-
-  return recruiters
 }
 
 function upsertBySlackId(users, user) {
