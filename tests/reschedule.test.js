@@ -225,6 +225,15 @@ test('finalize modal prepopulates zoom link from recruiter sheet data when autof
   assert.equal(zoomBlock.element.initial_value, 'https://zoom.us/j/from-sheet');
 });
 
+test('finalize modal direct schedule time options start at 7 AM and end before 4 PM PH', () => {
+  const view = finalizeModal(baseCase);
+  const timeBlock = view.blocks.find((block) => block.block_id === 'time_block');
+  const options = timeBlock.element.options;
+
+  assert.equal(options[0].value, '07:00');
+  assert.equal(options[options.length - 1].value, '15:30');
+});
+
 test('finalize email preview modal shows formatted email before creating invite', () => {
   const view = finalizeEmailPreviewModal({
     caseRecord: baseCase,

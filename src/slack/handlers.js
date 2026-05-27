@@ -1055,7 +1055,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          time_block: `Select a time between 9:00 AM and 5:00 PM ${PH_TIME_ZONE}.`,
+          time_block: `Select a time between 7:00 AM and 4:00 PM ${PH_TIME_ZONE}.`,
         },
       });
       return;
@@ -1241,7 +1241,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          time_block: `Select a time between 9:00 AM and 5:00 PM ${PH_TIME_ZONE}.`,
+          time_block: `Select a time between 7:00 AM and 4:00 PM ${PH_TIME_ZONE}.`,
         },
       });
       return;

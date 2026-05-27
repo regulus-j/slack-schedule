@@ -40,8 +40,8 @@ test('checks Sydney business hour boundaries inclusively', () => {
   assert.equal(isTimeWithinBusinessHours(BUSINESS_DAY_START), true);
   assert.equal(isTimeWithinBusinessHours('12:00'), true);
   assert.equal(isTimeWithinBusinessHours(BUSINESS_DAY_END), true);
-  assert.equal(isTimeWithinBusinessHours('08:59'), false);
-  assert.equal(isTimeWithinBusinessHours('18:01'), false);
+  assert.equal(isTimeWithinBusinessHours('06:59'), false);
+  assert.equal(isTimeWithinBusinessHours('16:01'), false);
 });
 
 test('validates date ranges in order', () => {

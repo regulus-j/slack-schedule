@@ -265,8 +265,8 @@ test('integration: end-to-end from stage resolution through ranked slots', () =>
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  // 45-min slots in an 8-hour day = 10 slots
-  assert.equal(slots.length, 10)
+  // 45-min slots in a 9-hour day = 12 slots
+  assert.equal(slots.length, 12)
 
   // 8. Intersect with empty busy (all available)
   const intersected = intersectSlotsWithBusy(slots, {}, included)
@@ -276,6 +276,6 @@ test('integration: end-to-end from stage resolution through ranked slots', () =>
 
   // 9. Rank
   const ranked = rankSlots(intersected, SYDNEY_TIME_ZONE)
-  assert.ok(ranked.length === 10)
+  assert.ok(ranked.length === 12)
   assert.ok(ranked[0].score > 0)
 })

@@ -1,7 +1,7 @@
 export const PH_TIME_ZONE = 'Asia/Manila';
 export const SYDNEY_TIME_ZONE = 'Australia/Sydney';
-export const BUSINESS_DAY_START = '09:00';
-export const BUSINESS_DAY_END = '17:00';
+export const BUSINESS_DAY_START = '07:00';
+export const BUSINESS_DAY_END = '16:00';
 
 export function formatDateTimeInTimeZone(dateLike, timeZone) {
   const date = new Date(dateLike);

@@ -28,7 +28,7 @@ function makeSlot(startIso, endIso, overrides = {}) {
 
 // ─── generateCandidateSlots ──────────────────────────────────────────────────
 
-test('generates 16 slots for a single 9-5 business day with 30 min duration', () => {
+test('generates 18 slots for a single 7-4 business day with 30 min duration', () => {
   const slots = generateCandidateSlots({
     startDate: '2026-06-01',
     endDate: '2026-06-01',
@@ -36,10 +36,10 @@ test('generates 16 slots for a single 9-5 business day with 30 min duration', ()
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  assert.equal(slots.length, 16)
+  assert.equal(slots.length, 18)
 })
 
-test('generates 8 slots for a single business day with 60 min duration', () => {
+test('generates 9 slots for a single business day with 60 min duration', () => {
   const slots = generateCandidateSlots({
     startDate: '2026-06-01',
     endDate: '2026-06-01',
@@ -47,7 +47,7 @@ test('generates 8 slots for a single business day with 60 min duration', () => {
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  assert.equal(slots.length, 8)
+  assert.equal(slots.length, 9)
 })
 
 test('all generated slots have required properties', () => {
@@ -129,7 +129,7 @@ test('generates slots across multiple business days', () => {
     timeZone: SYDNEY_TIME_ZONE
   })
 
-  assert.equal(slots.length, 24, '3 days x 8 one-hour slots = 24')
+  assert.equal(slots.length, 27, '3 days x 9 one-hour slots = 27')
 })
 
 test('does not generate slots before today in the interview timezone', () => {
@@ -162,7 +162,7 @@ test('returns empty for invalid date range (end before start)', () => {
 })
 
 test('handles exact slot alignment at business day boundaries', () => {
-  // With 30-min slots 09:00-18:00, first slot starts at 09:00 and last ends at 18:00
+  // With 30-min slots 07:00-16:00, first slot starts at 07:00 and last ends at 16:00
   const slots = generateCandidateSlots({
     startDate: '2026-06-01',
     endDate: '2026-06-01',
@@ -173,8 +173,8 @@ test('handles exact slot alignment at business day boundaries', () => {
   const firstStart = new Date(slots[0].start)
   const lastEnd = new Date(slots[slots.length - 1].end)
 
-  // First slot should start at 09:00 Sydney time
-  // Last slot should end at 18:00 Sydney time
+  // First slot should start at 07:00 Sydney time
+  // Last slot should end at 16:00 Sydney time
   // We verify the slot duration is correct
   const firstDuration = isoToTime(slots[0].end) - isoToTime(slots[0].start)
   assert.equal(firstDuration, 30 * 60 * 1000, 'first slot should be exactly 30 minutes')
