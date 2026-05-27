@@ -18,7 +18,7 @@ import {
   personPickerLabel,
   toSlackOption,
 } from '../data/search.js'
-import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate } from '../templates.js'
+import { loadSchedulingTemplates, loadTemplates, renderTemplate, signedEmailBodiesFromPlainText } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
 import { loadTalentDirectory } from '../services/talent-directory.js'
@@ -553,6 +553,14 @@ export function registerSlackHandlers(app, context) {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
     const caseRecord = await requireCase(store, body.actions[0].value);
+    if (hasBlockingEmailStatus(caseRecord.reminderStatus) && caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion) {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: `⚠️ A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
+      });
+      return;
+    }
     if (!caseRecord.calendarEventId) {
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
@@ -621,18 +629,33 @@ export function registerSlackHandlers(app, context) {
       return;
     }
 
-    await ack();
-    const htmlBody = plainTextToHtml(plainBody);
+    const emailBodies = signedEmailBodiesFromPlainText(plainBody);
     const email = {
       subject,
-      body: htmlBody,
-      htmlBody,
-      plainBody,
+      body: emailBodies.htmlBody,
+      htmlBody: emailBodies.htmlBody,
+      plainBody: emailBodies.plainBody,
       to: caseRecord.applicant?.email,
       from: caseRecord.recruiter?.email,
     };
     const smsCopy = view.state.values.sms_block.sms_copy.value || '';
-    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+    if (hasBlockingEmailStatus(caseRecord.gmailSendStatus) && isSameEmail(caseRecord.candidateEmail, email)) {
+      await ack();
+      await client.chat.postMessage({
+        channel: resolvePostingChannel(config, body.user.id),
+        text: `⚠️ This candidate email has already been sent for ${caseId}.`,
+      });
+      return
+    }
+
+    await ack();
+    const pendingEmailCase = await store.updateCase(caseId, {
+      status: 'Waiting for Candidate',
+      candidateEmail: email,
+      smsCopy,
+      gmailSendStatus: 'sending',
+    });
+    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingEmailCase, email, store });
     const updated = await store.updateCase(caseId, {
       status: 'Waiting for Candidate',
       candidateEmail: email,
@@ -654,14 +677,14 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.view('reminder_message_submit', async ({ ack, body, view, client }) => {
-    await ack();
     const caseId = view.private_metadata;
     const caseRecord = await requireCase(store, caseId);
     if (
       caseRecord.reminderEmail?.kind === 'manual_reminder' &&
-      caseRecord.reminderStatus === 'sent' &&
+      hasBlockingEmailStatus(caseRecord.reminderStatus) &&
       caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion
     ) {
+      await ack();
       await client.chat.postMessage({
         channel: resolvePostingChannel(config, body.user.id),
         text: `⚠️ A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
@@ -669,17 +692,23 @@ export function registerSlackHandlers(app, context) {
       return;
     }
     const plainBody = view.state.values.email_body_block.email_body.value || '';
-    const htmlBody = plainTextToHtml(plainBody);
+    const emailBodies = signedEmailBodiesFromPlainText(plainBody);
     const email = {
       kind: 'manual_reminder',
       subject: view.state.values.email_subject_block.email_subject.value,
-      body: htmlBody,
-      htmlBody,
-      plainBody,
+      body: emailBodies.htmlBody,
+      htmlBody: emailBodies.htmlBody,
+      plainBody: emailBodies.plainBody,
       to: caseRecord.applicant?.email,
       from: caseRecord.recruiter?.email,
     };
-    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+    await ack();
+    const pendingReminderCase = await store.updateCase(caseId, {
+      reminderEmail: email,
+      reminderStatus: 'sending',
+      reminderScheduleVersion: caseRecord.scheduleVersion || 1,
+    })
+    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingReminderCase, email, store });
     const updated = await store.updateCase(caseId, {
       reminderEmail: email,
       reminderStatus: emailResult.mocked ? 'mocked' : 'sent',
@@ -1265,9 +1294,9 @@ export function registerSlackHandlers(app, context) {
     const scheduledCandidateEmail = {
       ...(await buildScheduledCandidateEmail(updated)),
       subject: emailSubject,
-      body: plainTextToHtml(emailBody),
-      plainBody: emailBody,
+      ...signedEmailBodiesFromPlainText(emailBody),
     }
+    scheduledCandidateEmail.body = scheduledCandidateEmail.htmlBody
     const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store });
     const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
     const reminderUpdated = await store.updateCase(caseId, {
@@ -1434,13 +1463,13 @@ export function registerSlackHandlers(app, context) {
 
     await ack();
     const plainBody = view.state.values.email_body_block.email_body.value || '';
-    const htmlBody = plainTextToHtml(plainBody);
+    const emailBodies = signedEmailBodiesFromPlainText(plainBody);
     const email = {
       ...request.email,
       subject: view.state.values.email_subject_block.email_subject.value,
-      body: htmlBody,
-      htmlBody,
-      plainBody,
+      body: emailBodies.htmlBody,
+      htmlBody: emailBodies.htmlBody,
+      plainBody: emailBodies.plainBody,
     };
     const rescheduleStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
     const rescheduleStageRules = resolveStageRules(rescheduleStageKey, caseRecord.stageOverrides)
@@ -1501,14 +1530,29 @@ export function registerSlackHandlers(app, context) {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
     const caseRecord = await requireCase(store, body.actions[0].value);
-    const updated = await store.updateCase(caseRecord.id, applyCancelledInterview(caseRecord, body.user.id));
-    const cancellationEmail = buildCancellationEmail(updated)
-    const cancellationResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: cancellationEmail, store })
+    if (caseRecord.rescheduleStatus === 'cancelled' || hasBlockingEmailStatus(caseRecord.cancellationEmailStatus)) {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: '⚠️ This interview has already been cancelled. No duplicate email was sent.',
+      });
+      return
+    }
+    const pendingCancellation = await store.updateCase(caseRecord.id, {
+      ...applyCancelledInterview(caseRecord, body.user.id),
+      cancellationEmailStatus: 'sending',
+    });
+    const cancellationEmail = buildCancellationEmail(pendingCancellation)
+    const cancellationResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingCancellation, email: cancellationEmail, store })
+    const updated = await store.updateCase(caseRecord.id, {
+      cancellationEmail,
+      cancellationEmailStatus: cancellationResult.mocked ? 'mocked' : 'sent',
+    })
     await store.addAudit({
       caseId: caseRecord.id,
       actorSlackUserId: body.user.id,
       action: 'reschedule_cancelled',
-      cancellationEmailStatus: cancellationResult.mocked ? 'mocked' : 'sent',
+      cancellationEmailStatus: updated.cancellationEmailStatus,
     });
     await publishHome({ client, userId: body.user.id, store, logger });
     await postCaseThreadMessage({
@@ -1814,12 +1858,13 @@ export function buildCancellationEmail(caseRecord) {
     '',
     `If you have any questions, please contact ${caseRecord.recruiter?.name || 'your recruiter'}.`,
   ].join('\n')
+  const emailBodies = signedEmailBodiesFromPlainText(plainBody)
 
   return {
     subject: `Interview cancelled: ${jobTitle}`,
-    body: plainTextToHtml(plainBody),
-    htmlBody: plainTextToHtml(plainBody),
-    plainBody,
+    body: emailBodies.htmlBody,
+    htmlBody: emailBodies.htmlBody,
+    plainBody: emailBodies.plainBody,
     to: caseRecord.applicant?.email,
     cc: ccRecipientsFromAttendees(caseRecord, schedule.attendees || caseRecord.guests || []),
     from: caseRecord.recruiter?.email,
@@ -1900,12 +1945,13 @@ export function buildAttendeeInviteEmail(caseRecord, attendee) {
     '',
     'Thank you.',
   ].join('\n')
+  const emailBodies = signedEmailBodiesFromPlainText(plainBody)
 
   return {
     subject,
-    body: plainTextToHtml(plainBody),
-    htmlBody: plainTextToHtml(plainBody),
-    plainBody,
+    body: emailBodies.htmlBody,
+    htmlBody: emailBodies.htmlBody,
+    plainBody: emailBodies.plainBody,
     to: attendee.email,
     from: caseRecord.recruiter?.email,
   }
@@ -2335,6 +2381,25 @@ async function openDm(client, userId) {
 
 function hasUnresolvedSchedulePlaceholders(value) {
   return /\[(date|time|link|zoom_link)\]/i.test(String(value || ''))
+}
+
+function hasBlockingEmailStatus(status) {
+  return ['sending', 'sent', 'mocked'].includes(status)
+}
+
+function isSameEmail(left, right) {
+  if (!left || !right) return false
+  return (
+    normalizeEmail(left.to) === normalizeEmail(right.to) &&
+    normalizeEmail(left.from) === normalizeEmail(right.from) &&
+    String(left.subject || '') === String(right.subject || '') &&
+    String(left.plainBody || stripHtmlBody(left.body || left.htmlBody || '')) ===
+      String(right.plainBody || stripHtmlBody(right.body || right.htmlBody || ''))
+  )
+}
+
+function stripHtmlBody(value) {
+  return String(value || '').replace(/<[^>]+>/g, '').trim()
 }
 
 function previewPeople(people) {

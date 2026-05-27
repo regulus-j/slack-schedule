@@ -146,6 +146,36 @@ export function plainTextToHtml(text) {
   return escaped.replace(/\r?\n/g, '<br>')
 }
 
+export function signedEmailBodiesFromPlainText(text) {
+  const plainBody = ensureSignaturePlainText(text)
+  return {
+    plainBody,
+    htmlBody: signedPlainTextToHtml(plainBody),
+  }
+}
+
+export function ensureSignaturePlainText(text) {
+  const body = String(text || '').trim()
+  const signature = signaturePlainText()
+  if (hasPlainSignature(body)) return body
+  return [body, signature].filter(Boolean).join('\n\n')
+}
+
+function signedPlainTextToHtml(text) {
+  const body = String(text || '').trim()
+  const signature = signaturePlainText()
+  if (body.endsWith(signature)) {
+    const content = body.slice(0, -signature.length).trim()
+    return [plainTextToHtml(content), generateSignatureHTML()].filter(Boolean).join('\n')
+  }
+  return plainTextToHtml(body)
+}
+
+function hasPlainSignature(text) {
+  const value = String(text || '')
+  return value.includes('Outsourced Pro Global Limited') && value.includes('IMPORTANT: The contents of this email')
+}
+
 export function templateOptions(templates) {
   return templates.map((template) => ({
     text: {

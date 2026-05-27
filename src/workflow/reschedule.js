@@ -35,6 +35,10 @@ export function canStartReschedule(caseRecord) {
 }
 
 export function visibleCaseActions(caseRecord) {
+  if (caseRecord.rescheduleStatus === RESCHEDULE_STATUSES.CANCELLED) {
+    return caseRecord.calendarEventId ? ['view_calendar_details'] : []
+  }
+
   if (isScheduledCase(caseRecord)) {
     const actions = [
       'open_reschedule_modal',

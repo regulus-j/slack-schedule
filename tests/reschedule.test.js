@@ -61,6 +61,24 @@ test('scheduled cases show reschedule actions instead of create invite', () => {
   assert.ok(!labels.includes('📅 Create calendar invite'));
 });
 
+test('cancelled scheduled cases hide repeat email actions', () => {
+  const cancelledCase = {
+    ...baseCase,
+    status: 'Needs Attention',
+    calendarEventId: 'event-1',
+    rescheduleStatus: 'cancelled',
+    cancellationEmailStatus: 'sent',
+  };
+
+  const actions = visibleCaseActions(cancelledCase);
+  assert.deepEqual(actions, ['view_calendar_details']);
+
+  const labels = actionButtonsForCase(cancelledCase).map((item) => item.text.text);
+  assert.ok(labels.includes('📅 View calendar details'));
+  assert.ok(!labels.includes('❌ Cancel interview'));
+  assert.ok(!labels.includes('🔔 Send reminder'));
+});
+
 test('cases with uploaded resumes show a view resume action', () => {
   const caseWithResume = {
     ...baseCase,
@@ -167,6 +185,9 @@ test('cancellation email is sent to candidate and CCs involved meeting participa
   assert.match(email.subject, /Interview cancelled/);
   assert.match(email.plainBody, /Your interview for Customer Support Specialist has been cancelled/);
   assert.match(email.plainBody, /Date: 2026-05-20/);
+  assert.match(email.plainBody, /Outsourced Pro Global Limited/);
+  assert.match(email.htmlBody, /cid:opg-logo/);
+  assert.match(email.htmlBody, /IMPORTANT: The contents of this email/);
 });
 
 test('home view buttons do not include empty values', () => {
@@ -931,6 +952,8 @@ test('attendee invite emails are personalized and exclude candidate and recruite
   assert.match(email.plainBody, /Alex Reyes/);
   assert.match(email.plainBody, /Support Specialist/);
   assert.match(email.plainBody, /https:\/\/zoom\.us\/j\/demo/);
+  assert.match(email.plainBody, /Outsourced Pro Global Limited/);
+  assert.match(email.htmlBody, /cid:opg-logo/);
 });
 
 test('scheduled candidate email cc includes recruiter and attendee recipients', async () => {

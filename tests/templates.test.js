@@ -7,6 +7,7 @@ import {
   parseTemplate,
   renderTemplate,
   replaceVariables,
+  signedEmailBodiesFromPlainText,
   stripHtmlBody,
   templateRequiresResume,
 } from '../src/templates.js'
@@ -73,6 +74,26 @@ test('renderTemplate computes plainBody by stripping HTML', () => {
   assert.doesNotMatch(rendered.plainBody, /<html>/)
   assert.doesNotMatch(rendered.plainBody, /<table>/)
   assert.doesNotMatch(rendered.plainBody, /<strong>/)
+})
+
+test('signedEmailBodiesFromPlainText appends plain signature and restores HTML signature', () => {
+  const email = signedEmailBodiesFromPlainText('Hi Alex,\n\nInterview details here.')
+
+  assert.match(email.plainBody, /Hi Alex/)
+  assert.match(email.plainBody, /Outsourced Pro Global Limited/)
+  assert.match(email.plainBody, /IMPORTANT: The contents of this email/)
+  assert.match(email.htmlBody, /Hi Alex/)
+  assert.match(email.htmlBody, /<table/)
+  assert.match(email.htmlBody, /cid:opg-logo/)
+  assert.match(email.htmlBody, /IMPORTANT: The contents of this email/)
+})
+
+test('signedEmailBodiesFromPlainText does not duplicate existing signature', () => {
+  const once = signedEmailBodiesFromPlainText('Hi Alex')
+  const twice = signedEmailBodiesFromPlainText(once.plainBody)
+
+  assert.equal(twice.plainBody, once.plainBody)
+  assert.equal((twice.plainBody.match(/Outsourced Pro Global Limited/g) || []).length, 1)
 })
 
 test('stripHtmlBody removes tags and decodes entities', () => {
