@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { logger } from '../logger.js';
 import { setHiringManagers, setTalentRecruiters } from '../data/cache.js';
-import { fetchRecruiterPhoneRows, mergeRecruiterPhones } from './recruiter-phone-export.js';
+import { fetchRecruiterPhoneRows, mergeRecruiterPhones, recruiterRowsToPeople } from './recruiter-phone-export.js';
 
 export async function loadTalentDirectory(config, store) {
   let people
@@ -29,17 +29,25 @@ export async function loadTalentDirectory(config, store) {
     source = filePath
   }
 
+  const phoneRows = await fetchRecruiterPhoneRows({ config, logger })
+
   setHiringManagers(people);
   const baseRecruiters = people.filter(isRecruitmentTalent).map((person) => ({
     ...person,
     id: person.id.replace(/^hm-/, 'talent-rec-'),
     role: 'recruiter',
   }))
-  const phoneRows = await fetchRecruiterPhoneRows({ config, logger })
-  const talentRecruiters = mergeRecruiterPhones(baseRecruiters, phoneRows)
+  const sheetRecruiters = recruiterRowsToPeople(phoneRows)
+  const enrichedBaseRecruiters = mergeRecruiterPhones(baseRecruiters, phoneRows)
+  const talentRecruiters = mergeRecruiterLists(sheetRecruiters, enrichedBaseRecruiters)
   setTalentRecruiters(talentRecruiters)
 
-  logger.info('talent_directory_loaded', { count: people.length, recruiters: talentRecruiters.length, source });
+  logger.info('talent_directory_loaded', {
+    count: people.length,
+    recruiters: talentRecruiters.length,
+    sheetRecruiters: sheetRecruiters.length,
+    source,
+  });
   return people;
 }
 
@@ -107,6 +115,24 @@ export function isRecruitmentTalent(person) {
     person?.department,
   ].join(' ').toLowerCase()
   return haystack.includes('recruitment')
+}
+
+function mergeRecruiterLists(primaryRecruiters, fallbackRecruiters) {
+  const merged = []
+  const seen = new Set()
+
+  for (const recruiter of [...primaryRecruiters, ...fallbackRecruiters]) {
+    const key = recruiterKey(recruiter)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    merged.push(recruiter)
+  }
+
+  return merged
+}
+
+function recruiterKey(recruiter) {
+  return String(recruiter?.email || recruiter?.name || '').trim().toLowerCase()
 }
 
 function extractTuples(valuesBlock) {
