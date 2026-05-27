@@ -78,8 +78,7 @@ function formatApplicantLabel(applicant, mode) {
   const email = applicant?.email || '';
   const job = applicant?.jobTitle || '';
   if (mode === 'picker') {
-    const sub = [job, email].filter(Boolean).join(' - ');
-    return sub ? `${name}\n${sub}` : name;
+    return [name, job, email].filter(Boolean).join(' - ');
   }
   const emailPart = email ? ` (${email})` : '';
   const jobPart = job ? ` - ${job}` : '';

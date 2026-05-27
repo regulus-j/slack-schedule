@@ -18,9 +18,11 @@ test('builds a 30-minute calendar event with attendees', () => {
     startTime: '09:30',
     zoomLink: 'https://zoom.us/j/demo',
     attendees: ['alex@example.com', 'ana@example.com'],
+    description: '<html><body><p>Invite body</p></body></html>',
   });
 
   assert.equal(event.summary, 'Alex Reyes - Support Specialist Interview');
+  assert.equal(event.description, '<html><body><p>Invite body</p></body></html>');
   assert.equal(event.start.timeZone, 'Asia/Manila');
   assert.equal(event.attendees.length, 2);
   assert.equal(

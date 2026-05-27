@@ -1048,6 +1048,22 @@ export function registerSlackHandlers(app, context) {
         startTime = converted.time
       }
 
+      const scheduleInput = buildScheduleSnapshot({
+        date: startDate,
+        time: startTime,
+        zoomLink,
+        attendees: allAttendeeEmails,
+        attendeeDetails,
+        durationMinutes: stageRules.typicalDurationMinutes,
+      })
+      const previewCaseRecord = {
+        ...caseRecord,
+        guests: scheduleInput.attendees,
+        currentSchedule: scheduleInput,
+        selectedInterviewDate: startDate,
+        selectedInterviewTime: startTime,
+      }
+      const scheduledCandidateEmail = await buildScheduledCandidateEmail(previewCaseRecord)
       const eventResult = await createCalendarEvent({
         config,
         logger,
@@ -1062,10 +1078,11 @@ export function registerSlackHandlers(app, context) {
           zoomLink,
           attendees: allAttendeeEmails,
           timeZone: interviewTimeZone,
+          description: scheduledCandidateEmail.htmlBody || scheduledCandidateEmail.body || scheduledCandidateEmail.plainBody,
         },
       })
 
-      const scheduleInput = buildScheduleSnapshot({
+      const completedScheduleInput = buildScheduleSnapshot({
         date: startDate,
         time: startTime,
         zoomLink,
@@ -1077,7 +1094,7 @@ export function registerSlackHandlers(app, context) {
       })
 
       const updated = await store.updateCase(caseRecord.id, {
-        ...applyScheduledEvent(caseRecord, eventResult, scheduleInput),
+        ...applyScheduledEvent(caseRecord, eventResult, completedScheduleInput),
         selectedSlot: slotValue ? { start: slotValue } : null
       })
 
@@ -1089,7 +1106,6 @@ export function registerSlackHandlers(app, context) {
         via: slotValue ? 'slot_selection' : 'manual_entry'
       })
 
-      const scheduledCandidateEmail = await buildScheduledCandidateEmail(updated)
       const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store })
       const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
       await store.updateCase(caseRecord.id, {
@@ -1253,6 +1269,9 @@ export function registerSlackHandlers(app, context) {
 
     await ack()
     try {
+      const emailSubject = view.state.values.email_subject_block.email_subject.value
+      const emailBody = view.state.values.email_body_block.email_body.value
+      const emailBodies = signedEmailBodiesFromPlainText(emailBody)
       const finalCaseRecord = {
         ...caseRecord,
         stageKey: scheduleInput.stageKey || caseRecord.stageKey,
@@ -1264,7 +1283,10 @@ export function registerSlackHandlers(app, context) {
         logger,
         caseRecord: finalCaseRecord,
         store,
-        eventInput: scheduleInput,
+        eventInput: {
+          ...scheduleInput,
+          description: emailBodies.htmlBody,
+        },
       });
 
       const scheduleSnapshot = buildScheduleSnapshot({
@@ -1290,12 +1312,10 @@ export function registerSlackHandlers(app, context) {
         eventId: eventResult.eventId,
       });
 
-      const emailSubject = view.state.values.email_subject_block.email_subject.value
-      const emailBody = view.state.values.email_body_block.email_body.value
       const scheduledCandidateEmail = {
         ...(await buildScheduledCandidateEmail(updated)),
         subject: emailSubject,
-        ...signedEmailBodiesFromPlainText(emailBody),
+        ...emailBodies,
       }
       scheduledCandidateEmail.body = scheduledCandidateEmail.htmlBody
       const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store });
@@ -1496,6 +1516,7 @@ export function registerSlackHandlers(app, context) {
         zoomLink: request.zoomLink,
         attendees: request.attendees,
         timeZone: caseRecord.interviewTimezone || SYDNEY_TIME_ZONE,
+        description: email.htmlBody || email.body || email.plainBody,
       },
     });
     const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });

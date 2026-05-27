@@ -120,13 +120,14 @@ export function buildCalendarEventDraft({
   zoomLink,
   attendees = [],
   timeZone = PH_TIME_ZONE,
+  description,
 }) {
   const start = localDateTimeToUtc(startDate, startTime, timeZone);
   const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
 
   return {
     summary: `${candidateName} - ${jobTitle} Interview`,
-    description: ['Interview scheduled by the Slack scheduling assistant.', zoomLink ? `Zoom: ${zoomLink}` : '']
+    description: description || ['Interview scheduled by the Slack scheduling assistant.', zoomLink ? `Zoom: ${zoomLink}` : '']
       .filter(Boolean)
       .join('\n'),
     location: zoomLink || 'Zoom',
