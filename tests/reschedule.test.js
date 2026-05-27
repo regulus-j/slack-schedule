@@ -772,7 +772,7 @@ test('attendee invite emails are personalized and exclude candidate and recruite
   assert.match(email.plainBody, /https:\/\/zoom\.us\/j\/demo/);
 });
 
-test('scheduled candidate email cc includes attendee recipients', async () => {
+test('scheduled candidate email cc includes recruiter and attendee recipients', async () => {
   const email = await buildScheduledCandidateEmail({
     ...baseCase,
     templateId: '1st-interview-invite',
@@ -790,7 +790,7 @@ test('scheduled candidate email cc includes attendee recipients', async () => {
   });
 
   assert.equal(email.to, 'alex@example.com');
-  assert.deepEqual(email.cc, ['ana@example.com']);
+  assert.deepEqual(email.cc, ['jamal@example.com', 'ana@example.com']);
 });
 
 test('slack case views hide backend application id and show calendar link', () => {

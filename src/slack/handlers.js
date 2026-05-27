@@ -1688,9 +1688,18 @@ export async function buildScheduledCandidateEmail(caseRecord) {
     htmlBody: rendered.body,
     plainBody: rendered.plainBody,
     to: caseRecord.applicant?.email,
-    cc: attendeeInviteRecipients(caseRecord).map((attendee) => attendee.email),
+    cc: candidateInviteCcRecipients(caseRecord),
     from: caseRecord.recruiter?.email,
   }
+}
+
+function candidateInviteCcRecipients(caseRecord) {
+  const candidateEmail = normalizeEmail(caseRecord.applicant?.email)
+  const emails = [
+    caseRecord.recruiter?.email,
+    ...attendeeInviteRecipients(caseRecord).map((attendee) => attendee.email),
+  ]
+  return [...new Set(emails.map(normalizeEmail).filter((email) => email && email !== candidateEmail))]
 }
 
 async function sendAttendeeInviteEmails({ config, logger, store, caseRecord }) {
