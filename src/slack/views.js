@@ -64,6 +64,10 @@ function statusEmoji(status) {
 }
 
 export function homeView({ myCases, teamCases, googleConnected = false }) {
+  const googleAction = googleConnected
+    ? button('Disconnect Google', 'disconnect_google_oauth', 'danger')
+    : button('Connect Google', 'open_google_oauth')
+
   return {
     type: 'home',
     blocks: [
@@ -74,7 +78,7 @@ export function homeView({ myCases, teamCases, googleConnected = false }) {
         button('🚀 Start scheduling', 'open_schedule_intake', 'primary'),
         button('📚 Schedule tracker', 'open_schedule_tracker'),
         button('📢 Post channel button', 'post_schedule_launcher'),
-        button('🔗 Connect Google', 'open_google_oauth'),
+        googleAction,
       ]),
       divider(),
       header('👤 My Cases'),

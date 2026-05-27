@@ -32,6 +32,28 @@ test('home view includes a connect google action', () => {
   assert.ok(actionButtons.some((button) => button.action_id === 'open_google_oauth'));
 });
 
+test('home view includes a disconnect google action when connected', () => {
+  const view = homeView({ myCases: [], teamCases: [], googleConnected: true });
+  const actionButtons = view.blocks
+    .filter((block) => block.type === 'actions')
+    .flatMap((block) => block.elements)
+    .filter((element) => element.type === 'button');
+
+  assert.ok(actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
+  assert.ok(!actionButtons.some((button) => button.action_id === 'open_google_oauth'));
+});
+
+test('home view keeps connect google action when disconnected', () => {
+  const view = homeView({ myCases: [], teamCases: [], googleConnected: false });
+  const actionButtons = view.blocks
+    .filter((block) => block.type === 'actions')
+    .flatMap((block) => block.elements)
+    .filter((element) => element.type === 'button');
+
+  assert.ok(actionButtons.some((button) => button.action_id === 'open_google_oauth'));
+  assert.ok(!actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
+});
+
 test('home view shows when google is not connected', () => {
   const view = homeView({ myCases: [], teamCases: [], googleConnected: false });
   assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('Google is not connected yet')));

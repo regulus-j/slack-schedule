@@ -67,6 +67,12 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       return tokenData;
     },
 
+    async deleteGoogleToken(recruiterId) {
+      delete state.googleTokens[recruiterId];
+      await persist();
+      return true;
+    },
+
     async createCase(input) {
       const record = {
         id: `case-${crypto.randomUUID()}`,

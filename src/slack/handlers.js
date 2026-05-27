@@ -353,6 +353,27 @@ export function registerSlackHandlers(app, context) {
     })
   });
 
+  app.action('disconnect_google_oauth', async ({ ack, body, client }) => {
+    await ack()
+    if (!await verifyChannel({ config, body, client })) return
+    if (typeof store.deleteGoogleToken !== 'function') {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: 'Google disconnect is not supported by the configured store.',
+      })
+      return
+    }
+
+    await store.deleteGoogleToken(body.user.id)
+    await client.chat.postEphemeral({
+      channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+      user: body.user.id,
+      text: 'Google Calendar and Gmail have been disconnected for your Slack user.',
+    })
+    await publishHome({ client, userId: body.user.id, store, logger })
+  });
+
   app.options('applicant_select', async ({ options, ack }) => {
     await ack({ options: applicantOptions(options.value, getApplicants()) });
   });
@@ -2007,6 +2028,8 @@ export function buildTemplateVariables(caseRecord) {
   const resolvedStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId));
   const interviewStage = stageLabel(resolvedStageKey);
   const interviewDurationMinutes = resolveInterviewDurationMinutes(caseRecord, resolvedStageKey);
+  const guestListText = buildGuestListText(caseRecord);
+  const resumeLink = caseRecord.resumeLink || '';
 
   return {
     applicant_first_name: caseRecord.applicant?.firstName || '',
@@ -2024,9 +2047,46 @@ export function buildTemplateVariables(caseRecord) {
     position_title: positionTitle,
     interview_duration_minutes: String(interviewDurationMinutes),
     interview_duration_text: formatInterviewDuration(interviewDurationMinutes),
+    resume_link: resumeLink,
+    guest_list_text: guestListText,
     schedule_your_interview_here: '',
     recruiter_phone_line: recruiterContactLine(caseRecord),
   };
+}
+
+function buildGuestListText(caseRecord) {
+  const schedule = caseRecord.currentSchedule || {}
+  const attendeeEmails = Array.isArray(schedule.attendees) ? schedule.attendees : []
+  const details = Array.isArray(schedule.attendeeDetails) ? schedule.attendeeDetails : []
+  const byEmail = new Map()
+
+  for (const detail of details) {
+    const email = normalizeEmail(detail?.email)
+    if (!email) continue
+    byEmail.set(email, {
+      name: detail.name || detail.email || email,
+      email,
+    })
+  }
+
+  for (const person of [caseRecord.applicant, caseRecord.recruiter, caseRecord.hiringManager]) {
+    const email = normalizeEmail(person?.email)
+    if (!email || byEmail.has(email)) continue
+    byEmail.set(email, {
+      name: person.name || [person.firstName, person.lastName].filter(Boolean).join(' ') || person.email || email,
+      email,
+    })
+  }
+
+  for (const emailValue of attendeeEmails) {
+    const email = normalizeEmail(emailValue)
+    if (!email || byEmail.has(email)) continue
+    byEmail.set(email, { name: email, email })
+  }
+
+  return [...byEmail.values()]
+    .map((guest) => `${guest.name}: ${guest.email}`)
+    .join('\n')
 }
 
 function resolveInterviewDurationMinutes(caseRecord, stageKey) {

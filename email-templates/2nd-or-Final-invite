@@ -15,6 +15,10 @@ Date: [Date]<br>
 Time: [Time] [Timezone]<br>
 Zoom Link: [Link]</p>
 
+<p>Resume: [resume_link]</p>
+
+<p style="white-space:pre-line;"><strong>Meeting guests:</strong><br>[guest_list_text]</p>
+
 <p><strong>Friendly Reminders:</strong></p>
 
 <ul>

@@ -157,6 +157,11 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       return tokenData;
     },
 
+    async deleteGoogleToken(recruiterId) {
+      await query('DELETE FROM encrypted_google_tokens WHERE recruiter_id = $1 OR id = $1', [recruiterId]);
+      return true;
+    },
+
     async createCase(input) {
       const id = `case-${crypto.randomUUID()}`;
       const result = await query(

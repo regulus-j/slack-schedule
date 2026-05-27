@@ -736,7 +736,14 @@ test('builds a reminder email from the current schedule', () => {
       time: '09:30',
       zoomLink: 'https://zoom.us/j/demo',
       durationMinutes: 55,
+      attendees: ['alex@example.com', 'jamal@example.com', 'ana@example.com'],
+      attendeeDetails: [
+        { name: 'Alex Reyes', email: 'alex@example.com', role: 'candidate' },
+        { name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+        { name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+      ],
     },
+    resumeLink: 'https://example.com/resume.pdf',
   });
 
   assert.equal(email.to, 'alex@example.com');
@@ -766,7 +773,14 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
       time: '09:30',
       zoomLink: 'https://zoom.us/j/demo',
       durationMinutes: 55,
+      attendees: ['alex@example.com', 'jamal@example.com', 'ana@example.com'],
+      attendeeDetails: [
+        { name: 'Alex Reyes', email: 'alex@example.com', role: 'candidate' },
+        { name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+        { name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+      ],
     },
+    resumeLink: 'https://example.com/resume.pdf',
   });
 
   assert.equal(variables.applicant_first_name, 'Alex');
@@ -779,7 +793,61 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.position_title, 'Operations Manager');
   assert.equal(variables.interview_duration_minutes, '55');
   assert.equal(variables.interview_duration_text, '55-minute');
+  assert.equal(variables.resume_link, 'https://example.com/resume.pdf');
+  assert.match(variables.guest_list_text, /Alex Reyes: alex@example\.com/);
+  assert.match(variables.guest_list_text, /Jamal Al Badi: jamal@example\.com/);
+  assert.match(variables.guest_list_text, /Ana Cruz: ana@example\.com/);
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222');
+});
+
+test('2nd/final candidate email includes resume link and all meeting guests', async () => {
+  const email = await buildScheduledCandidateEmail({
+    ...baseCase,
+    templateId: '2nd-or-Final-invite',
+    stageKey: 'final-interview',
+    resumeLink: 'https://example.com/resume.pdf',
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'jamal@example.com', 'ana@example.com'],
+      attendeeDetails: [
+        { name: 'Alex Reyes', email: 'alex@example.com', role: 'candidate' },
+        { name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+        { name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+      ],
+    },
+  });
+
+  assert.match(email.body, /Resume: https:\/\/example\.com\/resume\.pdf/);
+  assert.match(email.body, /Meeting guests:/);
+  assert.match(email.body, /Alex Reyes: alex@example\.com/);
+  assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);
+  assert.match(email.body, /Ana Cruz: ana@example\.com/);
+});
+
+test('1st interview candidate email includes all meeting guests', async () => {
+  const email = await buildScheduledCandidateEmail({
+    ...baseCase,
+    templateId: '1st-interview-invite',
+    stageKey: '1st-interview',
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'jamal@example.com', 'ana@example.com'],
+      attendeeDetails: [
+        { name: 'Alex Reyes', email: 'alex@example.com', role: 'candidate' },
+        { name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+        { name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+      ],
+    },
+  });
+
+  assert.match(email.body, /Meeting guests:/);
+  assert.match(email.body, /Alex Reyes: alex@example\.com/);
+  assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);
+  assert.match(email.body, /Ana Cruz: ana@example\.com/);
 });
 
 test('scheduled candidate email renders selected duration from stage overrides', async () => {
