@@ -5,6 +5,7 @@ import {
   getHiringManagers,
   getApplicantDetail,
   getTalentRecruiters,
+  getSlackUsers,
   setApplicantDetail,
 } from '../data/cache.js'
 import { searchTimezones } from '../data/timezones.js'
@@ -468,6 +469,7 @@ export function registerSlackHandlers(app, context) {
     const applicant = intakeDraft.applicant;
     const recruiter = intakeDraft.recruiter;
     const hiringManager = intakeDraft.hiringManager;
+    const coordinator = await resolveSlackUser({ client, userId: body.user.id, logger })
     const caseRecord = await store.createCase({
       ownerSlackUserId: body.user.id,
       channelId: getChannelId(body.view) || body.user.id,
@@ -484,6 +486,8 @@ export function registerSlackHandlers(app, context) {
       autofill: {
         zoomLink: recruiter?.zoomLink || '',
         signature: recruiter?.signature || 'Recruitment Team',
+        coordinatorEmail: coordinator?.email || '',
+        coordinatorName: coordinator?.name || '',
       },
     });
 
@@ -952,14 +956,19 @@ export function registerSlackHandlers(app, context) {
       const selectedGuests =
         view.state.values.schedule_guest_block?.schedule_guest_select?.selected_options?.map((option) => findPerson(option.value)?.email) ||
         []
+      const selectedGuestPeople =
+        view.state.values.schedule_guest_block?.schedule_guest_select?.selected_options?.map((option) => findPerson(option.value)).filter(Boolean) ||
+        []
       const zoomLink = view.state.values.schedule_zoom_block?.schedule_zoom_link?.value || caseRecord.autofill?.zoomLink || ''
 
       const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
       const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
       const allAttendees = normalizeAttendees(caseRecord, stageRules)
       const includedEmails = allAttendees.filter((a) => a.included).map((a) => a.email).filter(Boolean)
+      const includedPeople = allAttendees.filter((a) => a.included)
 
       const allAttendeeEmails = [...new Set([...includedEmails, ...selectedGuests])].filter(Boolean)
+      const attendeeDetails = mergeAttendeeDetails([...includedPeople, ...selectedGuestPeople], allAttendeeEmails)
 
       const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
       let startDate, startTime
@@ -999,6 +1008,7 @@ export function registerSlackHandlers(app, context) {
         time: startTime,
         zoomLink,
         attendees: allAttendeeEmails,
+        attendeeDetails,
         eventId: eventResult.eventId,
         htmlLink: eventResult.googleEvent?.htmlLink || null,
       })
@@ -1018,10 +1028,14 @@ export function registerSlackHandlers(app, context) {
 
       const reminderEmail = await buildScheduledCandidateEmail(updated)
       const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store })
+      const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
       await store.updateCase(caseRecord.id, {
         reminderEmail,
         reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
         reminderScheduleVersion: updated.scheduleVersion || 1,
+        attendeeInviteStatus: attendeeInviteResults.length === 0
+          ? 'none'
+          : (attendeeInviteResults.every((result) => result.mocked) ? 'mocked' : 'sent'),
       })
       await store.addAudit({
         caseId: caseRecord.id,
@@ -1029,6 +1043,14 @@ export function registerSlackHandlers(app, context) {
         action: 'reminder_sent',
         scheduleVersion: updated.scheduleVersion || 1,
       })
+      if (attendeeInviteResults.length > 0) {
+        await store.addAudit({
+          caseId: caseRecord.id,
+          actorSlackUserId: body.user.id,
+          action: 'attendee_invites_sent',
+          count: attendeeInviteResults.length,
+        })
+      }
 
       await publishHome({ client, userId: body.user.id, store, logger })
       await client.chat.postMessage({
@@ -1100,7 +1122,12 @@ export function registerSlackHandlers(app, context) {
       .filter((attendee) => attendee.included)
       .map((attendee) => attendee.email)
       .filter(Boolean)
+    const includedPeople = normalizeAttendees(finalCaseRecord, finalizeStageRules).filter((attendee) => attendee.included)
+    const selectedGuestPeople =
+      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)).filter(Boolean) ||
+      []
     const attendees = [...new Set([...includedEmails, ...selectedGuests])]
+    const attendeeDetails = mergeAttendeeDetails([...includedPeople, ...selectedGuestPeople], attendees)
     const scheduleInput = {
       candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
       jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
@@ -1109,6 +1136,7 @@ export function registerSlackHandlers(app, context) {
       durationMinutes,
       zoomLink,
       attendees,
+      attendeeDetails,
       timeZone: interviewTimeZone,
       stageKey: finalizeStageKey,
       templateId: finalCaseRecord.templateId,
@@ -1123,6 +1151,7 @@ export function registerSlackHandlers(app, context) {
         time: converted.time,
         zoomLink,
         attendees,
+        attendeeDetails,
       }),
     }
     const renderedTemplate = await buildScheduledCandidateEmail(previewCaseRecord)
@@ -1198,10 +1227,14 @@ export function registerSlackHandlers(app, context) {
       plainBody: emailBody,
     }
     const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store });
+    const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
     const reminderUpdated = await store.updateCase(caseId, {
       reminderEmail,
       reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
       reminderScheduleVersion: updated.scheduleVersion || 1,
+      attendeeInviteStatus: attendeeInviteResults.length === 0
+        ? 'none'
+        : (attendeeInviteResults.every((result) => result.mocked) ? 'mocked' : 'sent'),
     });
     await store.addAudit({
       caseId,
@@ -1209,6 +1242,14 @@ export function registerSlackHandlers(app, context) {
       action: 'reminder_sent',
       scheduleVersion: reminderUpdated.reminderScheduleVersion,
     });
+    if (attendeeInviteResults.length > 0) {
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'attendee_invites_sent',
+        count: attendeeInviteResults.length,
+      });
+    }
     await publishHome({ client, userId: body.user.id, store, logger });
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
@@ -1651,6 +1692,99 @@ async function buildScheduledCandidateEmail(caseRecord) {
   }
 }
 
+async function sendAttendeeInviteEmails({ config, logger, store, caseRecord }) {
+  const recipients = attendeeInviteRecipients(caseRecord)
+  const results = []
+  for (const attendee of recipients) {
+    const email = buildAttendeeInviteEmail(caseRecord, attendee)
+    const result = await sendRecruiterEmail({ config, logger, caseRecord, email, store })
+    results.push(result)
+  }
+  return results
+}
+
+export function attendeeInviteRecipients(caseRecord) {
+  const schedule = caseRecord.currentSchedule || {}
+  const scheduledEmails = new Set((schedule.attendees || caseRecord.guests || []).map(normalizeEmail).filter(Boolean))
+  const excludedEmails = new Set([
+    normalizeEmail(caseRecord.applicant?.email),
+    normalizeEmail(caseRecord.recruiter?.email),
+  ].filter(Boolean))
+
+  const details = Array.isArray(schedule.attendeeDetails) && schedule.attendeeDetails.length > 0
+    ? schedule.attendeeDetails
+    : normalizeAttendees(caseRecord, resolveStageRules(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId), caseRecord.stageOverrides))
+
+  const byEmail = new Map()
+  for (const attendee of details) {
+    const email = normalizeEmail(attendee.email)
+    if (!email || excludedEmails.has(email)) continue
+    if (scheduledEmails.size > 0 && !scheduledEmails.has(email)) continue
+    byEmail.set(email, {
+      name: attendee.name || attendee.email || 'there',
+      email: attendee.email,
+      role: attendee.positionTitle || attendee.role || 'interviewer',
+    })
+  }
+
+  return [...byEmail.values()]
+}
+
+export function buildAttendeeInviteEmail(caseRecord, attendee) {
+  const schedule = caseRecord.currentSchedule || {}
+  const candidateName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' ') || 'the candidate'
+  const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
+  const subject = `Interview invite: ${candidateName} - ${jobTitle}`
+  const plainBody = [
+    `Hi ${attendee.name || 'there'},`,
+    '',
+    `You are included as an interviewer/attendee for ${candidateName}'s interview for ${jobTitle}.`,
+    '',
+    `Date: ${schedule.date || caseRecord.selectedInterviewDate || 'TBD'}`,
+    `Time: ${schedule.time || caseRecord.selectedInterviewTime || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim(),
+    `Zoom link: ${schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'}`,
+    '',
+    `Recruiter: ${caseRecord.recruiter?.name || ''}${caseRecord.recruiter?.email ? ` (${caseRecord.recruiter.email})` : ''}`.trim(),
+    '',
+    'Thank you.',
+  ].join('\n')
+
+  return {
+    subject,
+    body: plainTextToHtml(plainBody),
+    htmlBody: plainTextToHtml(plainBody),
+    plainBody,
+    to: attendee.email,
+    from: caseRecord.recruiter?.email,
+  }
+}
+
+function mergeAttendeeDetails(people, scheduledEmails) {
+  const emailSet = new Set((scheduledEmails || []).map(normalizeEmail).filter(Boolean))
+  const byEmail = new Map()
+  for (const person of people || []) {
+    const email = normalizeEmail(person?.email)
+    if (!email || !emailSet.has(email)) continue
+    byEmail.set(email, {
+      id: person.id || email,
+      name: person.name || person.email || email,
+      email: person.email,
+      role: person.role || 'attendee',
+      positionTitle: person.positionTitle || person.department || '',
+    })
+  }
+  for (const email of emailSet) {
+    if (!byEmail.has(email)) {
+      byEmail.set(email, { id: email, name: email, email, role: 'attendee', positionTitle: '' })
+    }
+  }
+  return [...byEmail.values()]
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
 function parseViewMetadata(privateMetadata) {
   try {
     return JSON.parse(privateMetadata || '{}')
@@ -1757,8 +1891,27 @@ export function buildTemplateVariables(caseRecord) {
     hiring_manager_name: hiringManagerName,
     position_title: positionTitle,
     schedule_your_interview_here: '',
-    recruiter_phone_line: recruiterPhoneLine(caseRecord.recruiter),
+    recruiter_phone_line: recruiterContactLine(caseRecord),
   };
+}
+
+function recruiterContactLine(caseRecord) {
+  const phoneLine = recruiterPhoneLine(caseRecord.recruiter)
+  if (phoneLine) return phoneLine
+
+  const recruiterName = caseRecord.recruiter?.name || 'Recruiter'
+  const recruiterEmail = caseRecord.recruiter?.email || ''
+  const coordinatorEmail = resolveCoordinatorEmail(caseRecord)
+  return [
+    recruiterEmail ? `${recruiterName}: ${recruiterEmail}` : recruiterName,
+    coordinatorEmail ? `Coordinator: ${coordinatorEmail}` : '',
+  ].filter(Boolean).join(' | ')
+}
+
+function resolveCoordinatorEmail(caseRecord) {
+  if (caseRecord.autofill?.coordinatorEmail) return caseRecord.autofill.coordinatorEmail
+  const ownerId = caseRecord.ownerSlackUserId
+  return getSlackUsers().find((user) => user.slackUserId === ownerId || user.id === ownerId)?.email || ''
 }
 
 export function buildIntakeDraft(values, templates, overrides = {}) {

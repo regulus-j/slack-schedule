@@ -10,7 +10,7 @@ import {
   visibleCaseActions,
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
-import { buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
+import { attendeeInviteRecipients, buildAttendeeInviteEmail, buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
@@ -167,7 +167,8 @@ test('case summaries and progress headers never mention Slack users', () => {
   assert.equal(text.includes('<@'), false);
   assert.match(text, /Jamal Al Badi/);
   assert.match(text, /Ana Cruz/);
-  assert.match(text, /Slack user U-ACTOR/);
+  assert.equal(text.includes('Slack user U-ACTOR'), false);
+  assert.match(text, /by coordinator/);
 });
 
 test('schedule tracker modal renders scheduled case rows with action buttons', () => {
@@ -726,6 +727,47 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.hiring_manager_name, 'Ana Cruz');
   assert.equal(variables.position_title, 'Operations Manager');
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222');
+});
+
+test('buildTemplateVariables falls back to recruiter and coordinator emails without recruiter phone', () => {
+  const variables = buildTemplateVariables({
+    recruiter: {
+      name: 'Jamal Al Badi',
+      email: 'jamal@example.com',
+    },
+    autofill: {
+      coordinatorEmail: 'coordinator@example.com',
+    },
+  });
+
+  assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: jamal@example.com | Coordinator: coordinator@example.com');
+});
+
+test('attendee invite emails are personalized and exclude candidate and recruiter', () => {
+  const caseRecord = {
+    ...baseCase,
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'jamal@example.com', 'ana@example.com'],
+      attendeeDetails: [
+        { name: 'Alex Reyes', email: 'alex@example.com', role: 'candidate' },
+        { name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+        { name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+      ],
+    },
+  };
+
+  const recipients = attendeeInviteRecipients(caseRecord);
+  const email = buildAttendeeInviteEmail(caseRecord, recipients[0]);
+
+  assert.deepEqual(recipients.map((recipient) => recipient.email), ['ana@example.com']);
+  assert.equal(email.to, 'ana@example.com');
+  assert.match(email.plainBody, /Hi Ana Cruz/);
+  assert.match(email.plainBody, /Alex Reyes/);
+  assert.match(email.plainBody, /Support Specialist/);
+  assert.match(email.plainBody, /https:\/\/zoom\.us\/j\/demo/);
 });
 
 test('slack case views hide backend application id and show calendar link', () => {

@@ -20,7 +20,6 @@ export const STATUSES = [
   'Coordinator Review',
   'Checking Availability',
   'Waiting for Candidate',
-  'Calendly Sent',
   'Ready to Schedule',
   'Scheduled',
   'Post-Interview Follow-up',
@@ -34,7 +33,6 @@ const STATUS_EMOJI = {
   'Checking Availability': '🔍',
   'Checking Calendar': '🔍',
   'Waiting for Candidate': '👤',
-  'Calendly Sent': '🔗',
   'Ready to Schedule': '✅',
   'Scheduled': '📅',
   'Post-Interview Follow-up': '🔔',
@@ -50,7 +48,19 @@ function displayStatus(status) {
 }
 
 function statusEmoji(status) {
-  return STATUS_EMOJI[status] || STATUS_EMOJI[displayStatus(status)] || '';
+  const labels = {
+    'Draft': 'draft',
+    'Coordinator Review': 'review',
+    'Checking Availability': 'checking',
+    'Waiting for Candidate': 'candidate',
+    'Ready to Schedule': 'ready',
+    'Scheduled': 'scheduled',
+    'Post-Interview Follow-up': 'follow-up',
+    'Closed': 'closed',
+    'Reschedule Requested': 'reschedule',
+    'Needs Attention': 'attention',
+  }
+  return labels[displayStatus(status)] || 'status';
 }
 
 export function homeView({ myCases, teamCases, googleConnected = false }) {
@@ -819,7 +829,7 @@ function caseSummary(caseRecord) {
   const hiringManager = caseRecord.hiringManager;
   return [
     `*${caseTitle(caseRecord)}*`,
-    `${statusEmoji(caseRecord.status)} Status: *${displayStatus(caseRecord.status)}*`,
+    `Status: *${displayStatus(caseRecord.status)}*`,
     `👤 Applicant: ${applicant ? applicantLabel(applicant) : 'Missing applicant'}`,
     `👥 Recruiter: ${recruiter ? mentionPerson(recruiter) : 'Missing recruiter'}`,
     ...(hiringManager ? [`👤 Hiring Manager: ${mentionPerson(hiringManager)}`] : []),
@@ -1302,11 +1312,11 @@ function formatTimeAgo(isoString) {
 function caseProgressHeader(caseRecord, recentAudits = []) {
   const shownStatus = displayStatus(caseRecord.status)
   const statusIndex = STATUSES.indexOf(shownStatus)
-  const emoji = statusEmoji(caseRecord.status)
+  const indicator = statusEmoji(caseRecord.status)
   const stepLabel = statusIndex >= 0 ? `(step ${statusIndex + 1} of ${STATUSES.length})` : ''
   const statusText = stepLabel
-    ? `${emoji} *Status: ${shownStatus}*  ${stepLabel}`
-    : `${emoji} *Status: ${shownStatus}*`
+    ? `*Status:* ${shownStatus}  \`${indicator}\` ${stepLabel}`
+    : `*Status:* ${shownStatus}  \`${indicator}\``
 
   const blocks = [
     { type: 'section', text: { type: 'mrkdwn', text: statusText } },
@@ -1314,7 +1324,7 @@ function caseProgressHeader(caseRecord, recentAudits = []) {
 
   if (recentAudits.length > 0) {
     const last = recentAudits[0]
-    const actorRef = last.actorSlackUserId ? `Slack user ${last.actorSlackUserId}` : 'system'
+    const actorRef = last.actorSlackUserId ? 'coordinator' : 'system'
     const elements = [
       { type: 'mrkdwn', text: `📝 *Last:* ${formatActionLabel(last.action)} by ${actorRef} • ${formatTimeAgo(last.at)}` },
     ]
