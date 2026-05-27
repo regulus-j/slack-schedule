@@ -78,9 +78,24 @@ export function mergeRecruiterPhones(recruiters, phoneRows) {
   })
 }
 
+export function recruiterRowsToPeople(phoneRows) {
+  return phoneRows.map((row) => ({
+    id: `sheet-rec-${stableId(row.email || row.legalName || row.name)}`,
+    name: row.name || row.legalName || row.email,
+    email: row.email || '',
+    role: 'recruiter',
+    slackUserId: '',
+    positionTitle: row.designation || '',
+    department: 'Recruitment',
+    phone: row.phone || '',
+    zoomLink: row.zoomLink || '',
+    source: 'google_apps_script',
+  }))
+}
+
 export function recruiterPhoneLine(recruiter) {
   const name = clean(recruiter?.name)
-  const phone = clean(recruiter?.phone)
+  const phone = cleanPhone(recruiter?.phone)
   return name && phone ? `${name}: ${phone}` : ''
 }
 
@@ -90,4 +105,16 @@ function normalizeName(value) {
 
 function clean(value) {
   return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function cleanPhone(value) {
+  const cleaned = clean(value)
+  return cleaned === '-' ? '' : cleaned
+}
+
+function stableId(value) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'unknown'
 }

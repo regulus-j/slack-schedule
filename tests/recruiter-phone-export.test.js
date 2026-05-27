@@ -4,6 +4,7 @@ import {
   mergeRecruiterPhones,
   normalizeRecruiterPhoneRow,
   recruiterPhoneLine,
+  recruiterRowsToPeople,
 } from '../src/services/recruiter-phone-export.js'
 
 test('normalizeRecruiterPhoneRow uses exact Apps Script export headers', () => {
@@ -72,4 +73,26 @@ test('recruiterPhoneLine renders exact email format', () => {
     'Christiana Dela Cruz: +63 900 111 2222',
   )
   assert.equal(recruiterPhoneLine({ name: 'Christiana Dela Cruz' }), '')
+  assert.equal(recruiterPhoneLine({ name: 'Aki Zita', phone: '-' }), '')
+})
+
+test('recruiterRowsToPeople maps Apps Script rows into primary recruiter records', () => {
+  const people = recruiterRowsToPeople([
+    normalizeRecruiterPhoneRow({
+      'First Name': 'Armi',
+      'Last Name': 'Escamilla',
+      'Preferred Name': 'Armi',
+      Designation: 'Senior Recruiter',
+      'Aircall ': '0480002413/ 0489275966',
+      'Work Email': 'armi@freedompropertyinvestors.com.au',
+      'Personal Zoom Link': 'https://freedompropertyinvestors-au.zoom.us/my/armi.escamilla',
+    }),
+  ])
+
+  assert.equal(people[0].name, 'Armi Escamilla')
+  assert.equal(people[0].email, 'armi@freedompropertyinvestors.com.au')
+  assert.equal(people[0].role, 'recruiter')
+  assert.equal(people[0].positionTitle, 'Senior Recruiter')
+  assert.equal(people[0].phone, '0480002413/ 0489275966')
+  assert.equal(people[0].zoomLink, 'https://freedompropertyinvestors-au.zoom.us/my/armi.escamilla')
 })
