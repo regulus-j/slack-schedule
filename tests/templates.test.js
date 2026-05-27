@@ -83,6 +83,7 @@ test('signedEmailBodiesFromPlainText appends plain signature and restores HTML s
   assert.match(email.plainBody, /Outsourced Pro Global Limited/)
   assert.match(email.plainBody, /IMPORTANT: The contents of this email/)
   assert.match(email.htmlBody, /Hi Alex/)
+  assert.match(email.htmlBody, /^<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">/)
   assert.match(email.htmlBody, /<table/)
   assert.match(email.htmlBody, /cid:opg-logo/)
   assert.match(email.htmlBody, /IMPORTANT: The contents of this email/)

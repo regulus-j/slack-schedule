@@ -164,11 +164,20 @@ export function ensureSignaturePlainText(text) {
 function signedPlainTextToHtml(text) {
   const body = String(text || '').trim()
   const signature = signaturePlainText()
+  let innerHtml
   if (body.endsWith(signature)) {
     const content = body.slice(0, -signature.length).trim()
-    return [plainTextToHtml(content), generateSignatureHTML()].filter(Boolean).join('\n')
+    innerHtml = [plainTextToHtml(content), generateSignatureHTML()].filter(Boolean).join('\n')
+  } else {
+    innerHtml = plainTextToHtml(body)
   }
-  return plainTextToHtml(body)
+  return wrapEmailHtml(innerHtml)
+}
+
+function wrapEmailHtml(html) {
+  const value = String(html || '').trim()
+  if (/^<html[\s>]/i.test(value)) return value
+  return `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">\n${value}\n</body></html>`
 }
 
 function hasPlainSignature(text) {
