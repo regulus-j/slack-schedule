@@ -265,6 +265,8 @@ export function candidateMessageModal({
 
 export function finalizeModal(caseRecord, recentAudits = []) {
   const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
+  const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
+  const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
   const referenceDate = resolveReferenceDate(caseRecord)
   const timeOptions = buildPhTimeOptions({ referenceDate, interviewTimeZone })
   const zoomLink = resolveCaseZoomLink(caseRecord)
@@ -281,6 +283,20 @@ export function finalizeModal(caseRecord, recentAudits = []) {
       section(`*${caseTitle(caseRecord)}*`),
       section(`🕐 Times shown in PH (${PH_TIME_ZONE}). Interview timezone: ${interviewTimeZone}.`),
       section('📝 Calendar descriptions are generated automatically from the date, time, attendees, and Zoom link.'),
+      input('Stage', 'stage_block', {
+        type: 'static_select',
+        action_id: 'stage_select',
+        placeholder: plain('Select interview stage'),
+        options: stageSelectOptions(stageKey),
+        initial_option: stageSelectOption(stageKey),
+      }),
+      input('Duration', 'duration_block', {
+        type: 'static_select',
+        action_id: 'duration_select',
+        placeholder: plain('Select duration'),
+        options: durationSelectOptions(stageRules.typicalDurationMinutes),
+        initial_option: durationSelectOption(stageRules.typicalDurationMinutes),
+      }),
       input('Interview date', 'date_block', {
         type: 'datepicker',
         action_id: 'date',
@@ -1097,7 +1113,10 @@ function intakeStageOptions() {
 }
 
 function durationSelectOptions(currentMinutes) {
-  const options = [15, 30, 45, 60]
+  const options = []
+  for (let minutes = 10; minutes <= 60; minutes += 5) {
+    options.push(minutes)
+  }
   return options.map((m) => ({
     text: plain(`${m} min`),
     value: String(m)

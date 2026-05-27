@@ -11,7 +11,7 @@ import {
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
 import { buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
-import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -232,6 +232,35 @@ test('finalize modal direct schedule time options start at 7 AM and end before 4
 
   assert.equal(options[0].value, '07:00');
   assert.equal(options[options.length - 1].value, '15:30');
+});
+
+test('finalize modal includes stage and duration workflow controls', () => {
+  const view = finalizeModal({
+    ...baseCase,
+    stageKey: '2nd-interview',
+    stageOverrides: { durationMinutes: 45 },
+  });
+  const stageBlock = view.blocks.find((block) => block.block_id === 'stage_block');
+  const durationBlock = view.blocks.find((block) => block.block_id === 'duration_block');
+  const durationValues = durationBlock.element.options.map((option) => option.value);
+
+  assert.equal(stageBlock.element.initial_option.value, '2nd-interview');
+  assert.equal(durationBlock.element.initial_option.value, '45');
+  assert.deepEqual(durationValues, ['10', '15', '20', '25', '30', '35', '40', '45', '50', '55', '60']);
+});
+
+test('schedule modal duration options run from 10 to 60 minutes by five', () => {
+  const view = schedulingModal(baseCase, {
+    stageRules: { typicalDurationMinutes: 30 },
+    attendees: [],
+    stageKey: '1st-interview',
+  });
+  const durationBlock = view.blocks.find((block) => block.block_id === 'duration_block');
+
+  assert.deepEqual(
+    durationBlock.element.options.map((option) => option.value),
+    ['10', '15', '20', '25', '30', '35', '40', '45', '50', '55', '60'],
+  );
 });
 
 test('finalize email preview modal shows formatted email before creating invite', () => {

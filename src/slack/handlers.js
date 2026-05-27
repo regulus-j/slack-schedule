@@ -271,6 +271,15 @@ export function registerSlackHandlers(app, context) {
 
   app.action('stage_select', async ({ ack, body, client }) => {
     await ack()
+    if (body.view?.callback_id === 'scheduling_phase_one') {
+      await refreshSchedulingModal({
+        client,
+        body,
+        store,
+        selectedStageKey: selectedOptionValue(body),
+      })
+      return
+    }
     if (body.view?.callback_id !== 'schedule_intake_submit') return
     await refreshIntakeModal({
       client,
@@ -1071,29 +1080,42 @@ export function registerSlackHandlers(app, context) {
       toTimeZone: interviewTimeZone,
     })
     const selectedGuests =
-      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email) ||
-      [];
-    const attendees = [
-      caseRecord.applicant?.email,
-      caseRecord.recruiter?.email,
-      caseRecord.hiringManager?.email,
-      ...selectedGuests,
-    ].filter(Boolean);
-
-    const finalizeStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
-    const finalizeStageRules = resolveStageRules(finalizeStageKey, caseRecord.stageOverrides)
+      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email).filter(Boolean) ||
+      []
+    const finalizeStageKey = normalizeStageKey(
+      view.state.values.stage_block?.stage_select?.selected_option?.value ||
+      caseRecord.stageKey ||
+      resolveStageFromTemplate(caseRecord.templateId)
+    ) || '1st-interview'
+    const durationMinutes = Number(view.state.values.duration_block?.duration_select?.selected_option?.value || 30)
+    const stageOverrides = { ...caseRecord.stageOverrides, durationMinutes }
+    const finalizeStageRules = resolveStageRules(finalizeStageKey, stageOverrides)
+    const finalCaseRecord = {
+      ...caseRecord,
+      stageKey: finalizeStageKey,
+      templateId: resolveTemplateFromStage(finalizeStageKey) || caseRecord.templateId,
+      stageOverrides,
+    }
+    const includedEmails = normalizeAttendees(finalCaseRecord, finalizeStageRules)
+      .filter((attendee) => attendee.included)
+      .map((attendee) => attendee.email)
+      .filter(Boolean)
+    const attendees = [...new Set([...includedEmails, ...selectedGuests])]
     const scheduleInput = {
       candidateName: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
       jobTitle: caseRecord.applicant?.jobTitle || 'Interview',
       startDate: converted.date,
       startTime: converted.time,
-      durationMinutes: finalizeStageRules.typicalDurationMinutes,
+      durationMinutes,
       zoomLink,
       attendees,
       timeZone: interviewTimeZone,
+      stageKey: finalizeStageKey,
+      templateId: finalCaseRecord.templateId,
+      stageOverrides,
     }
     const previewCaseRecord = {
-      ...caseRecord,
+      ...finalCaseRecord,
       selectedInterviewDate: converted.date,
       selectedInterviewTime: converted.time,
       currentSchedule: buildScheduleSnapshot({
@@ -1108,7 +1130,7 @@ export function registerSlackHandlers(app, context) {
     await ack({
       response_action: 'update',
       view: finalizeEmailPreviewModal({
-        caseRecord,
+        caseRecord: previewCaseRecord,
         scheduleInput,
         renderedTemplate,
         recentAudits,
@@ -1132,10 +1154,16 @@ export function registerSlackHandlers(app, context) {
     }
 
     await ack()
+    const finalCaseRecord = {
+      ...caseRecord,
+      stageKey: scheduleInput.stageKey || caseRecord.stageKey,
+      templateId: scheduleInput.templateId || caseRecord.templateId,
+      stageOverrides: scheduleInput.stageOverrides || caseRecord.stageOverrides || {},
+    }
     const eventResult = await createCalendarEvent({
       config,
       logger,
-      caseRecord,
+      caseRecord: finalCaseRecord,
       store,
       eventInput: scheduleInput,
     });
@@ -1148,7 +1176,12 @@ export function registerSlackHandlers(app, context) {
       eventId: eventResult.eventId,
       htmlLink: eventResult.googleEvent?.htmlLink || null,
     });
-    const updated = await store.updateCase(caseId, applyScheduledEvent(caseRecord, eventResult, scheduleSnapshot));
+    const updated = await store.updateCase(caseId, {
+      ...applyScheduledEvent(finalCaseRecord, eventResult, scheduleSnapshot),
+      stageKey: finalCaseRecord.stageKey,
+      templateId: finalCaseRecord.templateId,
+      stageOverrides: finalCaseRecord.stageOverrides,
+    });
     await store.addAudit({
       caseId,
       actorSlackUserId: body.user.id,
@@ -1534,6 +1567,53 @@ async function refreshIntakeModal({
       private_metadata: privateMetadata,
     },
   });
+}
+
+async function refreshSchedulingModal({ client, body, store, selectedStageKey }) {
+  if (!body.view?.id || !body.view?.hash) return
+  let metadata = {}
+  try {
+    metadata = JSON.parse(body.view.private_metadata || '{}')
+  } catch (_) {
+    metadata = { caseId: body.view.private_metadata }
+  }
+
+  const caseRecord = await requireCase(store, metadata.caseId)
+  const stageKey = normalizeStageKey(selectedStageKey || caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
+  const durationMinutes = Number(
+    body.view.state.values.duration_block?.duration_select?.selected_option?.value ||
+    caseRecord.stageOverrides?.durationMinutes ||
+    resolveStageRules(stageKey).typicalDurationMinutes
+  )
+  const stageOverrides = { ...(metadata.stageOverrides || {}), durationMinutes }
+  const stageRules = resolveStageRules(stageKey, stageOverrides)
+  const updatedRecord = {
+    ...caseRecord,
+    stageKey,
+    templateId: resolveTemplateFromStage(stageKey) || caseRecord.templateId,
+    stageOverrides,
+    interviewWindowStartDate:
+      body.view.state.values.schedule_window_start_block?.schedule_window_start?.selected_date ||
+      caseRecord.interviewWindowStartDate,
+    interviewWindowEndDate:
+      body.view.state.values.schedule_window_end_block?.schedule_window_end?.selected_date ||
+      caseRecord.interviewWindowEndDate,
+    externalAttendees: metadata.externalAttendees || caseRecord.externalAttendees || [],
+  }
+  const attendees = normalizeAttendees(updatedRecord, stageRules)
+  const recentAudits = await store.listAudits(caseRecord.id, 5)
+
+  await client.views.update({
+    view_id: body.view.id,
+    hash: body.view.hash,
+    view: schedulingModal(updatedRecord, {
+      phase: 1,
+      stageRules,
+      attendees,
+      stageKey,
+      externalAttendees: updatedRecord.externalAttendees,
+    }, recentAudits),
+  })
 }
 
 async function publishHome({ client, userId, store, logger }) {
