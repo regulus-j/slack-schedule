@@ -107,7 +107,12 @@ export async function createCalendarEvent({ config, logger, caseRecord, eventInp
 
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error?.message || payload.error_description || 'Google Calendar event creation failed');
+    throw googleCalendarRequestError({
+      action: 'create',
+      payload,
+      status: response.status,
+      calendarId: config.google.sharedCalendarId,
+    });
   }
 
   return { mocked: false, eventId: payload.id, eventDraft, googleEvent: payload };
@@ -147,7 +152,12 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
 
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error?.message || payload.error_description || 'Google Calendar event update failed');
+    throw googleCalendarRequestError({
+      action: 'update',
+      payload,
+      status: response.status,
+      calendarId: config.google.sharedCalendarId,
+    });
   }
 
   return { mocked: false, eventId: payload.id || eventId, eventDraft, googleEvent: payload };
@@ -239,6 +249,15 @@ function buildAuthHeaders(accessToken) {
     authorization: `Bearer ${accessToken}`,
     'content-type': 'application/json',
   };
+}
+
+function googleCalendarRequestError({ action, payload, status, calendarId }) {
+  const googleMessage = payload.error?.message || payload.error_description || ''
+  const operation = action === 'update' ? 'update' : 'create'
+  const calendarHint = status === 404
+    ? ` Calendar ID "${calendarId || '(missing)'}" was not found or is not shared with the connected Google account.`
+    : ''
+  return new Error(`Google Calendar event ${operation} failed${googleMessage ? `: ${googleMessage}` : ''}.${calendarHint}`.trim())
 }
 
 export function buildGmailRawMessage(email) {

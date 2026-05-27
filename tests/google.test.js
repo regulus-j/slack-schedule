@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGmailRawMessage, buildGoogleOAuthUrl, checkFreeBusy, getRecruiterId } from '../src/services/google.js';
+import { buildGmailRawMessage, buildGoogleOAuthUrl, checkFreeBusy, createCalendarEvent, getRecruiterId } from '../src/services/google.js';
 import { homeView } from '../src/slack/views.js';
 
 test('builds a recruiter-scoped google oauth url', () => {
@@ -110,6 +110,51 @@ test('checkFreeBusy sends explicit timeMin and timeMax windows', async () => {
     assert.equal(requestBody.timeMin, '2026-06-01T00:00:00.000Z');
     assert.equal(requestBody.timeMax, '2026-06-02T00:00:00.000Z');
     assert.deepEqual(requestBody.items, [{ id: 'alex@example.com' }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('createCalendarEvent explains missing shared calendar access', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 404,
+    async json() {
+      return { error: { message: 'Not Found' } };
+    },
+  });
+
+  try {
+    await assert.rejects(
+      createCalendarEvent({
+        config: {
+          google: {
+            clientId: 'client-id',
+            clientSecret: 'client-secret',
+            redirectUri: 'https://example.com/oauth',
+            sharedCalendarId: 'bad-calendar@example.com',
+          },
+        },
+        logger: { warn() {} },
+        caseRecord: { id: 'case-1', ownerSlackUserId: 'U123' },
+        eventInput: {
+          candidateName: 'Alex Reyes',
+          jobTitle: 'Support Specialist',
+          startDate: '2026-06-01',
+          startTime: '09:00',
+          durationMinutes: 30,
+          attendees: ['alex@example.com'],
+          timeZone: 'Asia/Manila',
+        },
+        store: {
+          async getGoogleToken() {
+            return { access_token: 'token' };
+          },
+        },
+      }),
+      /Calendar ID "bad-calendar@example\.com" was not found or is not shared/,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
