@@ -8,6 +8,8 @@ Body:
 
 <p>[hiring_manager_name], our [position_title], will meet with you via Zoom.</p>
 
+<p>This interview is scheduled for [interview_duration_text].</p>
+
 <p><strong>Here are the details:</strong><br>
 Date: [Date]<br>
 Time: [Time] [Timezone]<br>

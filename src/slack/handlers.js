@@ -499,11 +499,18 @@ export function registerSlackHandlers(app, context) {
       stageKey,
     });
 
-    await client.chat.postMessage({
+    const caseMessage = await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
-      text: '✅ Scheduling case created',
+      text: 'Scheduling case created',
       blocks: caseMessageBlocks(caseRecord),
     });
+    await store.updateCase(caseRecord.id, {
+      autofill: {
+        ...(caseRecord.autofill || {}),
+        caseMessageTs: caseMessage.ts,
+        caseMessageChannel: caseMessage.channel,
+      },
+    })
     await publishHome({ client, userId: body.user.id, store, logger });
   });
 
@@ -629,7 +636,11 @@ export function registerSlackHandlers(app, context) {
     await ack();
     const caseId = view.private_metadata;
     const caseRecord = await requireCase(store, caseId);
-    if (caseRecord.reminderStatus === 'sent' && caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion) {
+    if (
+      caseRecord.reminderEmail?.kind === 'manual_reminder' &&
+      caseRecord.reminderStatus === 'sent' &&
+      caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion
+    ) {
       await client.chat.postMessage({
         channel: resolvePostingChannel(config, body.user.id),
         text: `⚠️ A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
@@ -639,6 +650,7 @@ export function registerSlackHandlers(app, context) {
     const plainBody = view.state.values.email_body_block.email_body.value || '';
     const htmlBody = plainTextToHtml(plainBody);
     const email = {
+      kind: 'manual_reminder',
       subject: view.state.values.email_subject_block.email_subject.value,
       body: htmlBody,
       htmlBody,
@@ -1009,6 +1021,7 @@ export function registerSlackHandlers(app, context) {
         zoomLink,
         attendees: allAttendeeEmails,
         attendeeDetails,
+        durationMinutes: stageRules.typicalDurationMinutes,
         eventId: eventResult.eventId,
         htmlLink: eventResult.googleEvent?.htmlLink || null,
       })
@@ -1026,13 +1039,12 @@ export function registerSlackHandlers(app, context) {
         via: slotValue ? 'slot_selection' : 'manual_entry'
       })
 
-      const reminderEmail = await buildScheduledCandidateEmail(updated)
-      const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store })
+      const scheduledCandidateEmail = await buildScheduledCandidateEmail(updated)
+      const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store })
       const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
       await store.updateCase(caseRecord.id, {
-        reminderEmail,
-        reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
-        reminderScheduleVersion: updated.scheduleVersion || 1,
+        candidateEmail: scheduledCandidateEmail,
+        gmailSendStatus: candidateEmailResult.mocked ? 'mocked' : 'sent',
         attendeeInviteStatus: attendeeInviteResults.length === 0
           ? 'none'
           : (attendeeInviteResults.every((result) => result.mocked) ? 'mocked' : 'sent'),
@@ -1040,7 +1052,7 @@ export function registerSlackHandlers(app, context) {
       await store.addAudit({
         caseId: caseRecord.id,
         actorSlackUserId: body.user.id,
-        action: 'reminder_sent',
+        action: 'scheduled_candidate_invite_sent',
         scheduleVersion: updated.scheduleVersion || 1,
       })
       if (attendeeInviteResults.length > 0) {
@@ -1053,17 +1065,23 @@ export function registerSlackHandlers(app, context) {
       }
 
       await publishHome({ client, userId: body.user.id, store, logger })
-      await client.chat.postMessage({
-        channel: resolvePostingChannel(config, body.user.id),
-        text: '📅 Interview scheduled',
+      await postCaseThreadMessage({
+        client,
+        config,
+        body,
+        store,
+        caseRecord: updated,
+        text: 'Interview scheduled',
         blocks: caseMessageBlocks(updated),
+        saveAsScheduledMessage: true,
       })
+      return;
     } catch (error) {
       logger.error('scheduling_confirm_error', { error: error.message })
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.user.id),
         user: body.user.id,
-        text: `❌ Could not schedule interview: ${error.message}`
+        text: `Could not schedule interview: ${error.message}`
       })
     }
   })
@@ -1152,6 +1170,7 @@ export function registerSlackHandlers(app, context) {
         zoomLink,
         attendees,
         attendeeDetails,
+        durationMinutes,
       }),
     }
     const renderedTemplate = await buildScheduledCandidateEmail(previewCaseRecord)
@@ -1202,6 +1221,8 @@ export function registerSlackHandlers(app, context) {
       time: scheduleInput.startTime,
       zoomLink: scheduleInput.zoomLink,
       attendees: scheduleInput.attendees,
+      attendeeDetails: scheduleInput.attendeeDetails,
+      durationMinutes: scheduleInput.durationMinutes,
       eventId: eventResult.eventId,
       htmlLink: eventResult.googleEvent?.htmlLink || null,
     });
@@ -1220,18 +1241,17 @@ export function registerSlackHandlers(app, context) {
 
     const emailSubject = view.state.values.email_subject_block.email_subject.value
     const emailBody = view.state.values.email_body_block.email_body.value
-    const reminderEmail = {
+    const scheduledCandidateEmail = {
       ...(await buildScheduledCandidateEmail(updated)),
       subject: emailSubject,
       body: plainTextToHtml(emailBody),
       plainBody: emailBody,
     }
-    const reminderResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: reminderEmail, store });
+    const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store });
     const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
     const reminderUpdated = await store.updateCase(caseId, {
-      reminderEmail,
-      reminderStatus: reminderResult.mocked ? 'mocked' : 'sent',
-      reminderScheduleVersion: updated.scheduleVersion || 1,
+      candidateEmail: scheduledCandidateEmail,
+      gmailSendStatus: candidateEmailResult.mocked ? 'mocked' : 'sent',
       attendeeInviteStatus: attendeeInviteResults.length === 0
         ? 'none'
         : (attendeeInviteResults.every((result) => result.mocked) ? 'mocked' : 'sent'),
@@ -1239,8 +1259,8 @@ export function registerSlackHandlers(app, context) {
     await store.addAudit({
       caseId,
       actorSlackUserId: body.user.id,
-      action: 'reminder_sent',
-      scheduleVersion: reminderUpdated.reminderScheduleVersion,
+      action: 'scheduled_candidate_invite_sent',
+      scheduleVersion: reminderUpdated.scheduleVersion || 1,
     });
     if (attendeeInviteResults.length > 0) {
       await store.addAudit({
@@ -1251,11 +1271,16 @@ export function registerSlackHandlers(app, context) {
       });
     }
     await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: '📅 Interview scheduled',
+    await postCaseThreadMessage({
+      client,
+      config,
+      body,
+      store,
+      caseRecord: reminderUpdated,
+      text: 'Interview scheduled',
       blocks: caseMessageBlocks(reminderUpdated),
-    });
+      saveAsScheduledMessage: true,
+    })
   });
 
   app.view('schedule_tracker_submit', async ({ ack, body, view }) => {
@@ -1348,8 +1373,13 @@ export function registerSlackHandlers(app, context) {
       zoomLink: view.state.values.zoom_block.zoom_link.value,
       note: view.state.values.candidate_note_block.candidate_note.value || '',
       attendees,
+      durationMinutes: resolveStageRules(
+        normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview',
+        caseRecord.stageOverrides,
+      ).typicalDurationMinutes,
     };
     const email = buildRescheduleEmail(caseRecord, request);
+    email.cc = ccRecipientsFromAttendees(caseRecord, request.attendees)
     request.email = email;
 
     const updated = await store.updateCase(caseId, applyRescheduleRequest(caseRecord, request));
@@ -1435,28 +1465,40 @@ export function registerSlackHandlers(app, context) {
       });
     }
     await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: '🔄 Interview rescheduled',
+    await postCaseThreadMessage({
+      client,
+      config,
+      body,
+      store,
+      caseRecord: updated,
+      text: 'Interview rescheduled',
       blocks: caseMessageBlocks(updated),
-    });
+    })
   });
 
   app.action('cancel_interview', async ({ ack, body, client }) => {
     await ack();
+    if (!await verifyChannel({ config, body, client })) return
     const caseRecord = await requireCase(store, body.actions[0].value);
     const updated = await store.updateCase(caseRecord.id, applyCancelledInterview(caseRecord, body.user.id));
+    const cancellationEmail = buildCancellationEmail(updated)
+    const cancellationResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: cancellationEmail, store })
     await store.addAudit({
       caseId: caseRecord.id,
       actorSlackUserId: body.user.id,
       action: 'reschedule_cancelled',
+      cancellationEmailStatus: cancellationResult.mocked ? 'mocked' : 'sent',
     });
     await publishHome({ client, userId: body.user.id, store, logger });
-    await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.user.id),
-      text: '⚠️ Interview marked as needing attention. Calendar cancellation is not automatic yet.',
+    await postCaseThreadMessage({
+      client,
+      config,
+      body,
+      store,
+      caseRecord: updated,
+      text: 'Interview cancelled. Cancellation email sent. Calendar cancellation is not automatic yet.',
       blocks: caseMessageBlocks(updated),
-    });
+    })
   });
 
   app.action('view_calendar_details', async ({ ack, body, client }) => {
@@ -1481,6 +1523,45 @@ export function registerSlackHandlers(app, context) {
       text: lines.join('\n'),
     });
   });
+}
+
+async function postCaseThreadMessage({
+  client,
+  config,
+  body,
+  store,
+  caseRecord,
+  text,
+  blocks,
+  saveAsScheduledMessage = false,
+}) {
+  const fallbackChannel = body.channel?.id || body.user?.id || body.user_id || caseRecord.channelId || caseRecord.ownerSlackUserId
+  const channel =
+    caseRecord.autofill?.scheduledMessageChannel ||
+    caseRecord.autofill?.caseMessageChannel ||
+    resolvePostingChannel(config, fallbackChannel)
+  const threadTs = saveAsScheduledMessage
+    ? null
+    : (caseRecord.autofill?.scheduledMessageTs || caseRecord.autofill?.caseMessageTs || body.message?.ts || null)
+
+  const result = await client.chat.postMessage({
+    channel,
+    text,
+    blocks,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+  })
+
+  if (saveAsScheduledMessage && result?.ts) {
+    await store.updateCase(caseRecord.id, {
+      autofill: {
+        ...(caseRecord.autofill || {}),
+        scheduledMessageTs: result.ts,
+        scheduledMessageChannel: result.channel || channel,
+      },
+    })
+  }
+
+  return result
 }
 
 async function openIntakeModal({
@@ -1693,11 +1774,51 @@ export async function buildScheduledCandidateEmail(caseRecord) {
   }
 }
 
+export function buildCancellationEmail(caseRecord) {
+  const schedule = caseRecord.currentSchedule || {}
+  const candidateName = caseRecord.applicant?.firstName || 'there'
+  const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
+  const scheduleLines = [
+    `Date: ${schedule.date || caseRecord.selectedInterviewDate || 'TBD'}`,
+    `Time: ${schedule.time || caseRecord.selectedInterviewTime || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim(),
+    `Zoom link: ${schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'}`,
+  ]
+  const plainBody = [
+    `Hi ${candidateName},`,
+    '',
+    `Your interview for ${jobTitle} has been cancelled.`,
+    '',
+    'Cancelled interview details:',
+    ...scheduleLines,
+    '',
+    `If you have any questions, please contact ${caseRecord.recruiter?.name || 'your recruiter'}.`,
+  ].join('\n')
+
+  return {
+    subject: `Interview cancelled: ${jobTitle}`,
+    body: plainTextToHtml(plainBody),
+    htmlBody: plainTextToHtml(plainBody),
+    plainBody,
+    to: caseRecord.applicant?.email,
+    cc: ccRecipientsFromAttendees(caseRecord, schedule.attendees || caseRecord.guests || []),
+    from: caseRecord.recruiter?.email,
+  }
+}
+
 function candidateInviteCcRecipients(caseRecord) {
   const candidateEmail = normalizeEmail(caseRecord.applicant?.email)
   const emails = [
     caseRecord.recruiter?.email,
     ...attendeeInviteRecipients(caseRecord).map((attendee) => attendee.email),
+  ]
+  return [...new Set(emails.map(normalizeEmail).filter((email) => email && email !== candidateEmail))]
+}
+
+export function ccRecipientsFromAttendees(caseRecord, attendees = []) {
+  const candidateEmail = normalizeEmail(caseRecord.applicant?.email)
+  const emails = [
+    caseRecord.recruiter?.email,
+    ...(attendees || []),
   ]
   return [...new Set(emails.map(normalizeEmail).filter((email) => email && email !== candidateEmail))]
 }
@@ -1885,6 +2006,7 @@ export function buildTemplateVariables(caseRecord) {
   const positionTitle = caseRecord.hiringManager?.positionTitle || '';
   const resolvedStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId));
   const interviewStage = stageLabel(resolvedStageKey);
+  const interviewDurationMinutes = resolveInterviewDurationMinutes(caseRecord, resolvedStageKey);
 
   return {
     applicant_first_name: caseRecord.applicant?.firstName || '',
@@ -1900,9 +2022,28 @@ export function buildTemplateVariables(caseRecord) {
     Link: link,
     hiring_manager_name: hiringManagerName,
     position_title: positionTitle,
+    interview_duration_minutes: String(interviewDurationMinutes),
+    interview_duration_text: formatInterviewDuration(interviewDurationMinutes),
     schedule_your_interview_here: '',
     recruiter_phone_line: recruiterContactLine(caseRecord),
   };
+}
+
+function resolveInterviewDurationMinutes(caseRecord, stageKey) {
+  const currentScheduleDuration = Number(caseRecord.currentSchedule?.durationMinutes)
+  if (Number.isFinite(currentScheduleDuration) && currentScheduleDuration > 0) return currentScheduleDuration
+
+  const selectedDuration = Number(caseRecord.stageOverrides?.durationMinutes)
+  if (Number.isFinite(selectedDuration) && selectedDuration > 0) return selectedDuration
+
+  return resolveStageRules(stageKey || '1st-interview', caseRecord.stageOverrides).typicalDurationMinutes
+}
+
+function formatInterviewDuration(minutes) {
+  const normalized = Number(minutes)
+  if (!Number.isFinite(normalized) || normalized <= 0) return '30-minute'
+  if (normalized === 60) return '1-hour'
+  return `${normalized}-minute`
 }
 
 function recruiterContactLine(caseRecord) {

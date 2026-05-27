@@ -6,6 +6,9 @@ export function buildRescheduleEmail(caseRecord, request) {
   const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
   const reasonLine = request.reason ? `<p><strong>Reason:</strong> ${request.reason}</p>` : ''
   const noteLine = request.note ? `<p><strong>Additional note:</strong> ${request.note}</p>` : ''
+  const durationText = formatEmailDuration(request.durationMinutes || caseRecord.currentSchedule?.durationMinutes)
+  const durationHtmlLine = durationText ? `Duration: ${durationText}<br>` : ''
+  const durationPlainLine = durationText ? [`Duration: ${durationText}`] : []
 
   const signatureHtml = generateSignatureHTML()
 
@@ -17,6 +20,7 @@ export function buildRescheduleEmail(caseRecord, request) {
     `<p><strong>New interview details:</strong><br>`,
     `Date: ${request.date}<br>`,
     `Time: ${request.time} ${caseRecord.interviewTimezone || ''}<br>`,
+    durationHtmlLine,
     `Zoom Link: <a href="${request.zoomLink}">${request.zoomLink}</a></p>`,
     noteLine,
     `<p>Please let us know if this updated schedule works well for you.</p>`,
@@ -34,6 +38,7 @@ export function buildRescheduleEmail(caseRecord, request) {
     'New interview details:',
     `Date: ${request.date}`,
     `Time: ${request.time} ${caseRecord.interviewTimezone || ''}`,
+    ...durationPlainLine,
     `Zoom Link: ${request.zoomLink}`,
     '',
     request.note ? `Additional note: ${request.note}` : '',
@@ -57,6 +62,9 @@ export function buildReminderEmail(caseRecord) {
   const candidateName = caseRecord.applicant?.firstName || 'there'
   const currentSchedule = caseRecord.currentSchedule || {}
   const jobTitle = caseRecord.applicant?.jobTitle || 'Interview'
+  const durationText = formatEmailDuration(currentSchedule.durationMinutes)
+  const durationHtmlLine = durationText ? `Duration: ${durationText}<br>` : ''
+  const durationPlainLine = durationText ? [`Duration: ${durationText}`] : []
 
   const signatureHtml = generateSignatureHTML()
 
@@ -67,6 +75,7 @@ export function buildReminderEmail(caseRecord) {
     `<p><strong>Interview details:</strong><br>`,
     `Date: ${currentSchedule.date || '[date]'}<br>`,
     `Time: ${currentSchedule.time || '[time]'} ${caseRecord.interviewTimezone || ''}<br>`,
+    durationHtmlLine,
     `Zoom Link: <a href="${currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '#'}">${currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '[zoom_link]'}</a></p>`,
     `<p>Please let us know if you need any support before the interview.</p>`,
     signatureHtml,
@@ -81,6 +90,7 @@ export function buildReminderEmail(caseRecord) {
     'Interview details:',
     `Date: ${currentSchedule.date || '[date]'}`,
     `Time: ${currentSchedule.time || '[time]'} ${caseRecord.interviewTimezone || ''}`,
+    ...durationPlainLine,
     `Zoom Link: ${currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '[zoom_link]'}`,
     '',
     'Please let us know if you need any support before the interview.',
@@ -96,4 +106,11 @@ export function buildReminderEmail(caseRecord) {
     htmlBody,
     plainBody,
   }
+}
+
+function formatEmailDuration(minutes) {
+  const normalized = Number(minutes)
+  if (!Number.isFinite(normalized) || normalized <= 0) return ''
+  if (normalized === 60) return '1 hour'
+  return `${normalized} minutes`
 }

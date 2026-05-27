@@ -908,7 +908,7 @@ function scheduleSummary(caseRecord) {
   if (caseRecord.interviewTimezone) {
     lines.push(`🕐 Timezone: ${caseRecord.interviewTimezone}`);
   }
-  if (caseRecord.reminderStatus) {
+  if (caseRecord.reminderEmail?.kind === 'manual_reminder' && caseRecord.reminderStatus) {
     lines.push(`🔔 Reminder: ${caseRecord.reminderStatus}`);
   }
   if (caseRecord.rescheduleReason) {

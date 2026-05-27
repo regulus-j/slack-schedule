@@ -10,7 +10,15 @@ import {
   visibleCaseActions,
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
-import { attendeeInviteRecipients, buildAttendeeInviteEmail, buildIntakeDraft, buildScheduledCandidateEmail, buildTemplateVariables } from '../src/slack/handlers.js';
+import {
+  attendeeInviteRecipients,
+  buildAttendeeInviteEmail,
+  buildCancellationEmail,
+  buildIntakeDraft,
+  buildScheduledCandidateEmail,
+  buildTemplateVariables,
+  ccRecipientsFromAttendees,
+} from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
@@ -118,6 +126,47 @@ test('reschedule increments schedule version and preserves existing event id', (
   assert.equal(completed.calendarEventId, 'event-1');
   assert.equal(completed.scheduleVersion, 2);
   assert.equal(completed.scheduleHistory.length, 1);
+});
+
+test('reschedule candidate email CCs recruiter and involved attendees only', () => {
+  const scheduledCase = {
+    ...baseCase,
+    status: 'Scheduled',
+    currentSchedule: buildScheduleSnapshot({
+      date: '2026-05-20',
+      time: '10:00',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'ana@example.com', 'interviewer@example.com'],
+      eventId: 'event-1',
+    }),
+  };
+
+  assert.deepEqual(
+    ccRecipientsFromAttendees(scheduledCase, scheduledCase.currentSchedule.attendees),
+    ['jamal@example.com', 'ana@example.com', 'interviewer@example.com'],
+  );
+});
+
+test('cancellation email is sent to candidate and CCs involved meeting participants', () => {
+  const scheduledCase = {
+    ...baseCase,
+    status: 'Scheduled',
+    currentSchedule: buildScheduleSnapshot({
+      date: '2026-05-20',
+      time: '10:00',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'ana@example.com', 'interviewer@example.com'],
+      eventId: 'event-1',
+    }),
+  };
+
+  const email = buildCancellationEmail(scheduledCase);
+
+  assert.equal(email.to, 'alex@example.com');
+  assert.deepEqual(email.cc, ['jamal@example.com', 'ana@example.com', 'interviewer@example.com']);
+  assert.match(email.subject, /Interview cancelled/);
+  assert.match(email.plainBody, /Your interview for Customer Support Specialist has been cancelled/);
+  assert.match(email.plainBody, /Date: 2026-05-20/);
 });
 
 test('home view buttons do not include empty values', () => {
@@ -686,6 +735,7 @@ test('builds a reminder email from the current schedule', () => {
       date: '2026-05-20',
       time: '09:30',
       zoomLink: 'https://zoom.us/j/demo',
+      durationMinutes: 55,
     },
   });
 
@@ -715,6 +765,7 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
       date: '2026-05-20',
       time: '09:30',
       zoomLink: 'https://zoom.us/j/demo',
+      durationMinutes: 55,
     },
   });
 
@@ -726,7 +777,49 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.link, 'https://zoom.us/j/demo');
   assert.equal(variables.hiring_manager_name, 'Ana Cruz');
   assert.equal(variables.position_title, 'Operations Manager');
+  assert.equal(variables.interview_duration_minutes, '55');
+  assert.equal(variables.interview_duration_text, '55-minute');
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222');
+});
+
+test('scheduled candidate email renders selected duration from stage overrides', async () => {
+  const email = await buildScheduledCandidateEmail({
+    ...baseCase,
+    templateId: '1st-interview-invite',
+    stageKey: '1st-interview',
+    stageOverrides: { durationMinutes: 25 },
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+    },
+  });
+
+  assert.match(email.body, /25-minute Zoom chat/);
+  assert.doesNotMatch(email.body, /15-20 minute/);
+});
+
+test('reschedule and reminder emails include stored schedule duration', () => {
+  const scheduledCase = {
+    ...baseCase,
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+      durationMinutes: 40,
+    },
+  };
+  const reschedule = buildRescheduleEmail(scheduledCase, {
+    reason: 'Conflict',
+    date: '2026-05-21',
+    time: '10:00',
+    zoomLink: 'https://zoom.us/j/demo',
+    durationMinutes: 40,
+  });
+  const reminder = buildReminderEmail(scheduledCase);
+
+  assert.match(reschedule.plainBody, /Duration: 40 minutes/);
+  assert.match(reminder.plainBody, /Duration: 40 minutes/);
 });
 
 test('buildTemplateVariables falls back to recruiter and coordinator emails without recruiter phone', () => {

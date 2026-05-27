@@ -63,7 +63,7 @@ export function visibleCaseActions(caseRecord) {
   return actions
 }
 
-export function buildScheduleSnapshot({ date, time, zoomLink, attendees, attendeeDetails, eventId, htmlLink }) {
+export function buildScheduleSnapshot({ date, time, zoomLink, attendees, attendeeDetails, durationMinutes, eventId, htmlLink }) {
   const attendeeList = Array.isArray(attendees) ? attendees : []
   return {
     date,
@@ -71,6 +71,7 @@ export function buildScheduleSnapshot({ date, time, zoomLink, attendees, attende
     zoomLink,
     attendees: attendeeList,
     attendeeDetails: Array.isArray(attendeeDetails) ? attendeeDetails : [],
+    durationMinutes: Number(durationMinutes) || null,
     eventId: eventId || null,
     htmlLink: htmlLink || null,
   };
@@ -128,6 +129,7 @@ export function applyCompletedReschedule(caseRecord, eventResult, request, email
     time: request.time,
     zoomLink: request.zoomLink,
     attendees: request.attendees,
+    durationMinutes: request.durationMinutes,
     eventId: eventResult.eventId,
     htmlLink,
   });
