@@ -241,7 +241,7 @@ function buildAuthHeaders(accessToken) {
   };
 }
 
-function buildGmailRawMessage(email) {
+export function buildGmailRawMessage(email) {
   const htmlBody = email.htmlBody || email.body || ''
   const plainBody = email.plainBody || stripHtml(htmlBody)
   const logo = logoAttachment()
@@ -249,6 +249,7 @@ function buildGmailRawMessage(email) {
 
   const subject = email.subject || ''
   const to = email.to || ''
+  const cc = normalizeEmailHeaderList(email.cc)
   const from = email.from || ''
 
   const mixedBoundary = `mixed-${crypto.randomUUID()}`
@@ -256,6 +257,7 @@ function buildGmailRawMessage(email) {
 
   const headers = [
     `To: ${to}`,
+    ...(cc ? [`Cc: ${cc}`] : []),
     `From: ${from}`,
     `Subject: ${subject}`,
     'MIME-Version: 1.0',
@@ -292,6 +294,11 @@ function buildGmailRawMessage(email) {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/g, '')
+}
+
+function normalizeEmailHeaderList(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).join(', ')
+  return String(value || '').trim()
 }
 
 function stripHtml(html) {

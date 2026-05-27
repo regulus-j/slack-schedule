@@ -10,7 +10,7 @@ import {
   visibleCaseActions,
 } from '../src/workflow/reschedule.js';
 import { buildReminderEmail, buildRescheduleEmail } from '../src/workflow/messages.js';
-import { attendeeInviteRecipients, buildAttendeeInviteEmail, buildIntakeDraft, buildTemplateVariables } from '../src/slack/handlers.js';
+import { attendeeInviteRecipients, buildAttendeeInviteEmail, buildIntakeDraft, buildScheduledCandidateEmail, buildTemplateVariables } from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
@@ -761,13 +761,36 @@ test('attendee invite emails are personalized and exclude candidate and recruite
 
   const recipients = attendeeInviteRecipients(caseRecord);
   const email = buildAttendeeInviteEmail(caseRecord, recipients[0]);
+  const variables = buildTemplateVariables(caseRecord);
 
   assert.deepEqual(recipients.map((recipient) => recipient.email), ['ana@example.com']);
+  assert.deepEqual(variables.recruiter_phone_line, 'Jamal Al Badi: jamal@example.com');
   assert.equal(email.to, 'ana@example.com');
   assert.match(email.plainBody, /Hi Ana Cruz/);
   assert.match(email.plainBody, /Alex Reyes/);
   assert.match(email.plainBody, /Support Specialist/);
   assert.match(email.plainBody, /https:\/\/zoom\.us\/j\/demo/);
+});
+
+test('scheduled candidate email cc includes attendee recipients', async () => {
+  const email = await buildScheduledCandidateEmail({
+    ...baseCase,
+    templateId: '1st-interview-invite',
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'jamal@example.com', 'ana@example.com'],
+      attendeeDetails: [
+        { name: 'Alex Reyes', email: 'alex@example.com', role: 'candidate' },
+        { name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+        { name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+      ],
+    },
+  });
+
+  assert.equal(email.to, 'alex@example.com');
+  assert.deepEqual(email.cc, ['ana@example.com']);
 });
 
 test('slack case views hide backend application id and show calendar link', () => {

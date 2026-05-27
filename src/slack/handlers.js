@@ -1677,7 +1677,7 @@ async function requireCase(store, caseId) {
   return caseRecord;
 }
 
-async function buildScheduledCandidateEmail(caseRecord) {
+export async function buildScheduledCandidateEmail(caseRecord) {
   const templates = await loadTemplates()
   const template = templates.find((item) => item.id === caseRecord.templateId)
   if (!template) return buildReminderEmail(caseRecord)
@@ -1688,6 +1688,7 @@ async function buildScheduledCandidateEmail(caseRecord) {
     htmlBody: rendered.body,
     plainBody: rendered.plainBody,
     to: caseRecord.applicant?.email,
+    cc: attendeeInviteRecipients(caseRecord).map((attendee) => attendee.email),
     from: caseRecord.recruiter?.email,
   }
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGoogleOAuthUrl, checkFreeBusy, getRecruiterId } from '../src/services/google.js';
+import { buildGmailRawMessage, buildGoogleOAuthUrl, checkFreeBusy, getRecruiterId } from '../src/services/google.js';
 import { homeView } from '../src/slack/views.js';
 
 test('builds a recruiter-scoped google oauth url', () => {
@@ -91,4 +91,20 @@ test('checkFreeBusy sends explicit timeMin and timeMax windows', async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('buildGmailRawMessage includes cc recipients', () => {
+  const raw = buildGmailRawMessage({
+    to: 'candidate@example.com',
+    cc: ['interviewer@example.com', 'hm@example.com'],
+    from: 'recruiter@example.com',
+    subject: 'Interview',
+    body: '<p>Hello</p>',
+    plainBody: 'Hello',
+  });
+  const decoded = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+
+  assert.match(decoded, /^To: candidate@example\.com/m);
+  assert.match(decoded, /^Cc: interviewer@example\.com, hm@example\.com/m);
+  assert.match(decoded, /^From: recruiter@example\.com/m);
 });
