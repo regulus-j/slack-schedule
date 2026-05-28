@@ -153,8 +153,9 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       {
         type: 'input',
         block_id: 'applicant_block',
+        optional: true,
         dispatch_action: true,
-        label: plain('Applicant name'),
+        label: plain('Applicant search'),
         element: {
           type: 'external_select',
           action_id: 'applicant_select',
@@ -163,6 +164,17 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
         },
       },
+      input(
+        'Candidate name',
+        'manual_applicant_name_block',
+        {
+          type: 'plain_text_input',
+          action_id: 'manual_applicant_name',
+          placeholder: plain('Type the candidate name if not in search'),
+          ...(draft.manualApplicantName ? { initial_value: draft.manualApplicantName } : {}),
+        },
+        true,
+      ),
       input(
         'Applicant email',
         'applicant_email_block',

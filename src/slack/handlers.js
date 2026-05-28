@@ -454,6 +454,9 @@ export function registerSlackHandlers(app, context) {
     if (!stageKey) {
       errors.stage_block = 'Choose an interview stage.';
     }
+    if (!intakeDraft.applicant) {
+      errors.manual_applicant_name_block = 'Choose a candidate or enter the candidate name.';
+    }
 
     if (intakeDraft.applicantEmail && !isValidEmail(intakeDraft.applicantEmail)) {
       errors.applicant_email_block = 'Enter a valid applicant email.';
@@ -2226,6 +2229,9 @@ function resolveCoordinatorEmail(caseRecord) {
 
 export function buildIntakeDraft(values, templates, overrides = {}) {
   const applicantId = overrides.applicant ?? (values.applicant_block?.applicant_select?.selected_option?.value || '');
+  const manualApplicantName =
+    overrides.manualApplicantName !== undefined ? overrides.manualApplicantName : getInputValue(values, 'manual_applicant_name')
+  const applicantEmailOverride = getInputValue(values, 'applicant_email')
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
   const legacyTemplateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
   const stageKey = normalizeStageKey(selectedStageKey || resolveStageFromTemplate(legacyTemplateId));
@@ -2233,8 +2239,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const interviewTimezone = overrides.interviewTimezone ?? (values.timezone_block?.timezone_select?.selected_option?.value || '');
 
   const applicant = applyEmailOverride(
-    findApplicant(applicantId),
-    getInputValue(values, 'applicant_email'),
+    findApplicant(applicantId) || buildManualApplicant(manualApplicantName, applicantEmailOverride),
+    applicantEmailOverride,
   );
   const requiresHiringManager = stageRequiresHiringManager(stageKey)
   const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
@@ -2277,6 +2283,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     hiringManagerOption: hiringManager ? toSlackOption(personPickerLabel(hiringManager), hiringManager.id) : undefined,
     templateOption: template ? toSlackOption(template.label, template.id) : undefined,
     stageOption,
+    manualApplicantName,
     applicantEmail: applicant?.email || '',
     recruiterEmail: recruiter?.email || '',
     hiringManagerEmail: hiringManager?.email || '',
@@ -2377,6 +2384,26 @@ function applyEmailOverride(person, emailOverride) {
     ...person,
     email,
   };
+}
+
+function buildManualApplicant(name, email = '') {
+  const normalizedName = String(name || '').replace(/\s+/g, ' ').trim()
+  if (!normalizedName) return null
+  const parts = normalizedName.split(' ')
+  const firstName = parts.shift() || normalizedName
+  const lastName = parts.join(' ')
+  const normalizedEmail = String(email || '').trim()
+  const idSource = [normalizedName, normalizedEmail].filter(Boolean).join('-') || normalizedName
+  const id = `manual-applicant-${idSource.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || crypto.randomUUID()}`
+  return {
+    id,
+    firstName,
+    lastName,
+    email: normalizedEmail,
+    jobTitle: '',
+    stage: '',
+    source: 'Manual entry',
+  }
 }
 
 function findPersonById(id) {

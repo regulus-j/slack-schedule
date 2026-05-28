@@ -467,6 +467,7 @@ test('intake modal hides HM fields before a later-stage interview is selected', 
   });
 
   const applicantNameBlock = view.blocks.find((block) => block.block_id === 'applicant_block');
+  const manualApplicantNameBlock = view.blocks.find((block) => block.block_id === 'manual_applicant_name_block');
   const applicantEmailBlock = view.blocks.find((block) => block.block_id === 'applicant_email_block');
   const recruiterNameBlock = view.blocks.find((block) => block.block_id === 'recruiter_block');
   const recruiterEmailBlock = view.blocks.find((block) => block.block_id === 'recruiter_email_block');
@@ -474,6 +475,10 @@ test('intake modal hides HM fields before a later-stage interview is selected', 
   const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block');
 
   assert.equal(applicantNameBlock.element.type, 'external_select');
+  assert.equal(applicantNameBlock.optional, true);
+  assert.equal(manualApplicantNameBlock.element.type, 'plain_text_input');
+  assert.equal(manualApplicantNameBlock.element.action_id, 'manual_applicant_name');
+  assert.equal(manualApplicantNameBlock.optional, true);
   assert.equal(recruiterNameBlock.element.type, 'external_select');
   assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
   assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
@@ -578,6 +583,30 @@ test('builds intake draft emails from selected people and overrides', () => {
   assert.equal(draft.resumeLink, 'https://example.com/resume.pdf');
   assert.equal(draft.interviewWindowStartDate, '2026-05-20');
   assert.equal(draft.interviewWindowEndDate, '2026-05-21');
+});
+
+test('builds intake draft from a manually entered candidate name', () => {
+  setApplicants([]);
+  setRecruiters([]);
+  setHiringManagers([]);
+
+  const draft = buildIntakeDraft(
+    {
+      applicant_block: { applicant_select: { selected_option: null } },
+      manual_applicant_name_block: { manual_applicant_name: { value: 'Maria Santos' } },
+      applicant_email_block: { applicant_email: { value: 'maria@example.com' } },
+      stage_block: { stage_select: { selected_option: { value: '1st-interview' } } },
+    },
+    [],
+  );
+
+  assert.equal(draft.applicantId, '');
+  assert.equal(draft.manualApplicantName, 'Maria Santos');
+  assert.equal(draft.applicant.firstName, 'Maria');
+  assert.equal(draft.applicant.lastName, 'Santos');
+  assert.equal(draft.applicant.email, 'maria@example.com');
+  assert.equal(draft.applicant.source, 'Manual entry');
+  assert.equal(draft.applicantEmail, 'maria@example.com');
 });
 
 test('builds intake draft recruiter from the selected applicant', () => {

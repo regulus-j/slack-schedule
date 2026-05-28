@@ -2,6 +2,18 @@ import { setApplicants, setRecruiters, getApplicants } from '../data/cache.js';
 import { searchApplicants } from '../data/search.js';
 
 const BASE = 'https://api.resumatorapi.com/v1';
+const INACTIVE_APPLICANT_TERMS = [
+  'rejected',
+  'reject',
+  'declined',
+  'decline',
+  'withdrawn',
+  'withdraw',
+  'hired',
+  'archived',
+  'deleted',
+  'closed',
+];
 
 export async function searchCachedApplicants(query) {
   return searchApplicants(query, getApplicants());
@@ -33,16 +45,20 @@ export async function refreshJazzhrCache({ config, logger, throwOnError = false 
   }
 
   try {
-    const [applicants, users] = await Promise.all([
+    const [applicantResult, users] = await Promise.all([
       fetchAllApplicants(apiKey, logger),
       fetchAllUsers(apiKey, logger),
     ]);
+    const { applicants, total, excluded, excludedReasons } = applicantResult;
 
     setApplicants(applicants);
     setRecruiters(users);
 
     logger.info('jazzhr_cache_refreshed', {
+      totalApplicants: total,
       applicants: applicants.length,
+      excludedApplicants: excluded,
+      excludedReasons,
       recruiters: users.length,
     });
 
@@ -70,7 +86,7 @@ async function fetchAllApplicants(apiKey, logger) {
     for (const item of data) {
       if (!seenIds.has(item.id)) {
         seenIds.add(item.id);
-        all.push(mapApplicant(item));
+        all.push(item);
         newCount++;
       }
     }
@@ -83,7 +99,65 @@ async function fetchAllApplicants(apiKey, logger) {
     if (page > 1) await sleep(350);
   }
 
-  return all;
+  return filterActiveApplicants(all);
+}
+
+export function filterActiveApplicants(items) {
+  const applicants = [];
+  const excludedReasonCounts = {};
+  let excluded = 0;
+
+  for (const item of items || []) {
+    const inactiveReason = inactiveApplicantReason(item);
+    if (inactiveReason) {
+      excluded++;
+      excludedReasonCounts[inactiveReason] = (excludedReasonCounts[inactiveReason] || 0) + 1;
+      continue;
+    }
+    applicants.push(mapApplicant(item));
+  }
+
+  return {
+    applicants,
+    total: Array.isArray(items) ? items.length : 0,
+    excluded,
+    excludedReasons: topReasonCounts(excludedReasonCounts),
+  };
+}
+
+export function inactiveApplicantReason(item) {
+  const values = applicantStatusValues(item);
+  for (const value of values) {
+    const normalized = normalizeStatusText(value);
+    const matchedTerm = INACTIVE_APPLICANT_TERMS.find((term) => normalized.includes(term));
+    if (matchedTerm) return matchedTerm;
+  }
+  return '';
+}
+
+function applicantStatusValues(item) {
+  return [
+    item?.applicant_progress,
+    item?.status,
+    item?.applicant_status,
+    item?.disposition,
+    item?.disposition_status,
+    item?.workflow_step,
+    item?.jobs?.applicant_progress,
+    item?.jobs?.status,
+    item?.jobs?.disposition,
+  ].filter(Boolean);
+}
+
+function normalizeStatusText(value) {
+  return String(value || '').toLowerCase().replace(/[_-]+/g, ' ').trim();
+}
+
+function topReasonCounts(counts, limit = 5) {
+  return Object.entries(counts)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit)
+    .map(([reason, count]) => ({ reason, count }));
 }
 
 async function sleep(ms) {
