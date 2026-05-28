@@ -56,9 +56,10 @@ export async function checkFreeBusy({ config, logger, attendees, windows, store,
     return { mocked: true, busy: [] };
   }
 
-  const accessToken = await resolveAccessToken({ config, store, recruiterId });
+  const tokenOwnerId = getGoogleTokenOwner(config, recruiterId);
+  const accessToken = await resolveAccessToken({ config, store, recruiterId: tokenOwnerId });
   if (!accessToken) {
-    logger.warn('calendar_freebusy_skipped', { reason: 'missing_google_token', recruiterId });
+    logger.warn('calendar_freebusy_skipped', { reason: 'missing_google_token', recruiterId: tokenOwnerId });
     return { mocked: true, busy: [] };
   }
 
@@ -89,7 +90,7 @@ export async function createCalendarEvent({ config, logger, caseRecord, eventInp
     return { mocked: true, eventId: `mock-${caseRecord.id}`, eventDraft };
   }
 
-  const recruiterId = getRecruiterId(caseRecord);
+  const recruiterId = getGoogleTokenOwner(config, getRecruiterId(caseRecord));
   const accessToken = await resolveAccessToken({ config, store, recruiterId });
   if (!accessToken) {
     logger.warn('calendar_event_skipped', { caseId: caseRecord.id, reason: 'missing_google_token' });
@@ -131,7 +132,7 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
     return { mocked: true, eventId, eventDraft };
   }
 
-  const recruiterId = getRecruiterId(caseRecord);
+  const recruiterId = getGoogleTokenOwner(config, getRecruiterId(caseRecord));
   const accessToken = await resolveAccessToken({ config, store, recruiterId });
   if (!accessToken) {
     logger.warn('calendar_event_update_skipped', { caseId: caseRecord.id, eventId, reason: 'missing_google_token' });
@@ -169,7 +170,7 @@ export async function sendRecruiterEmail({ config, logger, caseRecord, email, st
     return { mocked: true, messageId: `mock-email-${caseRecord.id}`, email };
   }
 
-  const recruiterId = getRecruiterId(caseRecord);
+  const recruiterId = getGoogleTokenOwner(config, getRecruiterId(caseRecord));
   const accessToken = await resolveAccessToken({ config, store, recruiterId });
   if (!accessToken) {
     logger.warn('gmail_send_skipped', { caseId: caseRecord.id, reason: 'missing_google_token' });
@@ -339,4 +340,8 @@ function stripHtml(html) {
 
 export function getRecruiterId(caseRecord) {
   return caseRecord.ownerSlackUserId || caseRecord.recruiter?.slackUserId || caseRecord.recruiter?.id || null;
+}
+
+export function getGoogleTokenOwner(config, fallbackRecruiterId) {
+  return config?.google?.authSlackUserId || fallbackRecruiterId || null
 }

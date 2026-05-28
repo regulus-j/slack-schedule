@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGmailRawMessage, buildGoogleOAuthUrl, checkFreeBusy, createCalendarEvent, getRecruiterId } from '../src/services/google.js';
+import { buildGmailRawMessage, buildGoogleOAuthUrl, checkFreeBusy, createCalendarEvent, getGoogleTokenOwner, getRecruiterId } from '../src/services/google.js';
 import { homeView } from '../src/slack/views.js';
 
 test('builds a recruiter-scoped google oauth url', () => {
@@ -54,6 +54,18 @@ test('home view keeps connect google action when disconnected', () => {
   assert.ok(!actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
 });
 
+test('home view hides google connect action for shared connected account users', () => {
+  const view = homeView({ myCases: [], teamCases: [], googleConnected: true, googleShared: true, googleCanManage: false });
+  const actionButtons = view.blocks
+    .filter((block) => block.type === 'actions')
+    .flatMap((block) => block.elements)
+    .filter((element) => element.type === 'button');
+
+  assert.ok(!actionButtons.some((button) => button.action_id === 'open_google_oauth'));
+  assert.ok(!actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
+  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('shared scheduling account')));
+});
+
 test('home view shows when google is not connected', () => {
   const view = homeView({ myCases: [], teamCases: [], googleConnected: false });
   assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('Google is not connected yet')));
@@ -67,6 +79,11 @@ test('prefers the case owner slack id for google token lookup', () => {
     }),
     'U-owner',
   );
+});
+
+test('shared google token owner overrides case owner token lookup', () => {
+  assert.equal(getGoogleTokenOwner({ google: { authSlackUserId: 'U-shared' } }, 'U-owner'), 'U-shared');
+  assert.equal(getGoogleTokenOwner({ google: {} }, 'U-owner'), 'U-owner');
 });
 
 test('checkFreeBusy sends explicit timeMin and timeMax windows', async () => {
@@ -90,6 +107,7 @@ test('checkFreeBusy sends explicit timeMin and timeMax windows', async () => {
           clientSecret: 'client-secret',
           redirectUri: 'https://example.com/oauth',
           sharedCalendarId: 'primary',
+          authSlackUserId: 'U-shared',
         },
       },
       logger: { warn() {} },
@@ -100,7 +118,8 @@ test('checkFreeBusy sends explicit timeMin and timeMax windows', async () => {
       }],
       recruiterId: 'U123',
       store: {
-        async getGoogleToken() {
+        async getGoogleToken(recruiterId) {
+          assert.equal(recruiterId, 'U-shared');
           return { access_token: 'token' };
         },
       },

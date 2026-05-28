@@ -19,7 +19,7 @@ import {
   toSlackOption,
 } from '../data/search.js'
 import { loadSchedulingTemplates, loadTemplates, renderTemplate, signedEmailBodiesFromPlainText } from '../templates.js'
-import { buildGoogleOAuthUrl, createCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
+import { buildGoogleOAuthUrl, createCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
 import { loadTalentDirectory } from '../services/talent-directory.js'
 import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
@@ -78,7 +78,7 @@ export function registerSlackHandlers(app, context) {
   const defaultTimeZone = schedulingTimeZones[0] || SYDNEY_TIME_ZONE
 
   app.event('app_home_opened', async ({ event, client }) => {
-    await publishHome({ client, userId: event.user, store, logger });
+    await publishHome({ client, userId: event.user, store, logger, config });
   });
 
   app.command('/schedule-interview', async ({ command, ack, client }) => {
@@ -336,6 +336,15 @@ export function registerSlackHandlers(app, context) {
   app.action('open_google_oauth', async ({ ack, body, client }) => {
     await ack()
     if (!await verifyChannel({ config, body, client })) return
+    const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
+    if (tokenOwnerId !== body.user.id) {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: 'Google is managed through a shared scheduling account. You do not need to connect your own Google account.',
+      })
+      return
+    }
     if (!config.google.clientId || !config.google.clientSecret || !config.google.redirectUri) {
       const dmChannel = await openDm(client, body.user.id)
       await client.chat.postMessage({
@@ -345,7 +354,7 @@ export function registerSlackHandlers(app, context) {
       return
     }
 
-    const oauthUrl = buildGoogleOAuthUrl(config, JSON.stringify({ recruiterId: body.user.id, source: 'slack_home' }))
+    const oauthUrl = buildGoogleOAuthUrl(config, JSON.stringify({ recruiterId: tokenOwnerId, source: 'slack_home' }))
     const dmChannel = await openDm(client, body.user.id)
     await client.chat.postMessage({
       channel: dmChannel,
@@ -356,6 +365,15 @@ export function registerSlackHandlers(app, context) {
   app.action('disconnect_google_oauth', async ({ ack, body, client }) => {
     await ack()
     if (!await verifyChannel({ config, body, client })) return
+    const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
+    if (tokenOwnerId !== body.user.id) {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: 'Google is managed through a shared scheduling account. You cannot disconnect it from your Slack user.',
+      })
+      return
+    }
     if (typeof store.deleteGoogleToken !== 'function') {
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
@@ -365,13 +383,15 @@ export function registerSlackHandlers(app, context) {
       return
     }
 
-    await store.deleteGoogleToken(body.user.id)
+    await store.deleteGoogleToken(tokenOwnerId)
     await client.chat.postEphemeral({
       channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
       user: body.user.id,
-      text: 'Google Calendar and Gmail have been disconnected for your Slack user.',
+      text: config.google.authSlackUserId
+        ? 'Shared Google Calendar and Gmail have been disconnected.'
+        : 'Google Calendar and Gmail have been disconnected for your Slack user.',
     })
-    await publishHome({ client, userId: body.user.id, store, logger })
+    await publishHome({ client, userId: body.user.id, store, logger, config })
   });
 
   app.options('applicant_select', async ({ options, ack }) => {
@@ -532,7 +552,7 @@ export function registerSlackHandlers(app, context) {
         caseMessageChannel: caseMessage.channel,
       },
     })
-    await publishHome({ client, userId: body.user.id, store, logger });
+    await publishHome({ client, userId: body.user.id, store, logger, config });
   });
 
   app.action('open_candidate_message_modal', async ({ ack, body, client }) => {
@@ -668,7 +688,7 @@ export function registerSlackHandlers(app, context) {
       action: 'candidate_email_approved',
       templateId: caseRecord.templateId,
     });
-    await publishHome({ client, userId: body.user.id, store, logger });
+    await publishHome({ client, userId: body.user.id, store, logger, config });
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
       text: `✉️ Candidate message approved for ${caseId}. SMS remains manual.`,
@@ -720,7 +740,7 @@ export function registerSlackHandlers(app, context) {
       action: 'reminder_sent',
       scheduleVersion: updated.reminderScheduleVersion,
     });
-    await publishHome({ client, userId: body.user.id, store, logger });
+    await publishHome({ client, userId: body.user.id, store, logger, config });
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
       text: `🔔 Reminder sent for ${caseId}.`,
@@ -1130,7 +1150,7 @@ export function registerSlackHandlers(app, context) {
         })
       }
 
-      await publishHome({ client, userId: body.user.id, store, logger })
+      await publishHome({ client, userId: body.user.id, store, logger, config })
       await postCaseThreadMessage({
         client,
         config,
@@ -1341,7 +1361,7 @@ export function registerSlackHandlers(app, context) {
           count: attendeeInviteResults.length,
         });
       }
-      await publishHome({ client, userId: body.user.id, store, logger });
+      await publishHome({ client, userId: body.user.id, store, logger, config });
       await postCaseThreadMessage({
         client,
         config,
@@ -1468,7 +1488,7 @@ export function registerSlackHandlers(app, context) {
       action: 'reschedule_requested',
       reason: request.reason,
     });
-    await publishHome({ client, userId: body.user.id, store, logger });
+    await publishHome({ client, userId: body.user.id, store, logger, config });
     const recentAudits = await store.listAudits(caseId, 5);
     await client.views.open({
       trigger_id: body.trigger_id,
@@ -1544,7 +1564,7 @@ export function registerSlackHandlers(app, context) {
         scheduleVersion: updated.scheduleVersion,
       });
     }
-    await publishHome({ client, userId: body.user.id, store, logger });
+    await publishHome({ client, userId: body.user.id, store, logger, config });
     await postCaseThreadMessage({
       client,
       config,
@@ -1584,7 +1604,7 @@ export function registerSlackHandlers(app, context) {
       action: 'reschedule_cancelled',
       cancellationEmailStatus: updated.cancellationEmailStatus,
     });
-    await publishHome({ client, userId: body.user.id, store, logger });
+    await publishHome({ client, userId: body.user.id, store, logger, config });
     await postCaseThreadMessage({
       client,
       config,
@@ -1833,14 +1853,17 @@ async function refreshSchedulingModal({ client, body, store, selectedStageKey })
   })
 }
 
-async function publishHome({ client, userId, store, logger }) {
+async function publishHome({ client, userId, store, logger, config }) {
   const [myCases, allCases] = await Promise.all([store.listCasesForUser(userId), store.listCases()]);
   const teamCases = allCases.filter((item) => item.ownerSlackUserId !== userId && item.status !== 'Scheduled');
-  const googleConnected = typeof store.hasGoogleToken === 'function' ? await store.hasGoogleToken(userId) : false;
+  const googleTokenOwnerId = getGoogleTokenOwner(config, userId)
+  const googleShared = Boolean(config?.google?.authSlackUserId)
+  const googleCanManage = googleTokenOwnerId === userId
+  const googleConnected = typeof store.hasGoogleToken === 'function' ? await store.hasGoogleToken(googleTokenOwnerId) : false;
   try {
     await client.views.publish({
       user_id: userId,
-      view: homeView({ myCases, teamCases, googleConnected }),
+      view: homeView({ myCases, teamCases, googleConnected, googleShared, googleCanManage }),
     });
   } catch (error) {
     logger.error('home_publish_failed', { userId, error: error.message });

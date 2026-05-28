@@ -63,23 +63,38 @@ function statusEmoji(status) {
   return labels[displayStatus(status)] || 'status';
 }
 
-export function homeView({ myCases, teamCases, googleConnected = false }) {
-  const googleAction = googleConnected
-    ? button('Disconnect Google', 'disconnect_google_oauth', 'danger')
-    : button('Connect Google', 'open_google_oauth')
+export function homeView({
+  myCases,
+  teamCases,
+  googleConnected = false,
+  googleShared = false,
+  googleCanManage = true,
+}) {
+  const googleAction = googleCanManage
+    ? (googleConnected
+        ? button('Disconnect Google', 'disconnect_google_oauth', 'danger')
+        : button('Connect Google', 'open_google_oauth'))
+    : null
+  const googleText = googleShared
+    ? (googleConnected
+        ? '✅ Google Calendar and Gmail are connected through the shared scheduling account.'
+        : '⚠️ Shared Google Calendar and Gmail are not connected yet. Ask the configured Google owner to connect.')
+    : (googleConnected
+        ? '✅ Google Calendar and Gmail are connected for this Slack user.'
+        : '⚠️ Google is not connected yet. Click Connect Google before final scheduling.')
 
   return {
     type: 'home',
     blocks: [
       header('📋 Interview Scheduling'),
       section('Start, review, and approve interview scheduling cases without retyping candidate details.'),
-      section(googleConnected ? '✅ Google Calendar and Gmail are connected for this Slack user.' : '⚠️ Google is not connected yet. Click Connect Google before final scheduling.') ,
+      section(googleText) ,
       actions([
         button('🚀 Start scheduling', 'open_schedule_intake', 'primary'),
         button('📚 Schedule tracker', 'open_schedule_tracker'),
         button('📢 Post channel button', 'post_schedule_launcher'),
         googleAction,
-      ]),
+      ].filter(Boolean)),
       divider(),
       header('👤 My Cases'),
       ...caseListBlocks(myCases, '📋 No active cases assigned to you.'),

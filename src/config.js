@@ -31,6 +31,7 @@ export function loadConfig(env = process.env) {
       clientSecret: mergedEnv.GOOGLE_CLIENT_SECRET,
       redirectUri: mergedEnv.GOOGLE_REDIRECT_URI,
       sharedCalendarId: mergedEnv.GOOGLE_SHARED_CALENDAR_ID,
+      authSlackUserId: mergedEnv.GOOGLE_AUTH_SLACK_USER_ID || '',
     },
     recruiterPhoneExport: {
       url: mergedEnv.RECRUITER_PHONE_EXPORT_URL || null,
