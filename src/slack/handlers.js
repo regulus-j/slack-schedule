@@ -18,7 +18,7 @@ import {
   personPickerLabel,
   toSlackOption,
 } from '../data/search.js'
-import { loadSchedulingTemplates, loadTemplates, renderTemplate, signedEmailBodiesFromPlainText } from '../templates.js'
+import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, signedEmailBodiesFromPlainText, stripSignatureHtml } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
 import { loadTalentDirectory } from '../services/talent-directory.js'
@@ -1101,7 +1101,7 @@ export function registerSlackHandlers(app, context) {
           zoomLink,
           attendees: allAttendeeEmails,
           timeZone: interviewTimeZone,
-          description: scheduledCandidateEmail.htmlBody || scheduledCandidateEmail.body || scheduledCandidateEmail.plainBody,
+          description: stripSignatureHtml(scheduledCandidateEmail.htmlBody || ''),
         },
       })
 
@@ -1308,7 +1308,7 @@ export function registerSlackHandlers(app, context) {
         store,
         eventInput: {
           ...scheduleInput,
-          description: emailBodies.htmlBody,
+          description: plainTextToHtml(emailBody),
         },
       });
 
@@ -1539,7 +1539,7 @@ export function registerSlackHandlers(app, context) {
         zoomLink: request.zoomLink,
         attendees: request.attendees,
         timeZone: caseRecord.interviewTimezone || SYDNEY_TIME_ZONE,
-        description: email.htmlBody || email.body || email.plainBody,
+        description: plainTextToHtml(plainBody),
       },
     });
     const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });

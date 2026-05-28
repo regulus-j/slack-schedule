@@ -146,6 +146,18 @@ export function plainTextToHtml(text) {
   return escaped.replace(/\r?\n/g, '<br>')
 }
 
+export function stripSignatureHtml(html) {
+  const value = String(html || '').trim()
+  if (!value) return ''
+
+  const marker = /<br>\s*<div[^>]*>\s*<span>--<\/span><br><br>\s*<span>Best Regards,<\/span>/i
+  const match = value.match(marker)
+  let stripped = match ? value.slice(0, match.index).trim() : value
+
+  stripped = stripped.replace(/<\/?(?:html|body)[^>]*>/gi, '').trim()
+  return stripped
+}
+
 export function signedEmailBodiesFromPlainText(text) {
   const plainBody = ensureSignaturePlainText(text)
   return {

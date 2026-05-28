@@ -9,6 +9,7 @@ import {
   replaceVariables,
   signedEmailBodiesFromPlainText,
   stripHtmlBody,
+  stripSignatureHtml,
   templateRequiresResume,
 } from '../src/templates.js'
 
@@ -152,4 +153,34 @@ test('loadSchedulingTemplates only exposes interview invite templates', async ()
     '2nd-or-Final-invite',
   ])
   assert.ok(!templates.some((template) => template.id.endsWith('.eml')))
+})
+
+test('stripSignatureHtml removes signature and wrapper tags from rendered template body', () => {
+  const template = parseTemplate('sig-test',
+    'Subject: Test\n\nBody:\n<html><body style="font-family:Arial;"><p>Hi <strong>Alex</strong></p><p>Interview details here.</p>[signature]</body></html>'
+  )
+  const rendered = renderTemplate(template, { applicant_first_name: 'Alex' })
+
+  const result = stripSignatureHtml(rendered.body)
+
+  assert.match(result, /Hi.*Alex/)
+  assert.match(result, /Interview details here/)
+  assert.doesNotMatch(result, /Best Regards/)
+  assert.doesNotMatch(result, /<table/)
+  assert.doesNotMatch(result, /IMPORTANT: The contents of this email/)
+  assert.doesNotMatch(result, /<html/)
+  assert.doesNotMatch(result, /<body/)
+})
+
+test('stripSignatureHtml returns content unchanged when no signature present', () => {
+  const result = stripSignatureHtml('<html><body><p>Plain content</p></body></html>')
+
+  assert.match(result, /Plain content/)
+  assert.doesNotMatch(result, /<html/)
+  assert.doesNotMatch(result, /<body/)
+})
+
+test('stripSignatureHtml returns empty string for empty input', () => {
+  assert.equal(stripSignatureHtml(''), '')
+  assert.equal(stripSignatureHtml(null), '')
 })
