@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { getHiringManagers, getTalentRecruiters, setHiringManagers, setTalentRecruiters } from '../src/data/cache.js'
+import { personOptions } from '../src/data/search.js'
 import { isRecruitmentTalent, loadTalentDirectory, parseTalentDirectory } from '../src/services/talent-directory.js'
 
 test('parseTalentDirectory loads SQL talent rows', () => {
@@ -58,6 +59,7 @@ test('loadTalentDirectory uses Apps Script recruiter rows as the primary recruit
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url) => {
     assert.match(String(url), /token=test-token/)
+    assert.match(String(url), /fileId=sheet-file-id/)
     return {
       ok: true,
       async json() {
@@ -95,6 +97,7 @@ test('loadTalentDirectory uses Apps Script recruiter rows as the primary recruit
         recruiterPhoneExport: {
           url: 'https://script.google.com/macros/s/demo/exec',
           token: 'test-token',
+          fileId: 'sheet-file-id',
         },
       },
       {
@@ -123,6 +126,9 @@ test('loadTalentDirectory uses Apps Script recruiter rows as the primary recruit
   assert.equal(recruiters[1].email, 'jam.albadi@freedompropertyinvestors.com.au')
   assert.equal(recruiters[1].phone, '-')
   assert.ok(recruiters.some((recruiter) => recruiter.email === 'mara@example.com'))
+  assert.deepEqual(personOptions('armi', recruiters).map((option) => option.text.text), [
+    'Armi Escamilla - armi@freedompropertyinvestors.com.au',
+  ])
 })
 
 test('isRecruitmentTalent matches recruitment in designation or department', () => {

@@ -46,17 +46,20 @@ export async function refreshJazzhrCache({ config, logger, throwOnError = false 
 
   try {
     const [applicantResult, users] = await Promise.all([
-      fetchAllApplicants(apiKey, logger),
+      fetchAllApplicants(apiKey, logger, config.jazzhr.applicantMaxPages),
       fetchAllUsers(apiKey, logger),
     ]);
-    const { applicants, total, excluded, excludedReasons } = applicantResult;
+    const { applicants, total, unique, pagesFetched, maxPagesReached, excluded, excludedReasons } = applicantResult;
 
     setApplicants(applicants);
     setRecruiters(users);
 
     logger.info('jazzhr_cache_refreshed', {
       totalApplicants: total,
+      uniqueApplicants: unique,
       applicants: applicants.length,
+      pagesFetched,
+      maxPagesReached,
       excludedApplicants: excluded,
       excludedReasons,
       recruiters: users.length,
@@ -70,18 +73,22 @@ export async function refreshJazzhrCache({ config, logger, throwOnError = false 
   }
 }
 
-async function fetchAllApplicants(apiKey, logger) {
+export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
   const all = [];
   const seenIds = new Set();
   let page = 1;
   const perPage = 100;
-  const maxPages = 10;
+  let totalFetched = 0;
+  let pagesFetched = 0;
+  const resolvedMaxPages = positiveInteger(maxPages, 250);
 
-  while (page <= maxPages) {
+  while (page <= resolvedMaxPages) {
     const data = await jazzhrGetWithRetry(`/applicants?page=${page}&per_page=${perPage}`, apiKey, logger);
 
     if (!Array.isArray(data) || data.length === 0) break;
 
+    totalFetched += data.length;
+    pagesFetched++;
     let newCount = 0;
     for (const item of data) {
       if (!seenIds.has(item.id)) {
@@ -93,13 +100,27 @@ async function fetchAllApplicants(apiKey, logger) {
 
     logger.info('jazzhr_applicants_page', { page, count: data.length, new: newCount });
 
-    if (newCount === 0 || data.length < perPage) break;
+    if (data.length < perPage) break;
     page++;
 
     if (page > 1) await sleep(350);
   }
 
-  return filterActiveApplicants(all);
+  if (page > resolvedMaxPages) {
+    logger.warn('jazzhr_applicants_max_pages_reached', {
+      maxPages: resolvedMaxPages,
+      totalFetched,
+      unique: all.length,
+    });
+  }
+
+  return {
+    ...filterActiveApplicants(all),
+    total: totalFetched,
+    unique: all.length,
+    pagesFetched,
+    maxPagesReached: page > resolvedMaxPages,
+  };
 }
 
 export function filterActiveApplicants(items) {
@@ -158,6 +179,11 @@ function topReasonCounts(counts, limit = 5) {
     .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
     .slice(0, limit)
     .map(([reason, count]) => ({ reason, count }));
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number(value)
+  return Number.isInteger(number) && number > 0 ? number : fallback
 }
 
 async function sleep(ms) {

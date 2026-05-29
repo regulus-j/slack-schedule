@@ -33,7 +33,6 @@ import {
   formatDateForInput,
   formatTimeForInput,
   isTimeWithinBusinessHours,
-  isValidDateRange,
 } from '../time.js'
 import {
   applyCancelledInterview,
@@ -444,8 +443,6 @@ export function registerSlackHandlers(app, context) {
     const recruiterId = intakeDraft.recruiterId;
     const notes = intakeDraft.notes;
     const resumeLink = intakeDraft.resumeLink;
-    const interviewWindowStartDate = intakeDraft.interviewWindowStartDate;
-    const interviewWindowEndDate = intakeDraft.interviewWindowEndDate;
     const interviewTimezone = intakeDraft.interviewTimezone || defaultTimeZone;
     const requiresHiringManager = stageRequiresHiringManager(stageKey)
     const requiresResume = stageRequiresResumeLink(stageKey)
@@ -477,27 +474,6 @@ export function registerSlackHandlers(app, context) {
       return;
     }
 
-    if ((interviewWindowStartDate && !interviewWindowEndDate) || (!interviewWindowStartDate && interviewWindowEndDate)) {
-      await ack({
-        response_action: 'errors',
-        errors: {
-          window_start_block: 'Select both target dates or leave both blank.',
-          window_end_block: 'Select both target dates or leave both blank.',
-        },
-      });
-      return;
-    }
-
-    if (interviewWindowStartDate && interviewWindowEndDate && !isValidDateRange(interviewWindowStartDate, interviewWindowEndDate)) {
-      await ack({
-        response_action: 'errors',
-        errors: {
-          window_end_block: 'End date must be on or after the start date.',
-        },
-      });
-      return;
-    }
-
     if (requiresResume && !resumeLink) {
       await ack({
         response_action: 'errors',
@@ -524,8 +500,8 @@ export function registerSlackHandlers(app, context) {
       stageKey,
       notes,
       resumeLink,
-      interviewWindowStartDate: interviewWindowStartDate || null,
-      interviewWindowEndDate: interviewWindowEndDate || null,
+      interviewWindowStartDate: null,
+      interviewWindowEndDate: null,
       interviewTimezone,
       autofill: {
         zoomLink: recruiter?.zoomLink || '',
@@ -2210,13 +2186,12 @@ function formatInterviewDuration(minutes) {
 
 function recruiterContactLine(caseRecord) {
   const phoneLine = recruiterPhoneLine(caseRecord.recruiter)
-  if (phoneLine) return phoneLine
-
   const recruiterName = caseRecord.recruiter?.name || 'Recruiter'
   const recruiterEmail = caseRecord.recruiter?.email || ''
   const coordinatorEmail = resolveCoordinatorEmail(caseRecord)
+  const recruiterLine = phoneLine || (recruiterEmail ? `${recruiterName}: ${recruiterEmail}` : recruiterName)
   return [
-    recruiterEmail ? `${recruiterName}: ${recruiterEmail}` : recruiterName,
+    recruiterLine,
     coordinatorEmail ? `Coordinator: ${coordinatorEmail}` : '',
   ].filter(Boolean).join(' | ')
 }
@@ -2289,8 +2264,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     hiringManagerEmail: hiringManager?.email || '',
     notes: getInputValue(values, 'notes'),
     resumeLink: extractResumeLink(values),
-    interviewWindowStartDate: values.window_start_block?.window_start?.selected_date || '',
-    interviewWindowEndDate: values.window_end_block?.window_end?.selected_date || '',
+    interviewWindowStartDate: '',
+    interviewWindowEndDate: '',
     interviewTimezone,
   };
 }

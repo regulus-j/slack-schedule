@@ -238,19 +238,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ...(selectedTimeZoneOption ? { initial_option: selectedTimeZoneOption } : {}),
       }),
       section(`🕐 Interview timezone drives calendar invites. Times are shown in PH (${PH_TIME_ZONE}) with interview timezone equivalents.`),
-      section('📅 Optional target interview window for calendar planning.'),
-      input('Target start date', 'window_start_block', {
-        type: 'datepicker',
-        action_id: 'window_start',
-        placeholder: plain('Optional start date'),
-        ...(draft.interviewWindowStartDate ? { initial_date: draft.interviewWindowStartDate } : {}),
-      }, true),
-      input('Target end date', 'window_end_block', {
-        type: 'datepicker',
-        action_id: 'window_end',
-        placeholder: plain('Optional end date'),
-        ...(draft.interviewWindowEndDate ? { initial_date: draft.interviewWindowEndDate } : {}),
-      }, true),
       section('📝 Calendar descriptions are generated automatically from the schedule details. Add notes here only if you want extra intake context.'),
     ],
   };

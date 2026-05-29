@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterActiveApplicants, inactiveApplicantReason } from '../src/services/jazzhr.js';
+import { fetchAllApplicants, filterActiveApplicants, inactiveApplicantReason } from '../src/services/jazzhr.js';
 
 function applicant(overrides = {}) {
   return {
@@ -49,3 +49,71 @@ test('filterActiveApplicants excludes inactive applicants and reports reason cou
     { reason: 'withdrawn', count: 1 },
   ]);
 });
+
+test('fetchAllApplicants continues after duplicate pages and dedupes by applicant id', async () => {
+  const originalFetch = globalThis.fetch;
+  const pages = [
+    Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1), email: `a${index + 1}@example.com` })),
+    Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1), email: `a${index + 1}@example.com` })),
+    [applicant({ id: '101', email: 'a101@example.com', applicant_progress: 'Phone Screen' })],
+  ];
+  const requestedPages = [];
+  globalThis.fetch = async (url) => {
+    const page = Number(new URL(String(url)).searchParams.get('page'));
+    requestedPages.push(page);
+    return {
+      ok: true,
+      async json() {
+        return pages[page - 1] || [];
+      },
+    };
+  };
+
+  try {
+    const result = await fetchAllApplicants('api-key', testLogger(), 5);
+    assert.deepEqual(requestedPages, [1, 2, 3]);
+    assert.equal(result.total, 201);
+    assert.equal(result.unique, 101);
+    assert.equal(result.pagesFetched, 3);
+    assert.equal(result.maxPagesReached, false);
+    assert.equal(result.applicants.length, 101);
+    assert.equal(result.applicants.at(-1).email, 'a101@example.com');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchAllApplicants logs when applicant page cap is reached', async () => {
+  const originalFetch = globalThis.fetch;
+  const logger = testLogger();
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() {
+      return Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1) }));
+    },
+  });
+
+  try {
+    const result = await fetchAllApplicants('api-key', logger, 2);
+    assert.equal(result.pagesFetched, 2);
+    assert.equal(result.maxPagesReached, true);
+    assert.equal(result.total, 200);
+    assert.equal(result.unique, 100);
+    assert.equal(logger.warns[0].event, 'jazzhr_applicants_max_pages_reached');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function testLogger() {
+  return {
+    infos: [],
+    warns: [],
+    info(event, data) {
+      this.infos.push({ event, data });
+    },
+    warn(event, data) {
+      this.warns.push({ event, data });
+    },
+  };
+}

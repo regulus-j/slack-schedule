@@ -8,6 +8,8 @@ export async function fetchRecruiterPhoneRows({ config, logger }) {
 
   const requestUrl = new URL(url)
   requestUrl.searchParams.set('token', token)
+  if (config.recruiterPhoneExport.fileId) requestUrl.searchParams.set('fileId', config.recruiterPhoneExport.fileId)
+  if (config.recruiterPhoneExport.sheetName) requestUrl.searchParams.set('sheetName', config.recruiterPhoneExport.sheetName)
 
   try {
     const response = await fetch(requestUrl)
@@ -17,12 +19,18 @@ export async function fetchRecruiterPhoneRows({ config, logger }) {
     }
 
     const payload = await response.json()
-    if (!payload?.ok || !Array.isArray(payload.rows)) {
-      logger.warn('recruiter_phone_export_invalid_payload', { ok: payload?.ok, hasRows: Array.isArray(payload?.rows) })
+    const rowsPayload = extractRowsPayload(payload)
+    if (!Array.isArray(rowsPayload)) {
+      logger.warn('recruiter_phone_export_invalid_payload', {
+        ok: payload?.ok,
+        hasRows: Array.isArray(payload?.rows),
+        hasArrayPayload: Array.isArray(payload),
+        error: payload?.error || '',
+      })
       return []
     }
 
-    const rows = payload.rows.map(normalizeRecruiterPhoneRow).filter(Boolean)
+    const rows = rowsPayload.map(normalizeRecruiterPhoneRow).filter(Boolean)
     logger.info('recruiter_phone_export_loaded', { count: rows.length })
     return rows
   } catch (error) {
@@ -31,12 +39,18 @@ export async function fetchRecruiterPhoneRows({ config, logger }) {
   }
 }
 
+function extractRowsPayload(payload) {
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.rows)) return payload.rows
+  return null
+}
+
 export function normalizeRecruiterPhoneRow(row) {
   const firstName = clean(row['First Name'])
   const lastName = clean(row['Last Name'])
   const preferredName = clean(row['Preferred Name'])
   const designation = clean(row.Designation)
-  const phone = clean(row['Aircall '])
+  const phone = firstClean(row, ['Aircall ', 'Aircall', 'Mobile', 'Mobile Number', 'Phone', 'Phone Number'])
   const email = clean(row['Work Email']).toLowerCase()
   const zoomLink = clean(row['Personal Zoom Link'])
   const legalName = [firstName, lastName].filter(Boolean).join(' ').trim()
@@ -105,6 +119,14 @@ function normalizeName(value) {
 
 function clean(value) {
   return String(value || '').replace(/\s+/g, ' ').trim()
+}
+
+function firstClean(row, keys) {
+  for (const key of keys) {
+    const value = clean(row?.[key])
+    if (value) return value
+  }
+  return ''
 }
 
 function cleanPhone(value) {

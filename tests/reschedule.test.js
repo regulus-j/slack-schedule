@@ -362,7 +362,7 @@ test('finalize email preview modal shows formatted email before creating invite'
   assert.equal(metadata.scheduleInput.zoomLink, 'https://zoom.us/j/demo');
 });
 
-test('intake modal includes optional target window fields', () => {
+test('intake modal omits target window fields', () => {
   const view = intakeModal({
     templates: [
       {
@@ -377,10 +377,25 @@ test('intake modal includes optional target window fields', () => {
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
   const blockIds = inputBlocks.map((block) => block.block_id);
 
-  assert.ok(blockIds.includes('window_start_block'));
-  assert.ok(blockIds.includes('window_end_block'));
-  assert.equal(inputBlocks.find((block) => block.block_id === 'window_start_block').optional, true);
-  assert.equal(inputBlocks.find((block) => block.block_id === 'window_end_block').optional, true);
+  assert.equal(blockIds.includes('window_start_block'), false);
+  assert.equal(blockIds.includes('window_end_block'), false);
+  assert.ok(view.blocks.some((block) =>
+    block.type === 'section' &&
+    block.text.text.includes('Calendar descriptions are generated automatically')
+  ));
+});
+
+test('check availability modal keeps target window fields', () => {
+  const view = schedulingModal(baseCase, {
+    phase: 1,
+    attendees: [],
+    stageKey: '1st-interview',
+  });
+  const inputBlocks = view.blocks.filter((block) => block.type === 'input');
+  const blockIds = inputBlocks.map((block) => block.block_id);
+
+  assert.ok(blockIds.includes('schedule_window_start_block'));
+  assert.ok(blockIds.includes('schedule_window_end_block'));
 });
 
 test('intake modal uses stage selection instead of template selection', () => {
@@ -558,8 +573,6 @@ test('builds intake draft emails from selected people and overrides', () => {
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
       resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },
-      window_start_block: { window_start: { selected_date: '2026-05-20' } },
-      window_end_block: { window_end: { selected_date: '2026-05-21' } },
     },
     [
       {
@@ -581,8 +594,8 @@ test('builds intake draft emails from selected people and overrides', () => {
   assert.equal(draft.templateId, '2nd-or-Final-invite');
   assert.equal(draft.notes, 'Notes');
   assert.equal(draft.resumeLink, 'https://example.com/resume.pdf');
-  assert.equal(draft.interviewWindowStartDate, '2026-05-20');
-  assert.equal(draft.interviewWindowEndDate, '2026-05-21');
+  assert.equal(draft.interviewWindowStartDate, '');
+  assert.equal(draft.interviewWindowEndDate, '');
 });
 
 test('builds intake draft from a manually entered candidate name', () => {
@@ -952,6 +965,21 @@ test('buildTemplateVariables falls back to recruiter and coordinator emails with
   });
 
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: jamal@example.com | Coordinator: coordinator@example.com');
+});
+
+test('buildTemplateVariables renders recruiter phone first and includes coordinator fallback', () => {
+  const variables = buildTemplateVariables({
+    recruiter: {
+      name: 'Jamal Al Badi',
+      email: 'jamal@example.com',
+      phone: '+63 900 111 2222',
+    },
+    autofill: {
+      coordinatorEmail: 'coordinator@example.com',
+    },
+  });
+
+  assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222 | Coordinator: coordinator@example.com');
 });
 
 test('attendee invite emails are personalized and exclude candidate and recruiter', () => {

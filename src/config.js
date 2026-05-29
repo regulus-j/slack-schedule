@@ -25,6 +25,7 @@ export function loadConfig(env = process.env) {
     },
     jazzhr: {
       apiKey: mergedEnv.JAZZHR_API_KEY,
+      applicantMaxPages: positiveInteger(mergedEnv.JAZZHR_APPLICANT_MAX_PAGES, 250),
     },
     google: {
       clientId: mergedEnv.GOOGLE_CLIENT_ID,
@@ -36,6 +37,8 @@ export function loadConfig(env = process.env) {
     recruiterPhoneExport: {
       url: mergedEnv.RECRUITER_PHONE_EXPORT_URL || null,
       token: mergedEnv.RECRUITER_PHONE_EXPORT_TOKEN || null,
+      fileId: mergedEnv.RECRUITER_PHONE_EXPORT_FILE_ID || null,
+      sheetName: mergedEnv.RECRUITER_PHONE_EXPORT_SHEET_NAME || null,
     },
     security: {
       encryptionKey: mergedEnv.APP_ENCRYPTION_KEY,
@@ -70,6 +73,11 @@ function resolveTimeZoneList(value) {
     .map((item) => item.trim())
     .filter(Boolean);
   return list.length > 0 ? list : DEFAULT_TIME_ZONES;
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number(value)
+  return Number.isInteger(number) && number > 0 ? number : fallback
 }
 
 export function validateStartupConfig(config) {
