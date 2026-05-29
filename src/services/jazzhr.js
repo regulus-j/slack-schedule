@@ -80,6 +80,7 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
   const perPage = 100;
   let totalFetched = 0;
   let pagesFetched = 0;
+  let duplicatePages = 0;
   const resolvedMaxPages = positiveInteger(maxPages, 250);
 
   while (page <= resolvedMaxPages) {
@@ -99,6 +100,21 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
     }
 
     logger.info('jazzhr_applicants_page', { page, count: data.length, new: newCount });
+
+    if (newCount === 0) {
+      duplicatePages++;
+      if (duplicatePages >= 2) {
+        logger.warn('jazzhr_applicants_duplicate_pages_stopped', {
+          page,
+          duplicatePages,
+          totalFetched,
+          unique: all.length,
+        });
+        break;
+      }
+    } else {
+      duplicatePages = 0;
+    }
 
     if (data.length < perPage) break;
     page++;

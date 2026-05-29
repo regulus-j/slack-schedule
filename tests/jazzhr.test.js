@@ -50,7 +50,41 @@ test('filterActiveApplicants excludes inactive applicants and reports reason cou
   ]);
 });
 
-test('fetchAllApplicants continues after duplicate pages and dedupes by applicant id', async () => {
+test('fetchAllApplicants stops after repeated duplicate pages and dedupes by applicant id', async () => {
+  const originalFetch = globalThis.fetch;
+  const pages = [
+    Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1), email: `a${index + 1}@example.com` })),
+    Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1), email: `a${index + 1}@example.com` })),
+    Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1), email: `a${index + 1}@example.com` })),
+  ];
+  const requestedPages = [];
+  globalThis.fetch = async (url) => {
+    const page = Number(new URL(String(url)).searchParams.get('page'));
+    requestedPages.push(page);
+    return {
+      ok: true,
+      async json() {
+        return pages[page - 1] || [];
+      },
+    };
+  };
+
+  try {
+    const logger = testLogger();
+    const result = await fetchAllApplicants('api-key', logger, 5);
+    assert.deepEqual(requestedPages, [1, 2, 3]);
+    assert.equal(result.total, 300);
+    assert.equal(result.unique, 100);
+    assert.equal(result.pagesFetched, 3);
+    assert.equal(result.maxPagesReached, false);
+    assert.equal(result.applicants.length, 100);
+    assert.equal(logger.warns[0].event, 'jazzhr_applicants_duplicate_pages_stopped');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchAllApplicants tolerates one duplicate page before continuing', async () => {
   const originalFetch = globalThis.fetch;
   const pages = [
     Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1), email: `a${index + 1}@example.com` })),

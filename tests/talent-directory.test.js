@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { getHiringManagers, getTalentRecruiters, setHiringManagers, setTalentRecruiters } from '../src/data/cache.js'
 import { personOptions } from '../src/data/search.js'
 import { isRecruitmentTalent, loadTalentDirectory, parseTalentDirectory } from '../src/services/talent-directory.js'
@@ -50,6 +53,34 @@ test('loadTalentDirectory uses Postgres talent rows and filters recruiters by re
   assert.equal(getTalentRecruiters().length, 1)
   assert.equal(getTalentRecruiters()[0].name, 'Mara Santos')
   assert.equal(getTalentRecruiters()[0].role, 'recruiter')
+})
+
+test('loadTalentDirectory falls back to SQL file when Postgres talent rows are empty', async () => {
+  setHiringManagers([])
+  setTalentRecruiters([])
+
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'talent-directory-'))
+  await fs.writeFile(
+    path.join(runtimeDir, 'talent_directory.sql'),
+    `
+      INSERT INTO talent_directory (first_name, last_name, designation, department, work_email) VALUES
+      ('Ana', 'Cruz', 'Operations Manager', 'Operations', 'ana@example.com'),
+      ('Mara', 'Santos', 'Recruitment Lead', 'Talent Acquisition', 'mara@example.com');
+    `,
+  )
+
+  await loadTalentDirectory(
+    { runtimeDir },
+    {
+      async listTalentDirectory() {
+        return []
+      },
+    },
+  )
+
+  assert.equal(getHiringManagers().length, 2)
+  assert.equal(getTalentRecruiters().length, 1)
+  assert.equal(getTalentRecruiters()[0].email, 'mara@example.com')
 })
 
 test('loadTalentDirectory uses Apps Script recruiter rows as the primary recruiter source', async () => {

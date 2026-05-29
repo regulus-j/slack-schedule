@@ -11,9 +11,18 @@ export async function loadTalentDirectory(config, store) {
   if (typeof store?.listTalentDirectory === 'function') {
     try {
       people = await store.listTalentDirectory()
-      source = 'postgres:talent_directory'
+      if (Array.isArray(people) && people.length > 0) {
+        source = 'postgres:talent_directory'
+      } else {
+        people = undefined
+        logger.info('talent_directory_postgres_empty')
+      }
     } catch (err) {
-      logger.warn('talent_directory_postgres_failed', { error: err.message })
+      if (err.code === '42P01') {
+        logger.info('talent_directory_postgres_missing', { table: 'talent_directory' })
+      } else {
+        logger.warn('talent_directory_postgres_failed', { error: err.message })
+      }
     }
   }
 
