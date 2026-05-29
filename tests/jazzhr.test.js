@@ -100,7 +100,7 @@ test('fetchAllApplicants stops after repeated duplicate pages and dedupes by app
   ];
   const requestedPages = [];
   globalThis.fetch = async (url) => {
-    const page = Number(new URL(String(url)).searchParams.get('page'));
+    const page = requestedApplicantPage(url);
     requestedPages.push(page);
     return {
       ok: true,
@@ -134,7 +134,7 @@ test('fetchAllApplicants tolerates one duplicate page before continuing', async 
   ];
   const requestedPages = [];
   globalThis.fetch = async (url) => {
-    const page = Number(new URL(String(url)).searchParams.get('page'));
+    const page = requestedApplicantPage(url);
     requestedPages.push(page);
     return {
       ok: true,
@@ -179,6 +179,42 @@ test('fetchAllApplicants logs when applicant page cap is reached', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('fetchAllApplicants uses JazzHR path-based pagination', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedPaths = [];
+  const pages = [
+    Array.from({ length: 100 }, (_, index) => applicant({ id: String(index + 1), email: `a${index + 1}@example.com` })),
+    [applicant({ id: '101', email: 'screening@example.com', applicant_progress: 'Resume Screening' })],
+  ];
+
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    const page = requestedApplicantPage(url);
+    requestedPaths.push(parsed.pathname);
+    return {
+      ok: true,
+      async json() {
+        return pages[page - 1] || [];
+      },
+    };
+  };
+
+  try {
+    const result = await fetchAllApplicants('api-key', testLogger(), 5);
+    assert.deepEqual(requestedPaths, ['/v1/applicants', '/v1/applicants/page/2']);
+    assert.equal(result.applicants.length, 101);
+    assert.equal(result.applicants.at(-1).stage, 'Resume Screening');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function requestedApplicantPage(url) {
+  const pathname = new URL(String(url)).pathname;
+  const match = pathname.match(/\/applicants\/page\/(\d+)$/);
+  return match ? Number(match[1]) : 1;
+}
 
 function testLogger() {
   return {

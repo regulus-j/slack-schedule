@@ -104,7 +104,7 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
   const resolvedMaxPages = positiveInteger(maxPages, 250);
 
   while (page <= resolvedMaxPages) {
-    const data = await jazzhrGetWithRetry(`/applicants?page=${page}&per_page=${perPage}`, apiKey, logger);
+    const data = await jazzhrGetWithRetry(applicantListPath(page), apiKey, logger);
 
     if (!Array.isArray(data) || data.length === 0) break;
 
@@ -157,6 +157,10 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
     pagesFetched,
     maxPagesReached: page > resolvedMaxPages,
   };
+}
+
+function applicantListPath(page) {
+  return page <= 1 ? '/applicants' : `/applicants/page/${page}`;
 }
 
 export function filterActiveApplicants(items) {
