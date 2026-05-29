@@ -31,6 +31,47 @@ test('inactiveApplicantReason keeps records with missing status fields', () => {
   assert.equal(inactiveApplicantReason(applicant()), '');
 });
 
+test('inactiveApplicantReason excludes configured JazzHR not-hired dispositions', () => {
+  const dispositions = [
+    '1ST INTERVIEW - REJECTED BY RECRUITER',
+    'RESUME SCREENING - REJECTED BY RECRUITER',
+    '2ND OR FINAL INTERVIEW - REJECTED BY HIRING MANAGER',
+    'REJECTED DUE TO FAILED ASSESSMENT',
+    'BLACK LISTED AND NOT CULTURE FIT',
+    'OUT OF THE HIRING AREA',
+    'OUT OF SYDNEY, AUSTRALIA',
+    'WITHDREW APPLICATION',
+    'AUTO REJECTION DUE LACK OF EXPERIENCE',
+    'AUTO REJECTION - OUT OF THE HIRING AREA',
+    'MISSED INTERVIEW',
+    'UNRESPONSIVE',
+    'GOOD FOR FUTURE HIRE',
+    'ENDORSED TO ANOTHER ROLE',
+    'DECLINED JOB OFFER',
+    'FAILED TRIAL PERIOD - REJECTED BY HM',
+    'OFFBOARDED',
+  ];
+
+  for (const disposition of dispositions) {
+    assert.equal(
+      inactiveApplicantReason(applicant({ disposition })),
+      `disposition:${disposition.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()}`,
+    );
+  }
+});
+
+test('inactiveApplicantReason excludes nested JazzHR job dispositions', () => {
+  assert.equal(
+    inactiveApplicantReason(applicant({
+      jobs: [
+        { applicant_progress: 'Phone Screen' },
+        { disposition_name: 'Good for Future Hire' },
+      ],
+    })),
+    'disposition:good for future hire',
+  );
+});
+
 test('filterActiveApplicants excludes inactive applicants and reports reason counts', () => {
   const result = filterActiveApplicants([
     applicant({ id: '1', applicant_progress: 'New', email: 'new@example.com' }),

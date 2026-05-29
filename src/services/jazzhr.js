@@ -2,6 +2,26 @@ import { setApplicants, setRecruiters, getApplicants } from '../data/cache.js';
 import { searchApplicants } from '../data/search.js';
 
 const BASE = 'https://api.resumatorapi.com/v1';
+const EXCLUDED_APPLICANT_DISPOSITIONS = [
+  '1ST INTERVIEW - REJECTED BY RECRUITER',
+  'RESUME SCREENING - REJECTED BY RECRUITER',
+  '2ND OR FINAL INTERVIEW - REJECTED BY HIRING MANAGER',
+  'REJECTED DUE TO FAILED ASSESSMENT',
+  'BLACK LISTED AND NOT CULTURE FIT',
+  'OUT OF THE HIRING AREA',
+  'OUT OF SYDNEY, AUSTRALIA',
+  'WITHDREW APPLICATION',
+  'AUTO REJECTION DUE LACK OF EXPERIENCE',
+  'AUTO REJECTION - OUT OF THE HIRING AREA',
+  'MISSED INTERVIEW',
+  'UNRESPONSIVE',
+  'GOOD FOR FUTURE HIRE',
+  'ENDORSED TO ANOTHER ROLE',
+  'DECLINED JOB OFFER',
+  'FAILED TRIAL PERIOD - REJECTED BY HM',
+  'OFFBOARDED',
+];
+const EXCLUDED_APPLICANT_DISPOSITION_KEYS = new Set(EXCLUDED_APPLICANT_DISPOSITIONS.map(statusKey));
 const INACTIVE_APPLICANT_TERMS = [
   'rejected',
   'reject',
@@ -166,6 +186,9 @@ export function inactiveApplicantReason(item) {
   const values = applicantStatusValues(item);
   for (const value of values) {
     const normalized = normalizeStatusText(value);
+    if (EXCLUDED_APPLICANT_DISPOSITION_KEYS.has(statusKey(normalized))) {
+      return `disposition:${normalized}`;
+    }
     const matchedTerm = INACTIVE_APPLICANT_TERMS.find((term) => normalized.includes(term));
     if (matchedTerm) return matchedTerm;
   }
@@ -173,21 +196,55 @@ export function inactiveApplicantReason(item) {
 }
 
 function applicantStatusValues(item) {
-  return [
+  return collectStatusValues([
     item?.applicant_progress,
     item?.status,
     item?.applicant_status,
     item?.disposition,
     item?.disposition_status,
     item?.workflow_step,
-    item?.jobs?.applicant_progress,
-    item?.jobs?.status,
-    item?.jobs?.disposition,
-  ].filter(Boolean);
+    item?.jobs,
+  ]);
+}
+
+function collectStatusValues(values) {
+  const collected = [];
+
+  for (const value of values) {
+    if (!value) continue;
+    if (Array.isArray(value)) {
+      collected.push(...collectStatusValues(value));
+      continue;
+    }
+    if (typeof value === 'object') {
+      collected.push(...collectStatusValues([
+        value.applicant_progress,
+        value.applicantProgress,
+        value.status,
+        value.applicant_status,
+        value.applicantStatus,
+        value.disposition,
+        value.disposition_status,
+        value.dispositionStatus,
+        value.disposition_name,
+        value.dispositionName,
+        value.workflow_step,
+        value.workflowStep,
+      ]));
+      continue;
+    }
+    collected.push(value);
+  }
+
+  return collected;
 }
 
 function normalizeStatusText(value) {
-  return String(value || '').toLowerCase().replace(/[_-]+/g, ' ').trim();
+  return String(value || '').toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function statusKey(value) {
+  return normalizeStatusText(value).replace(/[^a-z0-9]+/g, '');
 }
 
 function topReasonCounts(counts, limit = 5) {
