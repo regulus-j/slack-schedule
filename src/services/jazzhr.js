@@ -2,7 +2,7 @@ import { setApplicants, setRecruiters, getApplicants } from '../data/cache.js';
 import { searchApplicants } from '../data/search.js';
 
 const BASE = 'https://api.resumatorapi.com/v1';
-const FETCH_CONCURRENCY = 4;
+const DEFAULT_FETCH_CONCURRENCY = 2;
 const EXCLUDED_APPLICANT_DISPOSITIONS = [
   '1ST INTERVIEW - REJECTED BY RECRUITER',
   'RESUME SCREENING - REJECTED BY RECRUITER',
@@ -40,6 +40,27 @@ export async function searchCachedApplicants(query) {
   return searchApplicants(query, getApplicants());
 }
 
+export async function hydrateJazzhrCacheFromStore({ store, logger, limit = 50000 } = {}) {
+  if (!store?.listJazzhrCandidates && !store?.searchJazzhrCandidates) {
+    return { hydrated: false, records: 0 };
+  }
+
+  try {
+    const applicants = store.listJazzhrCandidates
+      ? await store.listJazzhrCandidates({ limit })
+      : await store.searchJazzhrCandidates('', { limit });
+    setApplicants(applicants);
+    logger?.info?.('jazzhr_cache_hydrated', {
+      records: applicants.length,
+      source: 'store',
+    });
+    return { hydrated: applicants.length > 0, records: applicants.length };
+  } catch (err) {
+    logger?.warn?.('jazzhr_cache_hydrate_failed', { error: err.message });
+    return { hydrated: false, records: 0, error: err.message };
+  }
+}
+
 export async function fetchApplicantDetail(apiKey, jazzhrApplicationId, logger) {
   if (!apiKey || !jazzhrApplicationId) return null;
 
@@ -67,7 +88,12 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
 
   try {
     const [applicantResult, users] = await Promise.all([
-      fetchAllApplicants(apiKey, logger, config.jazzhr.applicantMaxPages),
+      fetchAllApplicants(
+        apiKey,
+        logger,
+        config.jazzhr.applicantMaxPages,
+        config.jazzhr.applicantFetchConcurrency,
+      ),
       fetchAllUsers(apiKey, logger),
     ]);
     const { applicants, total, unique, pagesFetched, maxPagesReached, excluded, excludedReasons } = applicantResult;
@@ -99,7 +125,7 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
   }
 }
 
-export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
+export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurrency = DEFAULT_FETCH_CONCURRENCY) {
   const all = [];
   const seenIds = new Set();
   const perPage = 100;
@@ -109,6 +135,7 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
   let nextPage = 1;
   let shouldStop = false;
   const resolvedMaxPages = positiveInteger(maxPages, 250);
+  const resolvedConcurrency = positiveInteger(concurrency, DEFAULT_FETCH_CONCURRENCY);
 
   const processPage = ({ page, data }) => {
     if (!Array.isArray(data) || data.length === 0) {
@@ -158,7 +185,7 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
 
   while (!shouldStop && nextPage <= resolvedMaxPages) {
     const batchPages = [];
-    while (batchPages.length < FETCH_CONCURRENCY && nextPage <= resolvedMaxPages) {
+    while (batchPages.length < resolvedConcurrency && nextPage <= resolvedMaxPages) {
       batchPages.push(nextPage);
       nextPage++;
     }

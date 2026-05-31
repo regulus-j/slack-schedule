@@ -64,6 +64,10 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       return searchJazzhrCandidateRecords(state.jazzhrCandidates, query, options);
     },
 
+    async listJazzhrCandidates({ limit = 50000 } = {}) {
+      return searchJazzhrCandidateRecords(state.jazzhrCandidates, '', { limit });
+    },
+
     async getJazzhrCandidate(jazzhrApplicationId) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
       const candidate = state.jazzhrCandidates.find((item) => item.jazzhrApplicationId === id) || null;

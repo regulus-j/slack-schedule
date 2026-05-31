@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchAllApplicants, filterActiveApplicants, inactiveApplicantReason } from '../src/services/jazzhr.js';
+import {
+  fetchAllApplicants,
+  filterActiveApplicants,
+  hydrateJazzhrCacheFromStore,
+  inactiveApplicantReason,
+  searchCachedApplicants,
+} from '../src/services/jazzhr.js';
 
 function applicant(overrides = {}) {
   return {
@@ -92,6 +98,33 @@ test('filterActiveApplicants excludes inactive applicants and reports reason cou
   ]);
 });
 
+test('hydrateJazzhrCacheFromStore loads persisted candidates into the in-memory cache', async () => {
+  const result = await hydrateJazzhrCacheFromStore({
+    logger: testLogger(),
+    store: {
+      async listJazzhrCandidates() {
+        return [
+          {
+            id: 'applicant-1',
+            jazzhrApplicationId: '1',
+            fullName: 'Persisted Candidate',
+            firstName: 'Persisted',
+            lastName: 'Candidate',
+            email: 'persisted@example.com',
+            jobTitle: 'Support Specialist',
+          },
+        ];
+      },
+    },
+  });
+
+  const matches = await searchCachedApplicants('persisted');
+
+  assert.equal(result.hydrated, true);
+  assert.equal(result.records, 1);
+  assert.equal(matches[0].fullName, 'Persisted Candidate');
+});
+
 test('fetchAllApplicants stops after repeated duplicate pages and dedupes by applicant id', async () => {
   const originalFetch = globalThis.fetch;
   const pages = [
@@ -114,7 +147,7 @@ test('fetchAllApplicants stops after repeated duplicate pages and dedupes by app
   try {
     const logger = testLogger();
     const result = await fetchAllApplicants('api-key', logger, 5);
-    assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
+    assert.deepEqual(requestedPages, [1, 2, 3]);
     assert.equal(result.total, 300);
     assert.equal(result.unique, 100);
     assert.equal(result.pagesFetched, 3);
@@ -147,7 +180,7 @@ test('fetchAllApplicants tolerates one duplicate page before continuing', async 
 
   try {
     const result = await fetchAllApplicants('api-key', testLogger(), 5);
-    assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
+    assert.deepEqual(requestedPages, [1, 2, 3]);
     assert.equal(result.total, 201);
     assert.equal(result.unique, 101);
     assert.equal(result.pagesFetched, 3);
@@ -204,7 +237,7 @@ test('fetchAllApplicants fetches applicant pages in parallel batches', async () 
   };
 
   try {
-    const result = await fetchAllApplicants('api-key', testLogger(), 5);
+    const result = await fetchAllApplicants('api-key', testLogger(), 5, 4);
     assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
     assert.equal(maxActive, 4);
     assert.equal(result.pagesFetched, 5);
@@ -240,8 +273,6 @@ test('fetchAllApplicants uses JazzHR path-based pagination', async () => {
       '/v1/applicants',
       '/v1/applicants/page/2',
       '/v1/applicants/page/3',
-      '/v1/applicants/page/4',
-      '/v1/applicants/page/5',
     ]);
     assert.equal(result.applicants.length, 101);
     assert.equal(result.applicants.at(-1).stage, 'Resume Screening');

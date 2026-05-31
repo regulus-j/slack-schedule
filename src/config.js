@@ -26,6 +26,8 @@ export function loadConfig(env = process.env) {
     jazzhr: {
       apiKey: mergedEnv.JAZZHR_API_KEY,
       applicantMaxPages: positiveInteger(mergedEnv.JAZZHR_APPLICANT_MAX_PAGES, 250),
+      applicantFetchConcurrency: positiveInteger(mergedEnv.JAZZHR_APPLICANT_FETCH_CONCURRENCY, 2),
+      refreshOnStartup: parseBoolean(mergedEnv.JAZZHR_REFRESH_ON_STARTUP, false),
       liveSearch: {
         pageSize: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_RESULT_PAGE_SIZE, 20),
         concurrency: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_CONCURRENCY, 2),
@@ -84,6 +86,11 @@ function resolveTimeZoneList(value) {
 function positiveInteger(value, fallback) {
   const number = Number(value)
   return Number.isInteger(number) && number > 0 ? number : fallback
+}
+
+function parseBoolean(value, fallback = false) {
+  if (value == null || value === '') return fallback
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
 }
 
 export function validateStartupConfig(config) {

@@ -5,7 +5,7 @@ import { createStore } from './src/store/index.js';
 import { registerSlackHandlers } from './src/slack/handlers.js';
 import { logger } from './src/logger.js';
 import { loadTalentDirectory } from './src/services/talent-directory.js';
-import { refreshJazzhrCache } from './src/services/jazzhr.js';
+import { hydrateJazzhrCacheFromStore, refreshJazzhrCache } from './src/services/jazzhr.js';
 
 const config = loadConfig();
 validateStartupConfig(config);
@@ -15,7 +15,7 @@ await store.init();
 
 await loadTalentDirectory(config, store);
 
-await refreshJazzhrCache({ config, logger, store, throwOnError: true });
+const jazzhrHydration = await hydrateJazzhrCacheFromStore({ store, logger });
 
 const app = new App({
   token: config.slack.botToken,
@@ -36,3 +36,12 @@ logger.info('recruiter_phone_export_configured', {
 
 await app.start();
 logger.info('slack_app_started', { socketMode: true });
+
+if (config.jazzhr.refreshOnStartup || jazzhrHydration.records === 0) {
+  refreshJazzhrCache({ config, logger, store, throwOnError: false });
+} else {
+  logger.info('jazzhr_startup_refresh_skipped', {
+    reason: 'persisted_cache_available',
+    records: jazzhrHydration.records,
+  });
+}

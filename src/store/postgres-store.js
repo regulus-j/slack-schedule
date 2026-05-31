@@ -223,6 +223,19 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
         .slice(0, limit);
     },
 
+    async listJazzhrCandidates({ limit = 50000 } = {}) {
+      const result = await query(
+        `SELECT *
+         FROM jazzhr_candidates
+         ORDER BY applied_at DESC NULLS LAST, source_order ASC, full_name ASC
+         LIMIT $1`,
+        [limit],
+      );
+      return result.rows
+        .map(rowToJazzhrCandidate)
+        .filter((candidate) => !candidateInactiveReason(candidate));
+    },
+
     async getJazzhrCandidate(jazzhrApplicationId) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
       const result = await query('SELECT * FROM jazzhr_candidates WHERE jazzhr_application_id = $1', [id]);

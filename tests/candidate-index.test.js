@@ -66,9 +66,11 @@ test('json store persists and searches JazzHR candidate index', async () => {
     ])
 
     const results = await store.searchJazzhrCandidates('alex')
+    const listed = await store.listJazzhrCandidates()
     const selected = await store.getJazzhrCandidate('2')
 
     assert.deepEqual(results.map((record) => record.fullName), ['Alex Santos', 'Alex Reyes'])
+    assert.deepEqual(listed.map((record) => record.fullName), ['Alex Santos', 'Alex Reyes'])
     assert.equal(selected.fullName, 'Alex Santos')
   } finally {
     await rm(runtimeDir, { recursive: true, force: true })
