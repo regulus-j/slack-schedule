@@ -2,11 +2,13 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { decryptJson, encryptJson } from '../security/crypto.js';
+import { normalizeJazzhrCandidates, searchJazzhrCandidateRecords } from './candidate-index.js';
 
 const DEFAULT_STATE = {
   cases: [],
   audits: [],
   googleTokens: {},
+  jazzhrCandidates: [],
 };
 
 function normalizeArray(value) {
@@ -41,6 +43,7 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
         const raw = await fs.readFile(statePath, 'utf8');
         state = { ...structuredClone(DEFAULT_STATE), ...JSON.parse(raw) };
         state.cases = normalizeArray(state.cases).map(normalizeCase)
+        state.jazzhrCandidates = normalizeJazzhrCandidates(state.jazzhrCandidates)
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
         await persist();
@@ -48,7 +51,22 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
     },
 
     async stats() {
-      return { cases: state.cases.length, audits: state.audits.length };
+      return { cases: state.cases.length, audits: state.audits.length, jazzhrCandidates: state.jazzhrCandidates.length };
+    },
+
+    async saveJazzhrCandidates(records) {
+      state.jazzhrCandidates = normalizeJazzhrCandidates(records);
+      await persist();
+      return state.jazzhrCandidates.length;
+    },
+
+    async searchJazzhrCandidates(query, options = {}) {
+      return searchJazzhrCandidateRecords(state.jazzhrCandidates, query, options);
+    },
+
+    async getJazzhrCandidate(jazzhrApplicationId) {
+      const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
+      return state.jazzhrCandidates.find((candidate) => candidate.jazzhrApplicationId === id) || null;
     },
 
     async getGoogleToken(recruiterId) {

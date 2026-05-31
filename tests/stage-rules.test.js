@@ -9,16 +9,17 @@ import {
   resolveTemplateFromStage,
 } from '../src/workflow/stage-rules.js'
 
-test('DEFAULT_STAGE_RULES has three stages', () => {
+test('DEFAULT_STAGE_RULES has scheduling stages', () => {
   const keys = Object.keys(DEFAULT_STAGE_RULES)
-  assert.equal(keys.length, 3)
+  assert.equal(keys.length, 4)
   assert.ok(keys.includes('1st-interview'))
   assert.ok(keys.includes('2nd-interview'))
   assert.ok(keys.includes('final-interview'))
+  assert.ok(keys.includes('job-offer-discussion'))
 })
 
 test('STAGE_OPTIONS exposes exactly the intake stage choices', () => {
-  assert.deepEqual(STAGE_OPTIONS.map((stage) => stage.label), ['1st Interview', '2nd Interview', 'Final Interview'])
+  assert.deepEqual(STAGE_OPTIONS.map((stage) => stage.label), ['1st Interview', '2nd Interview', 'Final Interview', 'Job Offer Discussion'])
 })
 
 test('DEFAULT_STAGE_RULES 1st-interview has correct defaults', () => {
@@ -67,11 +68,12 @@ test('resolveTemplateFromStage maps intake stages to invite templates', () => {
   assert.equal(resolveTemplateFromStage('1st-interview'), '1st-interview-invite')
   assert.equal(resolveTemplateFromStage('2nd-interview'), '2nd-or-Final-invite')
   assert.equal(resolveTemplateFromStage('final-interview'), '2nd-or-Final-invite')
+  assert.equal(resolveTemplateFromStage('job-offer-discussion'), 'job-offer-discussion')
 })
 
 test('normalizeStageKey keeps compatibility aliases', () => {
   assert.equal(normalizeStageKey('2nd-or-final'), '2nd-interview')
-  assert.equal(normalizeStageKey('final-offer'), 'final-interview')
+  assert.equal(normalizeStageKey('final-offer'), 'job-offer-discussion')
 })
 
 test('resolveStageFromTemplate returns null for unknown template', () => {

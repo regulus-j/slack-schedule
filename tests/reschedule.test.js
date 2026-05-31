@@ -18,6 +18,7 @@ import {
   buildScheduledCandidateEmail,
   buildTemplateVariables,
   ccRecipientsFromAttendees,
+  isScheduleWorkflowTrigger,
 } from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
@@ -210,6 +211,14 @@ test('home view exposes the schedule tracker button', () => {
     .map((button) => button.text.text);
 
   assert.ok(labels.includes('📚 Schedule tracker'));
+});
+
+test('workflow trigger accepts schedule interview command messages', () => {
+  assert.equal(isScheduleWorkflowTrigger('/schedule-interview'), true);
+  assert.equal(isScheduleWorkflowTrigger('/schedule-interview button'), true);
+  assert.equal(isScheduleWorkflowTrigger('<@U123> /schedule-interview button'), true);
+  assert.equal(isScheduleWorkflowTrigger('/slack-scheduler'), false);
+  assert.equal(isScheduleWorkflowTrigger('please run /schedule-interview'), false);
 });
 
 test('case summaries and progress headers never mention Slack users', () => {
@@ -411,6 +420,7 @@ test('intake modal uses stage selection instead of template selection', () => {
     '1st Interview',
     '2nd Interview',
     'Final Interview',
+    'Job Offer Discussion',
   ]);
   assert.equal(inputBlocks.some((block) => block.block_id === 'template_block'), false);
 });
@@ -745,7 +755,7 @@ test('builds intake draft ignores stale hidden HM values for 1st interviews', ()
   assert.equal(draft.hiringManagerEmail, '');
 });
 
-test('finalize and reschedule forms use a single attendees selector', () => {
+test('finalize form omits additional attendees while reschedule keeps one selector', () => {
   const finalize = finalizeModal(baseCase);
   const reschedule = rescheduleModal({
     ...baseCase,
@@ -753,15 +763,19 @@ test('finalize and reschedule forms use a single attendees selector', () => {
     calendarEventId: 'event-1',
   });
 
-  for (const view of [finalize, reschedule]) {
-    const labels = view.blocks
-      .filter((block) => block.type === 'input')
-      .map((block) => block.label.text);
+  const finalizeLabels = finalize.blocks
+    .filter((block) => block.type === 'input')
+    .map((block) => block.label.text);
+  const rescheduleLabels = reschedule.blocks
+    .filter((block) => block.type === 'input')
+    .map((block) => block.label.text);
 
-    assert.ok(labels.includes('Attendees'));
-    assert.equal(labels.includes('Internal guests'), false);
-    assert.equal(labels.includes('External guest emails'), false);
-  }
+  assert.equal(finalizeLabels.includes('Attendees'), false);
+  assert.ok(rescheduleLabels.includes('Attendees'));
+  assert.equal(finalizeLabels.includes('Internal guests'), false);
+  assert.equal(finalizeLabels.includes('External guest emails'), false);
+  assert.equal(rescheduleLabels.includes('Internal guests'), false);
+  assert.equal(rescheduleLabels.includes('External guest emails'), false);
 });
 
 test('add attendee modal fills email and role from selected active user', () => {

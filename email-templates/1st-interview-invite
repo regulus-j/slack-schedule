@@ -2,30 +2,37 @@ Subject: Let's Connect About Your Application!
 
 Body:
 <html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">
-<p><strong>Hi [applicant_first_name],</strong></p>
+<p>Hi<strong> [applicant_first_name],</strong></p>
 
-<p>Thank you so much for applying for the [job_title] role at Outsourced Pro Global! We're excited to learn more about you and share what makes our team a great place to grow.</p>
+<p>Thank you so much for applying for the <strong>[job_title]</strong> role at&nbsp;<strong>Outsourced Pro Global</strong>! We&rsquo;re excited to learn more about you and share what makes our team a great place to grow.</p>
 
-<p>We'd love to invite you for a [interview_duration_text] Zoom chat with our Recruitment Specialist. This is a great chance for us to get to know each other better and see if this role and our company are the right fit for you.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">We&rsquo;d love to invite you for a quick <strong>[interview_duration_text] Zoom chat</strong> with our Recruitment Specialist. This is a great chance for us to get to know each other better and see if this role and our company are the right fit for you.
+<br />
+<br />&nbsp;</p>
 
-<p><strong>Interview details:</strong><br>
-Date: [Date]<br>
-Time: [Time] [Timezone]<br>
-Zoom Link: [Link]</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Date: [Date]</span></span></strong></span></span></span></span>
+<br /><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Time: [Time] [Timezone]</span></span></strong></span></span></span></span>
+<br /><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Zoom Link: [Link]</span></span></strong></span></span></span></span>
+<br />
+<br />&nbsp;</p>
 
-<p style="white-space:pre-line;"><strong>Meeting guests:</strong><br>[guest_list_text]</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;white-space:pre-line;"><strong>Meeting guests:</strong><br />[guest_list_text]</p>
 
-<p><strong>Friendly Reminders:</strong></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><strong>Friendly Reminders:</strong></p>
 
 <ul>
-<li>Kindly connect 10 minutes early to make sure your camera and microphone are working properly.</li>
+<li>Kindly connect 10&nbsp;minutes early to make sure your camera and microphone are working properly.</li>
 <li>Use your laptop or PC for this interview.</li>
-<li>Make sure that your Full Name and the role you are interviewing for are reflected in the Zoom meeting.</li>
-<li>Please be reminded that this is a formal meeting, so be in business attire.</li>
-<li>If you have any questions, feel free to reach out to your recruiter: [recruiter_phone_line]</li>
+<li>Make sure that your&nbsp;<strong>Full Name&nbsp;</strong>and the<strong>&nbsp;role&nbsp;</strong>you are interviewing for are reflected in the Zoom meeting.</li>
+<li>Please be reminded that this is a formal meeting, be in your business attire.</li>
+<li>If you have any questions, feel free to reach to any of our recruiters at&nbsp;<strong>+61 489 275 966 (AU)&nbsp;</strong>or through their<strong>&nbsp;mobile no.&nbsp;</strong></li>
 </ul>
 
-<p>Yours in Outsourced Pro Global,</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">&nbsp;</p>
+
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">
+<br /><strong>Yours in Outsourced Pro Global,</strong>
+<br /><strong>Recruitment Team</strong></p>
 
 [signature]
 </body></html>

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { decryptJson, encryptJson } from '../security/crypto.js';
+import { normalizeJazzhrCandidate, normalizeJazzhrCandidates } from './candidate-index.js';
 
 export function createPostgresStore(databaseUrl, encryptionKey = '') {
   let pool;
@@ -100,6 +101,28 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     };
   }
 
+  function rowToJazzhrCandidate(row) {
+    return normalizeJazzhrCandidate({
+      jazzhrApplicationId: row.jazzhr_application_id,
+      fullName: row.full_name,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      email: row.email,
+      phone: row.phone,
+      jobTitle: row.job_title,
+      stage: row.stage,
+      recruiterId: row.recruiter_id,
+      source: row.source,
+      appliedAt: row.applied_at?.toISOString?.() || row.applied_at || '',
+      sourceOrder: row.source_order,
+    });
+  }
+
+  function dateOrNull(value) {
+    const time = Date.parse(value)
+    return Number.isFinite(time) ? new Date(time).toISOString() : null
+  }
+
   return {
     async init() {
       await query('SELECT 1');
@@ -107,7 +130,100 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
 
     async stats() {
       const result = await query('SELECT COUNT(*)::int AS cases FROM scheduling_cases');
-      return { cases: result.rows[0].cases };
+      let jazzhrCandidates = 0;
+      try {
+        const candidateResult = await query('SELECT COUNT(*)::int AS candidates FROM jazzhr_candidates');
+        jazzhrCandidates = candidateResult.rows[0].candidates;
+      } catch {
+        jazzhrCandidates = 0;
+      }
+      return { cases: result.rows[0].cases, jazzhrCandidates };
+    },
+
+    async saveJazzhrCandidates(records) {
+      const candidates = normalizeJazzhrCandidates(records);
+      await query('DELETE FROM jazzhr_candidates');
+      for (const candidate of candidates) {
+        await query(
+          `INSERT INTO jazzhr_candidates (
+            jazzhr_application_id,
+            full_name,
+            first_name,
+            last_name,
+            email,
+            phone,
+            job_title,
+            stage,
+            recruiter_id,
+            source,
+            applied_at,
+            source_order
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          ON CONFLICT (jazzhr_application_id) DO UPDATE SET
+            full_name = EXCLUDED.full_name,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            email = EXCLUDED.email,
+            phone = EXCLUDED.phone,
+            job_title = EXCLUDED.job_title,
+            stage = EXCLUDED.stage,
+            recruiter_id = EXCLUDED.recruiter_id,
+            source = EXCLUDED.source,
+            applied_at = EXCLUDED.applied_at,
+            source_order = EXCLUDED.source_order,
+            updated_at = now()`,
+          [
+            candidate.jazzhrApplicationId,
+            candidate.fullName,
+            candidate.firstName,
+            candidate.lastName,
+            candidate.email,
+            candidate.phone,
+            candidate.jobTitle,
+            candidate.stage,
+            candidate.recruiterId,
+            candidate.source,
+            dateOrNull(candidate.appliedAt),
+            candidate.sourceOrder,
+          ],
+        );
+      }
+      return candidates.length;
+    },
+
+    async searchJazzhrCandidates(searchQuery, { limit = 20, baseQuery = '' } = {}) {
+      const filters = [];
+      const params = [];
+      for (const value of [baseQuery, searchQuery]) {
+        const normalized = String(value || '').trim();
+        if (!normalized) continue;
+        params.push(`%${normalized}%`);
+        filters.push(`(
+          full_name ILIKE $${params.length} OR
+          first_name ILIKE $${params.length} OR
+          last_name ILIKE $${params.length} OR
+          email ILIKE $${params.length} OR
+          job_title ILIKE $${params.length} OR
+          jazzhr_application_id ILIKE $${params.length}
+        )`);
+      }
+      params.push(limit);
+      const result = await query(
+        `SELECT *
+         FROM jazzhr_candidates
+         ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
+         ORDER BY applied_at DESC NULLS LAST, source_order ASC, full_name ASC
+         LIMIT $${params.length}`,
+        params,
+      );
+      return result.rows.map(rowToJazzhrCandidate);
+    },
+
+    async getJazzhrCandidate(jazzhrApplicationId) {
+      const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
+      const result = await query('SELECT * FROM jazzhr_candidates WHERE jazzhr_application_id = $1', [id]);
+      return result.rows[0] ? rowToJazzhrCandidate(result.rows[0]) : null;
     },
 
     async listTalentDirectory() {

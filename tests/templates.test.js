@@ -12,6 +12,8 @@ import {
   stripSignatureHtml,
   templateRequiresResume,
 } from '../src/templates.js'
+import { buildScheduledCandidateEmail } from '../src/slack/handlers.js'
+import { candidateMessageModal } from '../src/slack/views.js'
 
 test('normalizes mojibake and subject typo', () => {
   const normalized = normalizeTemplateText('Subeject: Letâ€™s Talk\n\nBody:\nHiÂ there')
@@ -151,6 +153,7 @@ test('loadSchedulingTemplates only exposes interview invite templates', async ()
   assert.deepEqual(templates.map((template) => template.id).sort(), [
     '1st-interview-invite',
     '2nd-or-Final-invite',
+    'job-offer-discussion',
   ])
   assert.ok(!templates.some((template) => template.id.endsWith('.eml')))
 })
@@ -183,4 +186,45 @@ test('stripSignatureHtml returns content unchanged when no signature present', (
 test('stripSignatureHtml returns empty string for empty input', () => {
   assert.equal(stripSignatureHtml(''), '')
   assert.equal(stripSignatureHtml(null), '')
+})
+
+test('final interview invite subject renders Final Interview', async () => {
+  const email = await buildScheduledCandidateEmail({
+    templateId: '2nd-or-Final-invite',
+    stageKey: 'final-interview',
+    applicant: {
+      firstName: 'Alex',
+      lastName: 'Reyes',
+      email: 'alex@example.com',
+      jobTitle: 'Support Specialist',
+    },
+    recruiter: { email: 'recruiter@example.com' },
+    hiringManager: { name: 'Hiring Manager', positionTitle: 'Operations Lead' },
+    currentSchedule: {
+      date: '2026-06-01',
+      time: '10:00',
+      zoomLink: 'https://zoom.test/final',
+      attendees: [],
+    },
+    interviewTimezone: 'Asia/Manila',
+    stageOverrides: {},
+  })
+
+  assert.match(email.subject, /Final Interview/)
+  assert.doesNotMatch(email.subject, /2nd Interview/)
+})
+
+test('candidate message modal does not include SMS blocks', () => {
+  const modal = candidateMessageModal({
+    caseRecord: {
+      id: 'case-1',
+      status: 'Draft',
+      applicant: { firstName: 'Alex', lastName: 'Reyes', jobTitle: 'Support Specialist' },
+    },
+    renderedTemplate: { subject: 'Subject', plainBody: 'Body' },
+  })
+
+  const text = JSON.stringify(modal)
+  assert.doesNotMatch(text, /sms_block/)
+  assert.doesNotMatch(text, /SMS copy/)
 })

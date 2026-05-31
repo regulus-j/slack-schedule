@@ -54,7 +54,7 @@ export async function fetchApplicantDetail(apiKey, jazzhrApplicationId, logger) 
   }
 }
 
-export async function refreshJazzhrCache({ config, logger, throwOnError = false }) {
+export async function refreshJazzhrCache({ config, logger, store, throwOnError = false }) {
   const apiKey = config.jazzhr.apiKey;
 
   if (!apiKey) {
@@ -73,6 +73,10 @@ export async function refreshJazzhrCache({ config, logger, throwOnError = false 
 
     setApplicants(applicants);
     setRecruiters(users);
+    let indexedCandidates = 0;
+    if (store?.saveJazzhrCandidates) {
+      indexedCandidates = await store.saveJazzhrCandidates(applicants);
+    }
 
     logger.info('jazzhr_cache_refreshed', {
       totalApplicants: total,
@@ -83,9 +87,10 @@ export async function refreshJazzhrCache({ config, logger, throwOnError = false 
       excludedApplicants: excluded,
       excludedReasons,
       recruiters: users.length,
+      indexedCandidates,
     });
 
-    return { refreshed: true, records: applicants.length };
+    return { refreshed: true, records: applicants.length, indexedCandidates };
   } catch (err) {
     if (throwOnError) throw err;
     logger.error('jazzhr_cache_refresh_failed', { error: err.message });
@@ -175,7 +180,7 @@ export function filterActiveApplicants(items) {
       excludedReasonCounts[inactiveReason] = (excludedReasonCounts[inactiveReason] || 0) + 1;
       continue;
     }
-    applicants.push(mapApplicant(item));
+    applicants.push(mapApplicant(item, applicants.length));
   }
 
   return {
@@ -342,12 +347,15 @@ function isActiveUser(user) {
   return type !== 'deleted';
 }
 
-function mapApplicant(item) {
+function mapApplicant(item, sourceOrder = 0) {
+  const firstName = item.first_name || ''
+  const lastName = item.last_name || ''
   return {
     id: `applicant-${item.id}`,
     jazzhrApplicationId: String(item.id),
-    firstName: item.first_name || '',
-    lastName: item.last_name || '',
+    fullName: [firstName, lastName].filter(Boolean).join(' ').trim(),
+    firstName,
+    lastName,
     email: item.email || '',
     phone: item.phone || item.prospect_phone || '',
     jobTitle: item.job_title || '',
@@ -355,6 +363,8 @@ function mapApplicant(item) {
     hiringManagerId: '',
     recruiterId: normalizeRecruiterId(item.recruiter_id),
     source: 'jazzhr',
+    appliedAt: firstValue(item, ['apply_date', 'applyDate', 'date_applied', 'dateApplied', 'created_at', 'createdAt', 'created', 'updated_at', 'updatedAt']),
+    sourceOrder,
   };
 }
 

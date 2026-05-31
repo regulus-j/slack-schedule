@@ -113,19 +113,48 @@ export function registerSlackHandlers(app, context) {
     });
   });
 
+  app.event('message', async ({ event, client }) => {
+    if (!isScheduleWorkflowTrigger(event?.text)) return
+    if (!await verifyChannel({
+      config,
+      body: {
+        channel: { id: event.channel },
+        user: event.user ? { id: event.user } : undefined,
+      },
+      client,
+    })) return
+
+    await client.chat.postMessage({
+      channel: resolvePostingChannel(config, event.channel),
+      text: 'Start an interview scheduling case.',
+      blocks: [
+        {
+          type: 'section',
+          text: { type: 'mrkdwn', text: '*Interview scheduling assistant*' },
+          accessory: {
+            type: 'button',
+            text: { type: 'plain_text', text: 'Start scheduling' },
+            action_id: 'open_schedule_intake',
+            style: 'primary',
+          },
+        },
+      ],
+    })
+  })
+
   app.command('/slack-scheduler', async ({ command, ack, client }) => {
     await ack();
     const text = (command.text || '').trim().toLowerCase();
 
     if (text === 'refresh-jazz') {
-      const result = await refreshJazzhrCache({ config, logger });
+      const result = await refreshJazzhrCache({ config, logger, store });
       const recruiters = getRecruiters();
       await loadTalentDirectory(config, store)
       const talentRecruiters = getTalentRecruiters()
       await client.chat.postMessage({
         channel: command.channel_id,
         text: result.refreshed
-          ? `JazzHR cache refreshed: ${result.records} applicants and ${recruiters.length} JazzHR users loaded. Talent recruiters refreshed: ${talentRecruiters.length}.`
+          ? `JazzHR cache refreshed: ${result.records} applicants, ${result.indexedCandidates || 0} candidate index records, and ${recruiters.length} JazzHR users loaded. Talent recruiters refreshed: ${talentRecruiters.length}.`
           : 'JazzHR refresh completed with warnings (check logs for details).',
       });
       return;
@@ -205,6 +234,21 @@ export function registerSlackHandlers(app, context) {
     });
   });
 
+  app.action('candidate_search_submit', async ({ ack, body, client }) => {
+    await ack();
+    const query = body.view?.state?.values?.candidate_search_block?.candidate_search?.value?.trim() || '';
+    const matches = await searchCandidateIndex(store, query, '', 100);
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      candidateSearchQuery: query,
+      candidateSearchResultCount: matches.length,
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+  });
+
   app.action('open_schedule_tracker', async ({ ack, body, client }) => {
     await ack();
     const ownerSlackUserId = body.user?.id || ''
@@ -225,7 +269,8 @@ export function registerSlackHandlers(app, context) {
     await ack();
     logger.info('applicant_select_fired', { selectedId: selectedOptionValue(body) });
     const selectedId = selectedOptionValue(body);
-    const applicant = findApplicant(selectedId);
+    const indexedCandidate = await resolveCandidateIndexRecord(store, selectedId);
+    let applicant = findApplicant(selectedId) || applicantFromCandidateIndex(indexedCandidate);
 
     if (applicant?.jazzhrApplicationId) {
       try {
@@ -234,10 +279,8 @@ export function registerSlackHandlers(app, context) {
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
         ]);
         if (detail) {
+          applicant = mergeApplicantDetail(applicant, detail);
           setApplicantDetail(selectedId, detail);
-          if (detail.email && !applicant.email) {
-            applicant.email = detail.email;
-          }
         }
       } catch (err) {
         logger.warn('applicant_detail_fetch_failed', { applicantId: selectedId, error: err.message });
@@ -250,6 +293,7 @@ export function registerSlackHandlers(app, context) {
       templates: await loadSchedulingTemplates(),
       selectedKey: 'applicant',
       selectedId,
+      selectedApplicant: applicant,
       showDetails: true,
       timeZones: schedulingTimeZones,
       defaultTimeZone,
@@ -394,7 +438,13 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.options('applicant_select', async ({ options, ack }) => {
-    await ack({ options: applicantOptions(options.value, getApplicants()) });
+    const metadata = parsePrivateMetadata(options.view?.private_metadata)
+    const baseQuery = metadata?.candidateSearchQuery || ''
+    const candidates = await searchCandidateIndex(store, options.value, baseQuery, 100)
+    const resolvedOptions = candidates.length > 0 || baseQuery
+      ? candidates.map(candidateToSlackOption)
+      : applicantOptions(options.value, getApplicants())
+    await ack({ options: resolvedOptions });
   });
 
   app.options('recruiter_select', async ({ options, ack }) => {
@@ -415,11 +465,6 @@ export function registerSlackHandlers(app, context) {
   });
 
   app.options('guest_select', async ({ options, ack, client }) => {
-    const { users } = await ensureSlackDirectory({ client, config, logger })
-    await ack({ options: personOptions(options.value, users) });
-  });
-
-  app.options('schedule_guest_select', async ({ options, ack, client }) => {
     const { users } = await ensureSlackDirectory({ client, config, logger })
     await ack({ options: personOptions(options.value, users) });
   });
@@ -540,11 +585,10 @@ export function registerSlackHandlers(app, context) {
     const templates = await loadTemplates();
     const template = templates.find((item) => item.id === caseRecord.templateId) || templates[0];
     const renderedTemplate = renderTemplate(template, buildTemplateVariables(caseRecord));
-    const smsDraft = buildSmsDraft(caseRecord);
     const recentAudits = await store.listAudits(caseRecord.id, 5);
     await client.views.open({
       trigger_id: body.trigger_id,
-      view: candidateMessageModal({ caseRecord, renderedTemplate, smsDraft, recentAudits }),
+      view: candidateMessageModal({ caseRecord, renderedTemplate, recentAudits }),
     });
   });
 
@@ -571,14 +615,12 @@ export function registerSlackHandlers(app, context) {
     const templates = await loadTemplates();
     const template = templates.find((item) => item.id === 'interview-reminder') || templates[0];
     const renderedTemplate = renderTemplate(template, buildTemplateVariables(caseRecord));
-    const smsDraft = buildSmsDraft(caseRecord);
     const recentAudits = await store.listAudits(caseRecord.id, 5);
     await client.views.open({
       trigger_id: body.trigger_id,
       view: candidateMessageModal({
         caseRecord,
         renderedTemplate,
-        smsDraft,
         callbackId: 'reminder_message_submit',
         submitText: 'Send',
         recentAudits,
@@ -637,7 +679,6 @@ export function registerSlackHandlers(app, context) {
       to: caseRecord.applicant?.email,
       from: caseRecord.recruiter?.email,
     };
-    const smsCopy = view.state.values.sms_block.sms_copy.value || '';
     if (hasBlockingEmailStatus(caseRecord.gmailSendStatus) && isSameEmail(caseRecord.candidateEmail, email)) {
       await ack();
       await client.chat.postMessage({
@@ -651,14 +692,12 @@ export function registerSlackHandlers(app, context) {
     const pendingEmailCase = await store.updateCase(caseId, {
       status: 'Waiting for Candidate',
       candidateEmail: email,
-      smsCopy,
       gmailSendStatus: 'sending',
     });
     const emailResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingEmailCase, email, store });
     const updated = await store.updateCase(caseId, {
       status: 'Waiting for Candidate',
       candidateEmail: email,
-      smsCopy,
       gmailSendStatus: emailResult.mocked ? 'mocked' : 'sent',
     });
     await store.addAudit({
@@ -670,7 +709,7 @@ export function registerSlackHandlers(app, context) {
     await publishHome({ client, userId: body.user.id, store, logger, config });
     await client.chat.postMessage({
       channel: resolvePostingChannel(config, body.user.id),
-      text: `✉️ Candidate message approved for ${caseId}. SMS remains manual.`,
+      text: `Candidate message approved for ${caseId}.`,
       blocks: caseMessageBlocks(updated),
     });
   });
@@ -1014,12 +1053,8 @@ export function registerSlackHandlers(app, context) {
         return
       }
 
-      const selectedGuests =
-        view.state.values.schedule_guest_block?.schedule_guest_select?.selected_options?.map((option) => findPerson(option.value)?.email) ||
-        []
-      const selectedGuestPeople =
-        view.state.values.schedule_guest_block?.schedule_guest_select?.selected_options?.map((option) => findPerson(option.value)).filter(Boolean) ||
-        []
+      const selectedGuests = []
+      const selectedGuestPeople = []
       const zoomLink = view.state.values.schedule_zoom_block?.schedule_zoom_link?.value || caseRecord.autofill?.zoomLink || ''
 
       const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
@@ -1184,9 +1219,7 @@ export function registerSlackHandlers(app, context) {
       fromTimeZone: PH_TIME_ZONE,
       toTimeZone: interviewTimeZone,
     })
-    const selectedGuests =
-      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)?.email).filter(Boolean) ||
-      []
+    const selectedGuests = []
     const finalizeStageKey = normalizeStageKey(
       view.state.values.stage_block?.stage_select?.selected_option?.value ||
       caseRecord.stageKey ||
@@ -1206,9 +1239,7 @@ export function registerSlackHandlers(app, context) {
       .map((attendee) => attendee.email)
       .filter(Boolean)
     const includedPeople = normalizeAttendees(finalCaseRecord, finalizeStageRules).filter((attendee) => attendee.included)
-    const selectedGuestPeople =
-      view.state.values.guest_block.guest_select.selected_options?.map((option) => findPerson(option.value)).filter(Boolean) ||
-      []
+    const selectedGuestPeople = []
     const attendees = [...new Set([...includedEmails, ...selectedGuests])]
     const attendeeDetails = mergeAttendeeDetails([...includedPeople, ...selectedGuestPeople], attendees)
     const scheduleInput = {
@@ -1713,7 +1744,11 @@ function buildPrivateMetadata(view, overrides = {}) {
   const parsed = parsePrivateMetadata(view?.private_metadata) || {};
   const channelId = overrides.channelId || parsed.channelId || view?.private_metadata || '';
   const showDetails = 'showDetails' in overrides ? overrides.showDetails : parsed.showDetails;
-  return JSON.stringify({ channelId, showDetails });
+  const candidateSearchQuery = 'candidateSearchQuery' in overrides ? overrides.candidateSearchQuery : parsed.candidateSearchQuery || '';
+  const candidateSearchResultCount = 'candidateSearchResultCount' in overrides
+    ? overrides.candidateSearchResultCount
+    : parsed.candidateSearchResultCount || 0;
+  return JSON.stringify({ channelId, showDetails, candidateSearchQuery, candidateSearchResultCount });
 }
 
 async function refreshIntakeModal({
@@ -1723,12 +1758,30 @@ async function refreshIntakeModal({
   selectedKey,
   selectedId,
   selectedPerson,
+  selectedApplicant,
   showDetails,
+  candidateSearchQuery,
+  candidateSearchResultCount,
   timeZones = [],
   defaultTimeZone,
 }) {
   if (!body.view?.id || !body.view?.hash) return;
   const overrides = { [selectedKey]: selectedId }
+  const metadata = parsePrivateMetadata(body.view.private_metadata) || {}
+  if (candidateSearchQuery === undefined && metadata.candidateSearchQuery) {
+    overrides.candidateSearchQuery = metadata.candidateSearchQuery
+    overrides.candidateSearchResultCount = metadata.candidateSearchResultCount || 0
+  }
+  if (candidateSearchQuery !== undefined) {
+    overrides.candidateSearchQuery = candidateSearchQuery
+    overrides.candidateSearchResultCount = candidateSearchResultCount || 0
+  }
+  if (selectedKey === 'applicant' && selectedApplicant) {
+    overrides.applicantRecord = selectedApplicant
+    overrides.manualApplicantName = selectedApplicant.fullName ||
+      [selectedApplicant.firstName, selectedApplicant.lastName].filter(Boolean).join(' ')
+    overrides.applicantEmail = selectedApplicant.email || ''
+  }
   if (selectedKey === 'recruiter' && selectedPerson) {
     overrides.recruiterPerson = selectedPerson
     overrides.recruiterEmail = selectedPerson.email || ''
@@ -1773,6 +1826,8 @@ async function refreshIntakeModal({
   const privateMetadata = buildPrivateMetadata(body.view, {
     channelId: getChannelId(body.view) || body.channel?.id || body.user.id,
     showDetails: resolvedShowDetails,
+    candidateSearchQuery: draft.candidateSearchQuery,
+    candidateSearchResultCount: draft.candidateSearchResultCount,
   });
 
   await client.views.update({
@@ -2111,7 +2166,9 @@ export function buildTemplateVariables(caseRecord) {
 
   return {
     applicant_first_name: caseRecord.applicant?.firstName || '',
+    applicant_full_name: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
     job_title: caseRecord.applicant?.jobTitle || '',
+    company_name: 'Outsourced Pro Global',
     interview_stage: interviewStage,
     date,
     Date: date,
@@ -2206,7 +2263,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const applicantId = overrides.applicant ?? (values.applicant_block?.applicant_select?.selected_option?.value || '');
   const manualApplicantName =
     overrides.manualApplicantName !== undefined ? overrides.manualApplicantName : getInputValue(values, 'manual_applicant_name')
-  const applicantEmailOverride = getInputValue(values, 'applicant_email')
+  const applicantEmailOverride = overrides.applicantEmail !== undefined ? overrides.applicantEmail : getInputValue(values, 'applicant_email')
+  const candidateSearchQuery = overrides.candidateSearchQuery ?? getInputValue(values, 'candidate_search')
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
   const legacyTemplateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
   const stageKey = normalizeStageKey(selectedStageKey || resolveStageFromTemplate(legacyTemplateId));
@@ -2214,7 +2272,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const interviewTimezone = overrides.interviewTimezone ?? (values.timezone_block?.timezone_select?.selected_option?.value || '');
 
   const applicant = applyEmailOverride(
-    findApplicant(applicantId) || buildManualApplicant(manualApplicantName, applicantEmailOverride),
+    overrides.applicantRecord || findApplicant(applicantId) || buildManualApplicant(manualApplicantName, applicantEmailOverride),
     applicantEmailOverride,
   );
   const requiresHiringManager = stageRequiresHiringManager(stageKey)
@@ -2258,6 +2316,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     hiringManagerOption: hiringManager ? toSlackOption(personPickerLabel(hiringManager), hiringManager.id) : undefined,
     templateOption: template ? toSlackOption(template.label, template.id) : undefined,
     stageOption,
+    candidateSearchQuery,
+    candidateSearchResultCount: overrides.candidateSearchResultCount || 0,
     manualApplicantName,
     applicantEmail: applicant?.email || '',
     recruiterEmail: recruiter?.email || '',
@@ -2305,6 +2365,64 @@ function selectedOptionValue(body) {
 
 function selectedOptionLabel(body) {
   return body.actions?.[0]?.selected_option?.text?.text || ''
+}
+
+export function isScheduleWorkflowTrigger(text) {
+  const value = String(text || '')
+    .replace(/<@[A-Z0-9]+>/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return value === '/schedule-interview' || value === '/schedule-interview button'
+}
+
+async function searchCandidateIndex(store, query, baseQuery = '', limit = 20) {
+  if (!store?.searchJazzhrCandidates) return []
+  return store.searchJazzhrCandidates(query, { baseQuery, limit })
+}
+
+async function resolveCandidateIndexRecord(store, selectedId) {
+  const id = String(selectedId || '').replace(/^applicant-/, '')
+  if (!id || !store?.getJazzhrCandidate) return null
+  return store.getJazzhrCandidate(id)
+}
+
+function candidateToSlackOption(candidate) {
+  return toSlackOption(applicantPickerLabel(candidate), candidate.id)
+}
+
+function applicantFromCandidateIndex(candidate) {
+  if (!candidate) return null
+  const [firstName, ...rest] = String(candidate.fullName || '').split(' ')
+  return {
+    id: candidate.id,
+    jazzhrApplicationId: candidate.jazzhrApplicationId,
+    fullName: candidate.fullName,
+    firstName: candidate.firstName || firstName || '',
+    lastName: candidate.lastName || rest.join(' '),
+    email: candidate.email || '',
+    phone: candidate.phone || '',
+    jobTitle: candidate.jobTitle || '',
+    stage: candidate.stage || '',
+    hiringManagerId: '',
+    recruiterId: candidate.recruiterId || '',
+    source: 'jazzhr',
+    appliedAt: candidate.appliedAt || '',
+    sourceOrder: candidate.sourceOrder || 0,
+  }
+}
+
+function mergeApplicantDetail(applicant, detail) {
+  if (!applicant || !detail) return applicant
+  return {
+    ...applicant,
+    email: detail.email || applicant.email || '',
+    phone: detail.phone || applicant.phone || '',
+    jobTitle: detail.jobTitle || applicant.jobTitle || '',
+    stage: detail.stage || applicant.stage || '',
+    source: detail.source || applicant.source || 'jazzhr',
+    applyDate: detail.applyDate || applicant.applyDate || applicant.appliedAt || '',
+  }
 }
 
 function personFromSelectedOption(body) {
@@ -2410,18 +2528,6 @@ function asHiringManager(person) {
     ...person,
     role: 'hiring_manager',
   }
-}
-
-function buildSmsDraft(caseRecord) {
-  return [
-    `Hi, ${caseRecord.applicant?.firstName || '[Candidate]'}!`,
-    '',
-    `This is ${caseRecord.recruiter?.name || '[Recruiter]'} from the Outsourced Pro Global recruitment team.`,
-    '',
-    `We would like to invite you for an interview for the ${caseRecord.applicant?.jobTitle || '[job_title]'} role. Let me know if the target schedule works well for you.`,
-    '',
-    'Thank you!',
-  ].join('\n');
 }
 
 function extractResumeLink(values) {

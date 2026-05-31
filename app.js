@@ -15,7 +15,7 @@ await store.init();
 
 await loadTalentDirectory(config, store);
 
-await refreshJazzhrCache({ config, logger, throwOnError: true });
+await refreshJazzhrCache({ config, logger, store, throwOnError: true });
 
 const app = new App({
   token: config.slack.botToken,

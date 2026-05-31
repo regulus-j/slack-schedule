@@ -150,17 +150,32 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     submit: plain('➕ Create'),
     close: plain('Cancel'),
     blocks: [
+      input(
+        'Candidate name search',
+        'candidate_search_block',
+        {
+          type: 'plain_text_input',
+          action_id: 'candidate_search',
+          placeholder: plain('Type part of the candidate name'),
+          ...(draft.candidateSearchQuery ? { initial_value: draft.candidateSearchQuery } : {}),
+        },
+        true,
+      ),
+      actions([
+        button('Search', 'candidate_search_submit', 'primary'),
+      ]),
+      ...(draft.candidateSearchQuery ? [section(candidateSearchSummary(draft))] : []),
       {
         type: 'input',
         block_id: 'applicant_block',
         optional: true,
         dispatch_action: true,
-        label: plain('Applicant search'),
+        label: plain('Candidate results'),
         element: {
           type: 'external_select',
           action_id: 'applicant_select',
           min_query_length: 0,
-          placeholder: plain('Search applicant'),
+          placeholder: plain('Select from search results'),
           ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
         },
       },
@@ -246,7 +261,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
 export function candidateMessageModal({
   caseRecord,
   renderedTemplate,
-  smsDraft,
   callbackId = 'candidate_message_submit',
   submitText = 'Approve',
   recentAudits = [],
@@ -256,14 +270,14 @@ export function candidateMessageModal({
     type: 'modal',
     callback_id: callbackId,
     private_metadata: caseRecord.id,
-    title: plain('✉️ Candidate Message'),
-    submit: plain(submitText === 'Approve' ? '✅ Approve' : submitText === 'Send' ? '🔔 Send' : submitText),
+    title: plain('Candidate Message'),
+    submit: plain(submitText),
     close: plain('Cancel'),
     blocks: [
       ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
-      section('✏️ Editing is plain text. Formatting is applied automatically.'),
-      section('✉️ *Email will be sent* to the candidate when you approve.'),
+      section('Editing is plain text. Formatting is applied automatically.'),
+      section('*Email will be sent* to the candidate when you approve.'),
       input('Email subject', 'email_subject_block', {
         type: 'plain_text_input',
         action_id: 'email_subject',
@@ -275,18 +289,6 @@ export function candidateMessageModal({
         multiline: true,
         initial_value: plainBody,
       }),
-      section('📱 *SMS is a pre-prepared template only.* It is not sent automatically. Copy and send it manually.'),
-      input(
-        'SMS copy',
-        'sms_block',
-        {
-          type: 'plain_text_input',
-          action_id: 'sms_copy',
-          multiline: true,
-          initial_value: smsDraft,
-        },
-        true,
-      ),
     ],
   };
 }
@@ -336,12 +338,6 @@ export function finalizeModal(caseRecord, recentAudits = []) {
         placeholder: plain('Select time'),
         options: timeOptions,
       }),
-      input('Attendees', 'guest_block', {
-        type: 'multi_external_select',
-        action_id: 'guest_select',
-        min_query_length: 0,
-        placeholder: plain('Search active users'),
-      }, true),
       input('Zoom link', 'zoom_block', {
         type: 'plain_text_input',
         action_id: 'zoom_link',
@@ -532,13 +528,6 @@ export function schedulingPhaseTwo(caseRecord, schedulingResult, recentAudits = 
     action_id: 'schedule_zoom_link',
     initial_value: caseRecord.autofill?.zoomLink || ''
   }))
-  blocks.push(input('Attendees', 'schedule_guest_block', {
-    type: 'multi_external_select',
-    action_id: 'schedule_guest_select',
-    min_query_length: 0,
-    placeholder: plain('Search active users')
-  }, true))
-
   return {
     type: 'modal',
     callback_id: 'scheduling_phase_two',
@@ -1010,6 +999,13 @@ function recruiterSelectElement({ recruiters, draft }) {
     placeholder: plain('Search recruiter'),
     ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
   }
+}
+
+function candidateSearchSummary(draft) {
+  const count = Number(draft.candidateSearchResultCount || 0)
+  if (!draft.candidateSearchQuery) return ''
+  if (count === 0) return `No JazzHR candidates found for "${draft.candidateSearchQuery}".`
+  return `Found ${count} JazzHR candidate${count === 1 ? '' : 's'} for "${draft.candidateSearchQuery}". Select a result below or type in the selector to filter these results.`
 }
 
 function applicantDetailBlocks(draft) {

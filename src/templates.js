@@ -3,11 +3,12 @@ import path from 'node:path';
 import { generateSignatureHTML, signaturePlainText } from './signature.js';
 
 const TEMPLATE_DIR = path.join(process.cwd(), 'email-templates');
-export const SCHEDULING_TEMPLATE_IDS = ['1st-interview-invite', '2nd-or-Final-invite'];
+export const SCHEDULING_TEMPLATE_IDS = ['1st-interview-invite', '2nd-or-Final-invite', 'job-offer-discussion'];
 
 export const TEMPLATE_LABELS = {
   '1st-interview-invite': '1st interview invite',
   '2nd-or-Final-invite': '2nd/final interview invite',
+  'job-offer-discussion': 'Job offer discussion invite',
   'interview-reminder': 'Interview reminder',
   'interview-reminder (unresponsive candidate)': 'Unresponsive candidate reminder',
   'Thank You Email - 2nd-or-Final Interview': 'Thank-you email',
@@ -21,6 +22,10 @@ export const TEMPLATE_METADATA = {
   '2nd-or-Final-invite': {
     interviewStage: '2nd/Final Interview',
     resumeRequired: true,
+  },
+  'job-offer-discussion': {
+    interviewStage: 'Job Offer Discussion',
+    resumeRequired: false,
   },
   'interview-reminder': {
     interviewStage: 'Reminder',

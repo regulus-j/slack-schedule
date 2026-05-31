@@ -15,6 +15,11 @@ export const DEFAULT_STAGE_RULES = {
     typicalDurationMinutes: 45,
     bufferMinutes: 15,
     description: 'Final Interview'
+  },
+  'job-offer-discussion': {
+    typicalDurationMinutes: 45,
+    bufferMinutes: 15,
+    description: 'Job Offer Discussion'
   }
 }
 
@@ -22,16 +27,19 @@ export const STAGE_OPTIONS = [
   { key: '1st-interview', label: '1st Interview', templateId: '1st-interview-invite' },
   { key: '2nd-interview', label: '2nd Interview', templateId: '2nd-or-Final-invite' },
   { key: 'final-interview', label: 'Final Interview', templateId: '2nd-or-Final-invite' },
+  { key: 'job-offer-discussion', label: 'Job Offer Discussion', templateId: 'job-offer-discussion' },
 ]
 
 const STAGE_ALIASES = {
   '2nd-or-final': '2nd-interview',
-  'final-offer': 'final-interview'
+  'final-offer': 'job-offer-discussion',
+  'job-offer': 'job-offer-discussion'
 }
 
 const TEMPLATE_TO_STAGE = {
   '1st-interview-invite': '1st-interview',
   '2nd-or-Final-invite': '2nd-interview',
+  'job-offer-discussion': 'job-offer-discussion',
   'Thank You Email - 2nd-or-Final Interview': '2nd-interview',
   'interview-reminder': null,
   'interview-reminder (unresponsive candidate)': null
@@ -47,6 +55,7 @@ export function resolveStageFromTemplate(templateId) {
   if (!meta) return null
   if (meta.interviewStage === '1st Interview') return '1st-interview'
   if (meta.interviewStage === '2nd/Final Interview') return '2nd-interview'
+  if (meta.interviewStage === 'Job Offer Discussion') return 'job-offer-discussion'
   return null
 }
 
