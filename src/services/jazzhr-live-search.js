@@ -4,12 +4,14 @@ const BASE = 'https://api.resumatorapi.com/v1'
 const DEFAULT_PAGE_SIZE = 20
 const DEFAULT_CONCURRENCY = 2
 const DEFAULT_TTL_MS = 15 * 60 * 1000
+const DEFAULT_MAX_PAGES = 10
 
 export function createJazzhrLiveSearchManager({
   apiKey,
   logger = console,
   pageSize = DEFAULT_PAGE_SIZE,
   concurrency = DEFAULT_CONCURRENCY,
+  maxPages = DEFAULT_MAX_PAGES,
   ttlMs = DEFAULT_TTL_MS,
   fetchFn = globalThis.fetch,
   now = () => Date.now(),
@@ -18,6 +20,7 @@ export function createJazzhrLiveSearchManager({
   const sessions = new Map()
   const limiter = createLimiter(positiveInteger(concurrency, DEFAULT_CONCURRENCY))
   const resolvedPageSize = positiveInteger(pageSize, DEFAULT_PAGE_SIZE)
+  const resolvedMaxPages = positiveInteger(maxPages, DEFAULT_MAX_PAGES)
   const resolvedTtlMs = positiveInteger(ttlMs, DEFAULT_TTL_MS)
 
   function start({ query, userId = '' } = {}) {
@@ -32,6 +35,7 @@ export function createJazzhrLiveSearchManager({
       version: 1,
       pageSize: resolvedPageSize,
       currentPage: 0,
+      jazzhrPageScanned: 0,
       results: [],
       resultIds: new Set(),
       complete: false,
@@ -118,15 +122,38 @@ export function createJazzhrLiveSearchManager({
   async function scanUntil(session, targetCount) {
     if (session.complete || session.error || session.results.length >= targetCount) return
 
-    const result = await limiter.run(() => fetchApplicantListPage({
-      apiKey,
-      query: session.query,
-      fetchFn,
-      logger,
-      sleepFn,
-    }))
-    addMatches(session, result)
-    session.complete = true
+    while (
+      !session.complete &&
+      !session.error &&
+      session.results.length < targetCount &&
+      session.jazzhrPageScanned < resolvedMaxPages
+    ) {
+      session.jazzhrPageScanned++
+      const result = await limiter.run(() => fetchApplicantListPage({
+        apiKey,
+        page: session.jazzhrPageScanned,
+        query: session.query,
+        fetchFn,
+        logger,
+        sleepFn,
+      }))
+      addMatches(session, result)
+      logger.info?.('jazzhr_live_search_page_scanned', {
+        sessionId: session.id,
+        query: session.query,
+        page: result.page,
+        count: result.items.length,
+        matches: session.results.length,
+      })
+      if (result.items.length < 100) {
+        session.complete = true
+        break
+      }
+    }
+
+    if (session.jazzhrPageScanned >= resolvedMaxPages && !session.complete) {
+      session.complete = true
+    }
   }
 
   function expire() {
@@ -162,7 +189,7 @@ export async function fetchApplicantListPage({
   sleepFn = sleep,
   maxRetries = 4,
 } = {}) {
-  const pathname = query ? '/applicants' : applicantListPath(page)
+  const pathname = applicantListPath(page)
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const url = new URL(`${BASE}${pathname}`)
     url.searchParams.set('apikey', apiKey)

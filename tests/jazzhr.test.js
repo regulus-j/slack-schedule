@@ -114,7 +114,7 @@ test('fetchAllApplicants stops after repeated duplicate pages and dedupes by app
   try {
     const logger = testLogger();
     const result = await fetchAllApplicants('api-key', logger, 5);
-    assert.deepEqual(requestedPages, [1, 2, 3]);
+    assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
     assert.equal(result.total, 300);
     assert.equal(result.unique, 100);
     assert.equal(result.pagesFetched, 3);
@@ -147,7 +147,7 @@ test('fetchAllApplicants tolerates one duplicate page before continuing', async 
 
   try {
     const result = await fetchAllApplicants('api-key', testLogger(), 5);
-    assert.deepEqual(requestedPages, [1, 2, 3]);
+    assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
     assert.equal(result.total, 201);
     assert.equal(result.unique, 101);
     assert.equal(result.pagesFetched, 3);
@@ -181,6 +181,39 @@ test('fetchAllApplicants logs when applicant page cap is reached', async () => {
   }
 });
 
+test('fetchAllApplicants fetches applicant pages in parallel batches', async () => {
+  const originalFetch = globalThis.fetch;
+  let active = 0;
+  let maxActive = 0;
+  const requestedPages = [];
+  globalThis.fetch = async (url) => {
+    const page = requestedApplicantPage(url);
+    requestedPages.push(page);
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, page === 1 ? 0 : 5));
+    active--;
+    return {
+      ok: true,
+      async json() {
+        return Array.from({ length: 100 }, (_, index) =>
+          applicant({ id: `${page}-${index + 1}`, email: `a${page}-${index + 1}@example.com` }),
+        );
+      },
+    };
+  };
+
+  try {
+    const result = await fetchAllApplicants('api-key', testLogger(), 5);
+    assert.deepEqual(requestedPages, [1, 2, 3, 4, 5]);
+    assert.equal(maxActive, 4);
+    assert.equal(result.pagesFetched, 5);
+    assert.equal(result.maxPagesReached, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('fetchAllApplicants uses JazzHR path-based pagination', async () => {
   const originalFetch = globalThis.fetch;
   const requestedPaths = [];
@@ -203,7 +236,13 @@ test('fetchAllApplicants uses JazzHR path-based pagination', async () => {
 
   try {
     const result = await fetchAllApplicants('api-key', testLogger(), 5);
-    assert.deepEqual(requestedPaths, ['/v1/applicants', '/v1/applicants/page/2']);
+    assert.deepEqual(requestedPaths, [
+      '/v1/applicants',
+      '/v1/applicants/page/2',
+      '/v1/applicants/page/3',
+      '/v1/applicants/page/4',
+      '/v1/applicants/page/5',
+    ]);
     assert.equal(result.applicants.length, 101);
     assert.equal(result.applicants.at(-1).stage, 'Resume Screening');
   } finally {

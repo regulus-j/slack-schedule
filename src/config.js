@@ -29,7 +29,7 @@ export function loadConfig(env = process.env) {
       liveSearch: {
         pageSize: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_RESULT_PAGE_SIZE, 20),
         concurrency: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_CONCURRENCY, 2),
-        maxPages: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_MAX_PAGES, 1000),
+        maxPages: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_MAX_PAGES, 10),
         sessionTtlMs: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_SESSION_TTL_MS, 900000),
       },
     },

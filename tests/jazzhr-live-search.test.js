@@ -27,6 +27,8 @@ function response(status, data) {
   }
 }
 
+const silentLogger = { info() {}, warn() {} }
+
 test('live search sends candidate name to the applicants endpoint', async () => {
   const requestedUrls = []
   const fetchFn = async (url) => {
@@ -37,6 +39,7 @@ test('live search sends candidate name to the applicants endpoint', async () => 
     apiKey: 'api-key',
     pageSize: 1,
     concurrency: 5,
+    logger: silentLogger,
     fetchFn,
     sleepFn: async () => {},
   })
@@ -51,6 +54,67 @@ test('live search sends candidate name to the applicants endpoint', async () => 
   assert.equal(requestedUrls[0].searchParams.get('name'), 'hanah binwihan')
 })
 
+test('live search scans later JazzHR pages for matching candidates', async () => {
+  const requestedUrls = []
+  const logger = testLogger()
+  const fetchFn = async (url) => {
+    const parsed = new URL(String(url))
+    requestedUrls.push(parsed)
+    if (parsed.pathname.endsWith('/page/2')) {
+      return response(200, [applicant('late-1', 'Late', 'Candidate')])
+    }
+    return response(200, Array.from({ length: 100 }, (_, index) =>
+      applicant(`other-${index}`, 'Other', `Person ${index}`),
+    ))
+  }
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 1,
+    maxPages: 3,
+    logger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({ query: 'late candidate' })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.equal(result.resultCount, 1)
+  assert.equal(result.results[0].fullName, 'Late Candidate')
+  assert.equal(result.complete, true)
+  assert.deepEqual(requestedUrls.map((url) => url.pathname), ['/v1/applicants', '/v1/applicants/page/2'])
+  assert.deepEqual(requestedUrls.map((url) => url.searchParams.get('name')), ['late candidate', 'late candidate'])
+  assert.deepEqual(logger.infos.map((entry) => entry.event), [
+    'jazzhr_live_search_page_scanned',
+    'jazzhr_live_search_page_scanned',
+  ])
+})
+
+test('live search stops at configured JazzHR page cap', async () => {
+  const requestedUrls = []
+  const fetchFn = async (url) => {
+    requestedUrls.push(new URL(String(url)))
+    return response(200, Array.from({ length: 100 }, (_, index) =>
+      applicant(`other-${requestedUrls.length}-${index}`, 'Other', `Person ${index}`),
+    ))
+  }
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 1,
+    maxPages: 2,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({ query: 'missing candidate' })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.equal(result.resultCount, 0)
+  assert.equal(result.complete, true)
+  assert.deepEqual(requestedUrls.map((url) => url.pathname), ['/v1/applicants', '/v1/applicants/page/2'])
+})
+
 test('live search dedupes candidates by JazzHR id', async () => {
   const fetchFn = async () => response(200, [
     applicant('same-id', 'Alex', 'Reyes', { job_title: 'Role A' }),
@@ -60,6 +124,7 @@ test('live search dedupes candidates by JazzHR id', async () => {
   const manager = createJazzhrLiveSearchManager({
     apiKey: 'api-key',
     pageSize: 20,
+    logger: silentLogger,
     fetchFn,
     sleepFn: async () => {},
   })
@@ -84,6 +149,7 @@ test('live search paginates matching results twenty at a time', async () => {
   const manager = createJazzhrLiveSearchManager({
     apiKey: 'api-key',
     pageSize: 20,
+    logger: silentLogger,
     fetchFn,
     sleepFn: async () => {},
   })
@@ -112,6 +178,7 @@ test('next page uses already collected live session results', async () => {
     apiKey: 'api-key',
     pageSize: 1,
     concurrency: 1,
+    logger: silentLogger,
     fetchFn,
     sleepFn: async () => {},
   })
@@ -140,6 +207,7 @@ test('previous page uses already collected live session results', async () => {
     apiKey: 'api-key',
     pageSize: 1,
     concurrency: 1,
+    logger: silentLogger,
     fetchFn,
     sleepFn: async () => {},
   })
@@ -171,6 +239,7 @@ test('live search coalesces concurrent page requests for one session', async () 
     apiKey: 'api-key',
     pageSize: 1,
     concurrency: 2,
+    logger: silentLogger,
     fetchFn,
     sleepFn: async () => {},
   })
@@ -201,12 +270,30 @@ test('live search retries 429 responses with backoff', async () => {
   assert.deepEqual(delays, [1000])
 })
 
+test('live search includes query params on path-paginated applicant requests', async () => {
+  const requestedUrls = []
+  await fetchApplicantListPage({
+    apiKey: 'api-key',
+    page: 3,
+    query: 'alex',
+    fetchFn: async (url) => {
+      requestedUrls.push(new URL(String(url)))
+      return response(200, [])
+    },
+    sleepFn: async () => {},
+  })
+
+  assert.equal(requestedUrls[0].pathname, '/v1/applicants/page/3')
+  assert.equal(requestedUrls[0].searchParams.get('name'), 'alex')
+})
+
 test('live search sessions expire and stale versions can be detected', async () => {
   let currentTime = 1000
   const manager = createJazzhrLiveSearchManager({
     apiKey: 'api-key',
     ttlMs: 100,
     now: () => currentTime,
+    logger: silentLogger,
     fetchFn: async () => response(200, []),
     sleepFn: async () => {},
   })
@@ -219,3 +306,16 @@ test('live search sessions expire and stale versions can be detected', async () 
   manager.expire()
   assert.equal(manager.get(session.id), null)
 })
+
+function testLogger() {
+  return {
+    infos: [],
+    warns: [],
+    info(event, data) {
+      this.infos.push({ event, data })
+    },
+    warn(event, data) {
+      this.warns.push({ event, data })
+    },
+  }
+}

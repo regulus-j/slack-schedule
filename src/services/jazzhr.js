@@ -2,6 +2,7 @@ import { setApplicants, setRecruiters, getApplicants } from '../data/cache.js';
 import { searchApplicants } from '../data/search.js';
 
 const BASE = 'https://api.resumatorapi.com/v1';
+const FETCH_CONCURRENCY = 4;
 const EXCLUDED_APPLICANT_DISPOSITIONS = [
   '1ST INTERVIEW - REJECTED BY RECRUITER',
   'RESUME SCREENING - REJECTED BY RECRUITER',
@@ -101,17 +102,19 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
 export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
   const all = [];
   const seenIds = new Set();
-  let page = 1;
   const perPage = 100;
   let totalFetched = 0;
   let pagesFetched = 0;
   let duplicatePages = 0;
+  let nextPage = 1;
+  let shouldStop = false;
   const resolvedMaxPages = positiveInteger(maxPages, 250);
 
-  while (page <= resolvedMaxPages) {
-    const data = await jazzhrGetWithRetry(applicantListPath(page), apiKey, logger);
-
-    if (!Array.isArray(data) || data.length === 0) break;
+  const processPage = ({ page, data }) => {
+    if (!Array.isArray(data) || data.length === 0) {
+      shouldStop = true;
+      return;
+    }
 
     totalFetched += data.length;
     pagesFetched++;
@@ -135,19 +138,40 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
           totalFetched,
           unique: all.length,
         });
-        break;
+        shouldStop = true;
+        return;
       }
     } else {
       duplicatePages = 0;
     }
 
-    if (data.length < perPage) break;
-    page++;
+    if (data.length < perPage) shouldStop = true;
+  };
 
-    if (page > 1) await sleep(350);
+  const fetchPage = async (page) => ({
+    page,
+    data: await jazzhrGetWithRetry(applicantListPath(page), apiKey, logger),
+  });
+
+  processPage(await fetchPage(nextPage));
+  nextPage++;
+
+  while (!shouldStop && nextPage <= resolvedMaxPages) {
+    const batchPages = [];
+    while (batchPages.length < FETCH_CONCURRENCY && nextPage <= resolvedMaxPages) {
+      batchPages.push(nextPage);
+      nextPage++;
+    }
+
+    const batchResults = await Promise.all(batchPages.map(fetchPage));
+    for (const result of batchResults) {
+      processPage(result);
+      if (shouldStop) break;
+    }
   }
 
-  if (page > resolvedMaxPages) {
+  const maxPagesReached = !shouldStop && nextPage > resolvedMaxPages;
+  if (maxPagesReached) {
     logger.warn('jazzhr_applicants_max_pages_reached', {
       maxPages: resolvedMaxPages,
       totalFetched,
@@ -160,7 +184,7 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250) {
     total: totalFetched,
     unique: all.length,
     pagesFetched,
-    maxPagesReached: page > resolvedMaxPages,
+    maxPagesReached,
   };
 }
 
