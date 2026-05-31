@@ -3,16 +3,13 @@ import crypto from 'node:crypto'
 const BASE = 'https://api.resumatorapi.com/v1'
 const DEFAULT_PAGE_SIZE = 20
 const DEFAULT_CONCURRENCY = 2
-const DEFAULT_MAX_PAGES = 1000
 const DEFAULT_TTL_MS = 15 * 60 * 1000
-const RAW_PAGE_SIZE = 100
 
 export function createJazzhrLiveSearchManager({
   apiKey,
   logger = console,
   pageSize = DEFAULT_PAGE_SIZE,
   concurrency = DEFAULT_CONCURRENCY,
-  maxPages = DEFAULT_MAX_PAGES,
   ttlMs = DEFAULT_TTL_MS,
   fetchFn = globalThis.fetch,
   now = () => Date.now(),
@@ -21,7 +18,6 @@ export function createJazzhrLiveSearchManager({
   const sessions = new Map()
   const limiter = createLimiter(positiveInteger(concurrency, DEFAULT_CONCURRENCY))
   const resolvedPageSize = positiveInteger(pageSize, DEFAULT_PAGE_SIZE)
-  const resolvedMaxPages = positiveInteger(maxPages, DEFAULT_MAX_PAGES)
   const resolvedTtlMs = positiveInteger(ttlMs, DEFAULT_TTL_MS)
 
   function start({ query, userId = '' } = {}) {
@@ -36,7 +32,6 @@ export function createJazzhrLiveSearchManager({
       version: 1,
       pageSize: resolvedPageSize,
       currentPage: 0,
-      nextJazzhrPage: 1,
       results: [],
       resultIds: new Set(),
       complete: false,
@@ -121,46 +116,17 @@ export function createJazzhrLiveSearchManager({
   }
 
   async function scanUntil(session, targetCount) {
-    while (!session.complete && !session.error && session.results.length < targetCount) {
-      if (session.nextJazzhrPage > resolvedMaxPages) {
-        session.complete = true
-        logger.warn?.('jazzhr_live_search_max_pages_reached', {
-          sessionId: session.id,
-          query: session.query,
-          maxPages: resolvedMaxPages,
-          results: session.results.length,
-        })
-        break
-      }
+    if (session.complete || session.error || session.results.length >= targetCount) return
 
-      const pages = []
-      for (
-        let i = 0;
-        i < limiter.limit && session.nextJazzhrPage <= resolvedMaxPages;
-        i++
-      ) {
-        pages.push(session.nextJazzhrPage++)
-      }
-
-      const pageResults = await Promise.all(pages.map((page) =>
-        limiter.run(() => fetchApplicantListPage({
-          apiKey,
-          page,
-          fetchFn,
-          logger,
-          sleepFn,
-        })),
-      ))
-
-      pageResults.sort((left, right) => left.page - right.page)
-      for (const pageResult of pageResults) {
-        if (!pageResult.items.length) {
-          session.complete = true
-          break
-        }
-        addMatches(session, pageResult)
-      }
-    }
+    const result = await limiter.run(() => fetchApplicantListPage({
+      apiKey,
+      query: session.query,
+      fetchFn,
+      logger,
+      sleepFn,
+    }))
+    addMatches(session, result)
+    session.complete = true
   }
 
   function expire() {
@@ -190,15 +156,17 @@ export function createJazzhrLiveSearchManager({
 export async function fetchApplicantListPage({
   apiKey,
   page = 1,
+  query = '',
   fetchFn = globalThis.fetch,
   logger = console,
   sleepFn = sleep,
   maxRetries = 4,
 } = {}) {
-  const pathname = applicantListPath(page)
+  const pathname = query ? '/applicants' : applicantListPath(page)
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const url = new URL(`${BASE}${pathname}`)
     url.searchParams.set('apikey', apiKey)
+    if (query) url.searchParams.set('name', query)
     const response = await fetchFn(String(url))
 
     if (response.ok) {
@@ -228,7 +196,7 @@ export async function fetchApplicantListPage({
 
 function addMatches(session, pageResult) {
   pageResult.items.forEach((item, index) => {
-    const candidate = mapLiveApplicant(item, (pageResult.page - 1) * RAW_PAGE_SIZE + index)
+    const candidate = mapLiveApplicant(item, index)
     if (!candidate) return
     if (!normalizeSearchText(candidate.fullName).includes(session.normalizedQuery)) return
     const dedupeId = normalizeCandidateId(candidate.id)
@@ -284,7 +252,6 @@ function snapshot(session) {
     version: session.version,
     pageSize: session.pageSize,
     currentPage: session.currentPage,
-    nextJazzhrPage: session.nextJazzhrPage,
     resultCount: session.results.length,
     complete: session.complete,
     error: session.error,
