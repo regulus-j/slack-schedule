@@ -98,6 +98,46 @@ test('filterActiveApplicants excludes inactive applicants and reports reason cou
   ]);
 });
 
+test('filterActiveApplicants keeps active roles when the same prospect has inactive roles', () => {
+  const result = filterActiveApplicants([
+    applicant({
+      id: 'prospect_20251114130635_6UJNT7JFAPBYTR7L',
+      first_name: 'Hanah',
+      last_name: 'Binwihan',
+      jobs: [
+        {
+          job_id: 'job_20251027231757_ROB6GQOIESO4H5IC',
+          job_title: 'Real Estate VA (Part-time) - Philippines',
+          applicant_progress: 'PreScreening',
+        },
+        {
+          job_id: 'job_20260114053558_LPN1T4XKPRR6RWQX',
+          job_title: 'Sales Systems & CRM Support Associate',
+          applicant_progress: 'Good for Future hire',
+        },
+        {
+          job_id: 'job_20260526025915_IWQTYUA0HPDDSUK1',
+          job_title: 'DocuSign Administrator - PH',
+          applicant_progress: 'Good for Future hire',
+        },
+      ],
+    }),
+  ]);
+
+  assert.equal(result.total, 3);
+  assert.equal(result.excluded, 2);
+  assert.equal(result.applicants.length, 1);
+  assert.equal(result.applicants[0].fullName, 'Hanah Binwihan');
+  assert.equal(result.applicants[0].jobTitle, 'Real Estate VA (Part-time) - Philippines');
+  assert.equal(result.applicants[0].stage, 'PreScreening');
+  assert.equal(
+    result.applicants[0].id,
+    'applicant-prospect_20251114130635_6UJNT7JFAPBYTR7L::job_20251027231757_ROB6GQOIESO4H5IC',
+  );
+  assert.equal(result.applicants[0].jazzhrApplicationId, 'prospect_20251114130635_6UJNT7JFAPBYTR7L');
+  assert.equal(result.applicants[0].jazzhrJobId, 'job_20251027231757_ROB6GQOIESO4H5IC');
+});
+
 test('hydrateJazzhrCacheFromStore loads persisted candidates into the in-memory cache', async () => {
   const result = await hydrateJazzhrCacheFromStore({
     logger: testLogger(),
@@ -187,6 +227,49 @@ test('fetchAllApplicants tolerates one duplicate page before continuing', async 
     assert.equal(result.maxPagesReached, false);
     assert.equal(result.applicants.length, 101);
     assert.equal(result.applicants.at(-1).email, 'a101@example.com');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchAllApplicants keeps repeated prospect ids when role applications differ', async () => {
+  const originalFetch = globalThis.fetch;
+  const pages = [
+    Array.from({ length: 100 }, (_, index) => index === 0
+      ? applicant({
+        id: 'prospect-1',
+        jobs: [{ job_id: 'job-1', job_title: 'Active Role', applicant_progress: 'PreScreening' }],
+      })
+      : applicant({ id: `page-1-${index}` })),
+    [
+      applicant({
+        id: 'prospect-1',
+        jobs: [{ job_id: 'job-2', job_title: 'Second Active Role', applicant_progress: 'PreScreening' }],
+      }),
+    ],
+  ];
+  globalThis.fetch = async (url) => {
+    const page = requestedApplicantPage(url);
+    return {
+      ok: true,
+      async json() {
+        return pages[page - 1] || [];
+      },
+    };
+  };
+
+  try {
+    const result = await fetchAllApplicants('api-key', testLogger(), 5);
+    assert.deepEqual(
+      result.applicants
+        .filter((item) => item.jazzhrApplicationId === 'prospect-1')
+        .map((item) => item.id),
+      [
+        'applicant-prospect-1::job-1',
+        'applicant-prospect-1::job-2',
+      ],
+    );
+    assert.equal(result.unique, 101);
   } finally {
     globalThis.fetch = originalFetch;
   }

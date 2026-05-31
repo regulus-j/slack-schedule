@@ -55,6 +55,33 @@ test('candidate index excludes rejected stages from search results', () => {
   assert.deepEqual(results.map((record) => record.fullName), ['Ashwini Active'])
 })
 
+test('candidate index preserves separate role applications for one prospect', () => {
+  const records = normalizeJazzhrCandidates([
+    {
+      jazzhrApplicationId: 'prospect-1',
+      jazzhrJobId: 'job-active',
+      fullName: 'Hanah Binwihan',
+      jobTitle: 'Real Estate VA',
+      stage: 'PreScreening',
+      appliedAt: '2026-05-28',
+    },
+    {
+      jazzhrApplicationId: 'prospect-1',
+      jazzhrJobId: 'job-future',
+      fullName: 'Hanah Binwihan',
+      jobTitle: 'DocuSign Administrator',
+      stage: 'Resume Screening',
+      appliedAt: '2026-05-27',
+    },
+  ])
+
+  assert.deepEqual(records.map((record) => record.id), [
+    'applicant-prospect-1::job-active',
+    'applicant-prospect-1::job-future',
+  ])
+  assert.deepEqual(records.map((record) => record.jazzhrApplicationId), ['prospect-1', 'prospect-1'])
+})
+
 test('json store persists and searches JazzHR candidate index', async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'candidate-index-'))
   try {
@@ -63,15 +90,25 @@ test('json store persists and searches JazzHR candidate index', async () => {
     await store.saveJazzhrCandidates([
       { jazzhrApplicationId: '1', fullName: 'Alex Reyes', appliedAt: '2024-01-01' },
       { jazzhrApplicationId: '2', fullName: 'Alex Santos', appliedAt: '2024-03-01' },
+      { jazzhrApplicationId: '2', jazzhrJobId: 'job-2', fullName: 'Alex Santos', jobTitle: 'Second Role', appliedAt: '2024-03-02' },
     ])
 
     const results = await store.searchJazzhrCandidates('alex')
     const listed = await store.listJazzhrCandidates()
-    const selected = await store.getJazzhrCandidate('2')
+    const selected = await store.getJazzhrCandidate('2::job-2')
 
-    assert.deepEqual(results.map((record) => record.fullName), ['Alex Santos', 'Alex Reyes'])
-    assert.deepEqual(listed.map((record) => record.fullName), ['Alex Santos', 'Alex Reyes'])
+    assert.deepEqual(results.map((record) => record.id), [
+      'applicant-2::job-2',
+      'applicant-2',
+      'applicant-1',
+    ])
+    assert.deepEqual(listed.map((record) => record.id), [
+      'applicant-2::job-2',
+      'applicant-2',
+      'applicant-1',
+    ])
     assert.equal(selected.fullName, 'Alex Santos')
+    assert.equal(selected.jobTitle, 'Second Role')
   } finally {
     await rm(runtimeDir, { recursive: true, force: true })
   }

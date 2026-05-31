@@ -147,8 +147,9 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurr
     pagesFetched++;
     let newCount = 0;
     for (const item of data) {
-      if (!seenIds.has(item.id)) {
-        seenIds.add(item.id);
+      const itemKey = applicantRecordKey(item);
+      if (!seenIds.has(itemKey)) {
+        seenIds.add(itemKey);
         all.push(item);
         newCount++;
       }
@@ -219,27 +220,60 @@ function applicantListPath(page) {
   return page <= 1 ? '/applicants' : `/applicants/page/${page}`;
 }
 
+function applicantRecordKey(item) {
+  const id = String(item?.id || item?.applicant_id || '').trim();
+  const jobs = Array.isArray(item?.jobs) ? item.jobs : [];
+  if (jobs.length === 0) return id;
+  return [
+    id,
+    ...jobs.map((job) => [
+      job?.job_id || job?.id || '',
+      job?.job_title || job?.title || '',
+      job?.applicant_progress || job?.applicantProgress || '',
+    ].join(':')),
+  ].join('|');
+}
+
 export function filterActiveApplicants(items) {
   const applicants = [];
   const excludedReasonCounts = {};
   let excluded = 0;
+  let total = 0;
 
   for (const item of items || []) {
-    const inactiveReason = inactiveApplicantReason(item);
-    if (inactiveReason) {
-      excluded++;
-      excludedReasonCounts[inactiveReason] = (excludedReasonCounts[inactiveReason] || 0) + 1;
-      continue;
+    for (const record of applicantRoleRecords(item)) {
+      total++;
+      const inactiveReason = inactiveApplicantReason(record);
+      if (inactiveReason) {
+        excluded++;
+        excludedReasonCounts[inactiveReason] = (excludedReasonCounts[inactiveReason] || 0) + 1;
+        continue;
+      }
+      applicants.push(mapApplicant(record, applicants.length));
     }
-    applicants.push(mapApplicant(item, applicants.length));
   }
 
   return {
     applicants,
-    total: Array.isArray(items) ? items.length : 0,
+    total,
     excluded,
     excludedReasons: topReasonCounts(excludedReasonCounts),
   };
+}
+
+function applicantRoleRecords(item) {
+  const jobs = Array.isArray(item?.jobs) ? item.jobs.filter(Boolean) : [];
+  if (jobs.length === 0) return [item];
+  return jobs.map((job) => ({
+    ...item,
+    jobs: job,
+    job_id: job.job_id || job.id || '',
+    job_title: job.job_title || job.title || item.job_title || '',
+    applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || '',
+    workflow_step_id: job.workflow_step_id || item.workflow_step_id || '',
+    apply_date: job.apply_date || job.applyDate || item.apply_date || item.applyDate,
+    date_applied: job.date_applied || job.dateApplied || item.date_applied || item.dateApplied,
+  }));
 }
 
 export function inactiveApplicantReason(item) {
@@ -402,9 +436,14 @@ function isActiveUser(user) {
 function mapApplicant(item, sourceOrder = 0) {
   const firstName = item.first_name || ''
   const lastName = item.last_name || ''
+  const jazzhrApplicationId = String(item.id)
+  const jazzhrJobId = String(item.job_id || item.jobId || item.jobs?.job_id || item.jobs?.id || '').trim()
+  const candidateKey = [jazzhrApplicationId, jazzhrJobId].filter(Boolean).join('::')
   return {
-    id: `applicant-${item.id}`,
-    jazzhrApplicationId: String(item.id),
+    id: `applicant-${candidateKey}`,
+    candidateKey,
+    jazzhrApplicationId,
+    jazzhrJobId,
     fullName: [firstName, lastName].filter(Boolean).join(' ').trim(),
     firstName,
     lastName,

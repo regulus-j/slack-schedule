@@ -246,7 +246,10 @@ export function registerSlackHandlers(app, context) {
   app.action('candidate_search_submit', async ({ ack, body, client }) => {
     await ack();
     const query = body.view?.state?.values?.candidate_search_block?.candidate_search?.value?.trim() || '';
-    const session = query ? liveCandidateSearch.start({ query, userId: body.user?.id || '' }) : null
+    const indexedCandidates = query ? await searchCandidateIndex(store, '', query, 100) : []
+    const session = query && indexedCandidates.length === 0
+      ? liveCandidateSearch.start({ query, userId: body.user?.id || '' })
+      : null
     const templates = await loadSchedulingTemplates()
     const updateResult = await refreshIntakeModal({
       client,
@@ -255,9 +258,9 @@ export function registerSlackHandlers(app, context) {
       candidateSearchQuery: query,
       candidateSearchSessionId: session?.id || '',
       candidateSearchPage: 0,
-      candidateSearchResultCount: session?.resultCount || 0,
+      candidateSearchResultCount: indexedCandidates.length || session?.resultCount || 0,
       candidateSearchPageSize: session?.pageSize || config.jazzhr.liveSearch?.pageSize || 20,
-      candidateSearchComplete: session?.complete || false,
+      candidateSearchComplete: indexedCandidates.length > 0 || session?.complete || false,
       candidateSearchSearching: Boolean(session && !session.complete),
       candidateSearchError: session?.error || '',
       timeZones: schedulingTimeZones,
@@ -363,6 +366,21 @@ export function registerSlackHandlers(app, context) {
       })
     }
   });
+
+  app.action('manual_candidate_toggle', async ({ ack, body, client }) => {
+    await ack()
+    const manualCandidateMode = selectedCheckboxValue(body, 'manual')
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      selectedKey: manualCandidateMode ? 'applicant' : undefined,
+      selectedId: manualCandidateMode ? '' : undefined,
+      manualCandidateMode,
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
 
   app.action('open_schedule_tracker', async ({ ack, body, client }) => {
     await ack();
@@ -574,9 +592,8 @@ export function registerSlackHandlers(app, context) {
     const livePage = Number(metadata?.candidateSearchPage || 0)
     const liveCandidates = liveCandidateSearch.getPageCandidates(liveSessionId, livePage, options.value)
     const baseQuery = metadata?.candidateSearchQuery || ''
-    const candidates = liveCandidates.length > 0 || liveSessionId
-      ? liveCandidates
-      : await searchCandidateIndex(store, options.value, baseQuery, 100)
+    const indexedCandidates = await searchCandidateIndex(store, options.value, baseQuery, 100)
+    const candidates = mergeCandidateOptions(indexedCandidates, liveCandidates)
     const resolvedOptions = candidates.length > 0 || baseQuery || liveSessionId
       ? candidates.slice(0, 100).map(candidateToSlackOption)
       : applicantOptions(options.value, getApplicants())
@@ -632,8 +649,15 @@ export function registerSlackHandlers(app, context) {
     if (!stageKey) {
       errors.stage_block = 'Choose an interview stage.';
     }
-    if (!intakeDraft.applicant) {
-      errors.manual_applicant_name_block = 'Choose a candidate or enter the candidate name.';
+    if (intakeDraft.manualCandidateMode) {
+      if (!intakeDraft.manualApplicantName) {
+        errors.manual_applicant_name_block = 'Enter the candidate name.';
+      }
+      if (!intakeDraft.manualApplicantRole) {
+        errors.manual_applicant_role_block = 'Enter the candidate role.';
+      }
+    } else if (!intakeDraft.applicant) {
+      errors.applicant_block = 'Choose a candidate.';
     }
 
     if (intakeDraft.applicantEmail && !isValidEmail(intakeDraft.applicantEmail)) {
@@ -1838,7 +1862,7 @@ async function openIntakeModal({
   ensureSlackDirectory({ client, config, logger }).catch((error) => {
     logger.warn('slack_directory_background_failed', { error: error.message })
   })
-  const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false });
+  const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false, manualCandidateMode: false });
   logger.info('schedule_intake_opened', { templateCount: templates.length });
   await client.views.open({
     trigger_id: triggerId,
@@ -1902,9 +1926,13 @@ function buildPrivateMetadata(view, overrides = {}) {
   const candidateSearchError = 'candidateSearchError' in overrides
     ? overrides.candidateSearchError
     : parsed.candidateSearchError || ''
+  const manualCandidateMode = 'manualCandidateMode' in overrides
+    ? Boolean(overrides.manualCandidateMode)
+    : Boolean(parsed.manualCandidateMode)
   return JSON.stringify({
     channelId,
     showDetails,
+    manualCandidateMode,
     candidateSearchQuery,
     candidateSearchSessionId,
     candidateSearchPage,
@@ -1933,13 +1961,17 @@ async function refreshIntakeModal({
   candidateSearchComplete,
   candidateSearchSearching,
   candidateSearchError,
+  manualCandidateMode,
   timeZones = [],
   defaultTimeZone,
   useHash = true,
 }) {
   if (!body.view?.id || !body.view?.hash) return;
-  const overrides = { [selectedKey]: selectedId }
+  const overrides = selectedKey ? { [selectedKey]: selectedId } : {}
   const metadata = parsePrivateMetadata(body.view.private_metadata) || {}
+  overrides.manualCandidateMode = manualCandidateMode !== undefined
+    ? Boolean(manualCandidateMode)
+    : Boolean(metadata.manualCandidateMode)
   if (candidateSearchQuery === undefined && metadata.candidateSearchQuery) {
     overrides.candidateSearchQuery = metadata.candidateSearchQuery
     overrides.candidateSearchSessionId = metadata.candidateSearchSessionId || ''
@@ -1962,9 +1994,6 @@ async function refreshIntakeModal({
   }
   if (selectedKey === 'applicant' && selectedApplicant) {
     overrides.applicantRecord = selectedApplicant
-    overrides.manualApplicantName = selectedApplicant.fullName ||
-      [selectedApplicant.firstName, selectedApplicant.lastName].filter(Boolean).join(' ')
-    overrides.applicantEmail = selectedApplicant.email || ''
   }
   if (selectedKey === 'recruiter' && selectedPerson) {
     overrides.recruiterPerson = selectedPerson
@@ -2018,6 +2047,7 @@ async function refreshIntakeModal({
     candidateSearchComplete: draft.candidateSearchComplete,
     candidateSearchSearching: draft.candidateSearchSearching,
     candidateSearchError: draft.candidateSearchError,
+    manualCandidateMode: draft.manualCandidateMode,
   });
 
   return client.views.update({
@@ -2509,9 +2539,19 @@ function resolveCoordinatorEmail(caseRecord) {
 
 export function buildIntakeDraft(values, templates, overrides = {}) {
   const applicantId = overrides.applicant ?? (values.applicant_block?.applicant_select?.selected_option?.value || '');
-  const manualApplicantName =
-    overrides.manualApplicantName !== undefined ? overrides.manualApplicantName : getInputValue(values, 'manual_applicant_name')
-  const applicantEmailOverride = overrides.applicantEmail !== undefined ? overrides.applicantEmail : getInputValue(values, 'applicant_email')
+  const manualCandidateMode = overrides.manualCandidateMode !== undefined
+    ? Boolean(overrides.manualCandidateMode)
+    : isCheckboxSelected(values, 'manual_candidate_toggle', 'manual') ||
+      (!values.applicant_block && hasInputElement(values, 'manual_applicant_name'))
+  const manualApplicantName = manualCandidateMode
+    ? (overrides.manualApplicantName !== undefined ? overrides.manualApplicantName : getInputValue(values, 'manual_applicant_name'))
+    : ''
+  const manualApplicantRole = manualCandidateMode
+    ? (overrides.manualApplicantRole !== undefined ? overrides.manualApplicantRole : getInputValue(values, 'manual_applicant_role'))
+    : ''
+  const applicantEmailOverride = manualCandidateMode
+    ? (overrides.applicantEmail !== undefined ? overrides.applicantEmail : getInputValue(values, 'applicant_email'))
+    : ''
   const candidateSearchQuery = overrides.candidateSearchQuery ?? getInputValue(values, 'candidate_search')
   const candidateSearchPage = Number(overrides.candidateSearchPage || 0)
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
@@ -2520,10 +2560,15 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const templateId = resolveTemplateFromStage(stageKey) || legacyTemplateId;
   const interviewTimezone = overrides.interviewTimezone ?? (values.timezone_block?.timezone_select?.selected_option?.value || '');
 
-  const applicant = applyEmailOverride(
-    overrides.applicantRecord || findApplicant(applicantId) || buildManualApplicant(manualApplicantName, applicantEmailOverride),
-    applicantEmailOverride,
-  );
+  const applicant = manualCandidateMode
+    ? applyEmailOverride(
+        buildManualApplicant(manualApplicantName, applicantEmailOverride, manualApplicantRole),
+        applicantEmailOverride,
+      )
+    : applyEmailOverride(
+        overrides.applicantRecord || findApplicant(applicantId),
+        applicantEmailOverride,
+      );
   const requiresHiringManager = stageRequiresHiringManager(stageKey)
   const selectedRecruiterId = overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '');
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
@@ -2573,7 +2618,9 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     candidateSearchSearching: Boolean(overrides.candidateSearchSearching),
     candidateSearchError: overrides.candidateSearchError || '',
     candidateSearchPageSize: overrides.candidateSearchPageSize || 20,
+    manualCandidateMode,
     manualApplicantName,
+    manualApplicantRole,
     applicantEmail: applicant?.email || '',
     recruiterEmail: recruiter?.email || '',
     hiringManagerEmail: hiringManager?.email || '',
@@ -2591,6 +2638,22 @@ function getInputValue(values, actionId) {
     if (element && 'value' in element) return element.value?.trim() || ''
   }
   return ''
+}
+
+function isCheckboxSelected(values, actionId, value) {
+  for (const block of Object.values(values || {})) {
+    const element = findElementByActionId(block, actionId)
+    const selected = element?.selected_options || []
+    if (selected.some((option) => option.value === value)) return true
+  }
+  return false
+}
+
+function hasInputElement(values, actionId) {
+  for (const block of Object.values(values || {})) {
+    if (findElementByActionId(block, actionId)) return true
+  }
+  return false
 }
 
 function findInputBlockId(values, actionId, fallback) {
@@ -2622,6 +2685,11 @@ function selectedOptionLabel(body) {
   return body.actions?.[0]?.selected_option?.text?.text || ''
 }
 
+function selectedCheckboxValue(body, value) {
+  const selected = body.actions?.[0]?.selected_options || []
+  return selected.some((option) => option.value === value)
+}
+
 export function isScheduleWorkflowTrigger(text) {
   const value = String(text || '')
     .replace(/<@[A-Z0-9]+>/gi, '')
@@ -2634,6 +2702,20 @@ export function isScheduleWorkflowTrigger(text) {
 async function searchCandidateIndex(store, query, baseQuery = '', limit = 20) {
   if (!store?.searchJazzhrCandidates) return []
   return store.searchJazzhrCandidates(query, { baseQuery, limit })
+}
+
+function mergeCandidateOptions(...groups) {
+  const seen = new Set()
+  const merged = []
+  for (const group of groups) {
+    for (const candidate of group || []) {
+      const key = candidate.candidateKey || String(candidate.id || '').replace(/^applicant-/, '') || candidate.jazzhrApplicationId
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      merged.push(candidate)
+    }
+  }
+  return merged
 }
 
 async function resolveCandidateIndexRecord(store, selectedId) {
@@ -2651,7 +2733,9 @@ function applicantFromCandidateIndex(candidate) {
   const [firstName, ...rest] = String(candidate.fullName || '').split(' ')
   return {
     id: candidate.id,
+    candidateKey: candidate.candidateKey,
     jazzhrApplicationId: candidate.jazzhrApplicationId,
+    jazzhrJobId: candidate.jazzhrJobId,
     fullName: candidate.fullName,
     firstName: candidate.firstName || firstName || '',
     lastName: candidate.lastName || rest.join(' '),
@@ -2734,13 +2818,14 @@ function applyEmailOverride(person, emailOverride) {
   };
 }
 
-function buildManualApplicant(name, email = '') {
+function buildManualApplicant(name, email = '', jobTitle = '') {
   const normalizedName = String(name || '').replace(/\s+/g, ' ').trim()
   if (!normalizedName) return null
   const parts = normalizedName.split(' ')
   const firstName = parts.shift() || normalizedName
   const lastName = parts.join(' ')
   const normalizedEmail = String(email || '').trim()
+  const normalizedJobTitle = String(jobTitle || '').replace(/\s+/g, ' ').trim()
   const idSource = [normalizedName, normalizedEmail].filter(Boolean).join('-') || normalizedName
   const id = `manual-applicant-${idSource.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || crypto.randomUUID()}`
   return {
@@ -2748,7 +2833,7 @@ function buildManualApplicant(name, email = '') {
     firstName,
     lastName,
     email: normalizedEmail,
-    jobTitle: '',
+    jobTitle: normalizedJobTitle,
     stage: '',
     source: 'Manual entry',
   }

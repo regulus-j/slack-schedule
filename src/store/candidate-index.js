@@ -1,5 +1,6 @@
 export function normalizeJazzhrCandidate(record, index = 0) {
-  const jazzhrApplicationId = String(record?.jazzhrApplicationId || record?.id || '').replace(/^applicant-/, '')
+  const identity = candidateIdentity(record)
+  const { jazzhrApplicationId, jazzhrJobId, candidateKey } = identity
   const firstName = String(record?.firstName || '').trim()
   const lastName = String(record?.lastName || '').trim()
   const fullName = String(record?.fullName || [firstName, lastName].filter(Boolean).join(' ') || '').replace(/\s+/g, ' ').trim()
@@ -7,8 +8,10 @@ export function normalizeJazzhrCandidate(record, index = 0) {
   if (!jazzhrApplicationId || !fullName) return null
 
   return {
-    id: `applicant-${jazzhrApplicationId}`,
+    id: `applicant-${candidateKey}`,
+    candidateKey,
     jazzhrApplicationId,
+    jazzhrJobId,
     fullName,
     firstName,
     lastName,
@@ -85,7 +88,19 @@ function candidateSearchText(record) {
     record.email,
     record.jobTitle,
     record.jazzhrApplicationId,
+    record.jazzhrJobId,
+    record.candidateKey,
   ].filter(Boolean).join(' '))
+}
+
+function candidateIdentity(record) {
+  const rawId = String(record?.jazzhrApplicationId || record?.id || '').replace(/^applicant-/, '').trim()
+  const [idApplicantPart, idJobPart = ''] = rawId.split('::')
+  const jazzhrApplicationId = idApplicantPart
+  const jazzhrJobId = String(record?.jazzhrJobId || record?.jobId || record?.job_id || idJobPart || '').trim()
+  const rawCandidateKey = String(record?.candidateKey || '').replace(/^applicant-/, '').trim()
+  const candidateKey = rawCandidateKey || [jazzhrApplicationId, jazzhrJobId].filter(Boolean).join('::')
+  return { jazzhrApplicationId, jazzhrJobId, candidateKey }
 }
 
 function normalizeSearchText(value) {

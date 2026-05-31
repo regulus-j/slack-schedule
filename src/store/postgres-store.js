@@ -103,7 +103,9 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
 
   function rowToJazzhrCandidate(row) {
     return normalizeJazzhrCandidate({
+      candidateKey: row.candidate_key,
       jazzhrApplicationId: row.jazzhr_application_id,
+      jazzhrJobId: row.jazzhr_job_id,
       fullName: row.full_name,
       firstName: row.first_name,
       lastName: row.last_name,
@@ -146,7 +148,9 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       for (const candidate of candidates) {
         await query(
           `INSERT INTO jazzhr_candidates (
+            candidate_key,
             jazzhr_application_id,
+            jazzhr_job_id,
             full_name,
             first_name,
             last_name,
@@ -159,9 +163,11 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
             applied_at,
             source_order
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-          ON CONFLICT (jazzhr_application_id) DO UPDATE SET
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          ON CONFLICT (candidate_key) DO UPDATE SET
             full_name = EXCLUDED.full_name,
+            jazzhr_application_id = EXCLUDED.jazzhr_application_id,
+            jazzhr_job_id = EXCLUDED.jazzhr_job_id,
             first_name = EXCLUDED.first_name,
             last_name = EXCLUDED.last_name,
             email = EXCLUDED.email,
@@ -174,7 +180,9 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
             source_order = EXCLUDED.source_order,
             updated_at = now()`,
           [
+            candidate.candidateKey,
             candidate.jazzhrApplicationId,
+            candidate.jazzhrJobId,
             candidate.fullName,
             candidate.firstName,
             candidate.lastName,
@@ -206,6 +214,8 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           email ILIKE $${params.length} OR
           job_title ILIKE $${params.length} OR
           jazzhr_application_id ILIKE $${params.length}
+          OR jazzhr_job_id ILIKE $${params.length}
+          OR candidate_key ILIKE $${params.length}
         )`);
       }
       params.push(limit * 5);
@@ -238,7 +248,14 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
 
     async getJazzhrCandidate(jazzhrApplicationId) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
-      const result = await query('SELECT * FROM jazzhr_candidates WHERE jazzhr_application_id = $1', [id]);
+      const result = await query(
+        `SELECT *
+         FROM jazzhr_candidates
+         WHERE candidate_key = $1 OR jazzhr_application_id = $1
+         ORDER BY applied_at DESC NULLS LAST, source_order ASC, full_name ASC
+         LIMIT 1`,
+        [id],
+      );
       if (!result.rows[0]) return null;
       const candidate = rowToJazzhrCandidate(result.rows[0]);
       return candidateInactiveReason(candidate) ? null : candidate;

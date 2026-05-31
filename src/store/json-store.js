@@ -70,7 +70,9 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
 
     async getJazzhrCandidate(jazzhrApplicationId) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
-      const candidate = state.jazzhrCandidates.find((item) => item.jazzhrApplicationId === id) || null;
+      const candidate = state.jazzhrCandidates.find((item) =>
+        item.candidateKey === id || item.jazzhrApplicationId === id
+      ) || null;
       if (!candidate) return null;
       return searchJazzhrCandidateRecords([candidate], '', { limit: 1 })[0] || null;
     },

@@ -492,6 +492,9 @@ test('intake modal hides HM fields before a later-stage interview is selected', 
   });
 
   const applicantNameBlock = view.blocks.find((block) => block.block_id === 'applicant_block');
+  const manualToggle = view.blocks
+    .flatMap((block) => block.elements || [])
+    .find((element) => element.action_id === 'manual_candidate_toggle');
   const manualApplicantNameBlock = view.blocks.find((block) => block.block_id === 'manual_applicant_name_block');
   const applicantEmailBlock = view.blocks.find((block) => block.block_id === 'applicant_email_block');
   const recruiterNameBlock = view.blocks.find((block) => block.block_id === 'recruiter_block');
@@ -500,18 +503,43 @@ test('intake modal hides HM fields before a later-stage interview is selected', 
   const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block');
 
   assert.equal(applicantNameBlock.element.type, 'external_select');
-  assert.equal(applicantNameBlock.optional, true);
-  assert.equal(manualApplicantNameBlock.element.type, 'plain_text_input');
-  assert.equal(manualApplicantNameBlock.element.action_id, 'manual_applicant_name');
-  assert.equal(manualApplicantNameBlock.optional, true);
+  assert.equal(applicantNameBlock.optional, false);
+  assert.equal(manualToggle.type, 'checkboxes');
+  assert.equal(manualApplicantNameBlock, undefined);
   assert.equal(recruiterNameBlock.element.type, 'external_select');
-  assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
-  assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
+  assert.equal(applicantEmailBlock, undefined);
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
   assert.equal(hmNameBlock, undefined);
   assert.equal(hmEmailBlock, undefined);
   assert.equal(applicantNameBlock.element.initial_option.value, 'applicant-demo-1');
   assert.equal(recruiterNameBlock.element.initial_option.value, 'rec-jam');
+});
+
+test('intake modal shows required manual candidate fields only in manual mode', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      manualCandidateMode: true,
+      manualApplicantName: 'Maria Santos',
+      manualApplicantRole: 'Executive Assistant',
+      applicantEmail: 'maria@example.com',
+    },
+  });
+
+  const applicantNameBlock = view.blocks.find((block) => block.block_id === 'applicant_block');
+  const searchBlock = view.blocks.find((block) => block.block_id === 'candidate_search_block');
+  const manualNameBlock = view.blocks.find((block) => block.block_id === 'manual_applicant_name_block');
+  const manualRoleBlock = view.blocks.find((block) => block.block_id === 'manual_applicant_role_block');
+  const applicantEmailBlock = view.blocks.find((block) => block.block_id === 'applicant_email_block');
+
+  assert.equal(applicantNameBlock, undefined);
+  assert.equal(searchBlock, undefined);
+  assert.equal(manualNameBlock.optional, false);
+  assert.equal(manualNameBlock.element.initial_value, 'Maria Santos');
+  assert.equal(manualRoleBlock.optional, false);
+  assert.equal(manualRoleBlock.element.initial_value, 'Executive Assistant');
+  assert.equal(applicantEmailBlock.optional, true);
+  assert.equal(applicantEmailBlock.element.initial_value, 'maria@example.com');
 });
 
 test('intake modal requires HM fields and resume link for later-stage interviews', () => {
@@ -615,8 +643,13 @@ test('builds intake draft from a manually entered candidate name', () => {
 
   const draft = buildIntakeDraft(
     {
-      applicant_block: { applicant_select: { selected_option: null } },
+      manual_candidate_mode_block: {
+        manual_candidate_toggle: {
+          selected_options: [{ value: 'manual' }],
+        },
+      },
       manual_applicant_name_block: { manual_applicant_name: { value: 'Maria Santos' } },
+      manual_applicant_role_block: { manual_applicant_role: { value: 'Executive Assistant' } },
       applicant_email_block: { applicant_email: { value: 'maria@example.com' } },
       stage_block: { stage_select: { selected_option: { value: '1st-interview' } } },
     },
@@ -625,9 +658,11 @@ test('builds intake draft from a manually entered candidate name', () => {
 
   assert.equal(draft.applicantId, '');
   assert.equal(draft.manualApplicantName, 'Maria Santos');
+  assert.equal(draft.manualApplicantRole, 'Executive Assistant');
   assert.equal(draft.applicant.firstName, 'Maria');
   assert.equal(draft.applicant.lastName, 'Santos');
   assert.equal(draft.applicant.email, 'maria@example.com');
+  assert.equal(draft.applicant.jobTitle, 'Executive Assistant');
   assert.equal(draft.applicant.source, 'Manual entry');
   assert.equal(draft.applicantEmail, 'maria@example.com');
 });
@@ -656,6 +691,8 @@ test('builds intake draft recruiter from the selected applicant', () => {
   const draft = buildIntakeDraft(
     {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-jazz-1' } } },
+      manual_applicant_name_block: { manual_applicant_name: { value: 'Stale Manual Name' } },
+      manual_applicant_role_block: { manual_applicant_role: { value: 'Stale Role' } },
       applicant_email_block: { applicant_email: { value: '' } },
       recruiter_email_block: { recruiter_email: { value: '' } },
     },
@@ -667,6 +704,9 @@ test('builds intake draft recruiter from the selected applicant', () => {
   assert.equal(draft.recruiterEmail, 'mara@example.com');
   assert.equal(draft.recruiterOption.value, 'rec-123');
   assert.equal(draft.recruiterOption.text.text, 'Mara Santos - mara@example.com');
+  assert.equal(draft.manualCandidateMode, false);
+  assert.equal(draft.manualApplicantName, '');
+  assert.equal(draft.applicant.jobTitle, 'Support Specialist');
 });
 
 test('builds intake draft selection email from Slack profile override', () => {

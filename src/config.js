@@ -25,7 +25,7 @@ export function loadConfig(env = process.env) {
     },
     jazzhr: {
       apiKey: mergedEnv.JAZZHR_API_KEY,
-      applicantMaxPages: positiveInteger(mergedEnv.JAZZHR_APPLICANT_MAX_PAGES, 250),
+      applicantMaxPages: positiveInteger(mergedEnv.JAZZHR_APPLICANT_MAX_PAGES, 500),
       applicantFetchConcurrency: positiveInteger(mergedEnv.JAZZHR_APPLICANT_FETCH_CONCURRENCY, 2),
       refreshOnStartup: parseBoolean(mergedEnv.JAZZHR_REFRESH_ON_STARTUP, false),
       liveSearch: {

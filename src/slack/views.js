@@ -114,6 +114,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     value: selectedTimeZone,
   }
   const recruiterSelect = recruiterSelectElement({ recruiters, draft })
+  const manualCandidateMode = Boolean(draft.manualCandidateMode)
   const recruiterEmailBlockId = dynamicBlockId('recruiter_email_block', draft.recruiterId)
   const hiringManagerEmailBlockId = dynamicBlockId('hm_email_block', draft.hiringManagerId)
   const recruiterEmailActionId = dynamicBlockId('recruiter_email', draft.recruiterId)
@@ -150,58 +151,73 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     submit: plain('➕ Create'),
     close: plain('Cancel'),
     blocks: [
-      input(
-        'Candidate name search',
-        'candidate_search_block',
+      actions([manualCandidateModeCheckbox(draft)], 'manual_candidate_mode_block'),
+      ...(!manualCandidateMode ? [
+        input(
+          'Candidate name search',
+          'candidate_search_block',
+          {
+            type: 'plain_text_input',
+            action_id: 'candidate_search',
+            placeholder: plain('Type part of the candidate name'),
+            ...(draft.candidateSearchQuery ? { initial_value: draft.candidateSearchQuery } : {}),
+          },
+          true,
+        ),
+        actions([
+          button('Search', 'candidate_search_submit', 'primary'),
+          ...candidateSearchPaginationButtons(draft),
+        ]),
+        ...(draft.candidateSearchQuery ? [section(candidateSearchSummary(draft))] : []),
         {
-          type: 'plain_text_input',
-          action_id: 'candidate_search',
-          placeholder: plain('Type part of the candidate name'),
-          ...(draft.candidateSearchQuery ? { initial_value: draft.candidateSearchQuery } : {}),
+          type: 'input',
+          block_id: 'applicant_block',
+          optional: false,
+          dispatch_action: true,
+          label: plain('Candidate results'),
+          element: {
+            type: 'external_select',
+            action_id: 'applicant_select',
+            min_query_length: 0,
+            placeholder: plain('Select from search results'),
+            ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
+          },
         },
-        true,
-      ),
-      actions([
-        button('Search', 'candidate_search_submit', 'primary'),
-        ...candidateSearchPaginationButtons(draft),
+      ] : [
+        input(
+          'Candidate name',
+          'manual_applicant_name_block',
+          {
+            type: 'plain_text_input',
+            action_id: 'manual_applicant_name',
+            placeholder: plain('Type the candidate name'),
+            ...(draft.manualApplicantName ? { initial_value: draft.manualApplicantName } : {}),
+          },
+          false,
+        ),
+        input(
+          'Candidate role',
+          'manual_applicant_role_block',
+          {
+            type: 'plain_text_input',
+            action_id: 'manual_applicant_role',
+            placeholder: plain('Type the candidate role'),
+            ...(draft.manualApplicantRole ? { initial_value: draft.manualApplicantRole } : {}),
+          },
+          false,
+        ),
+        input(
+          'Applicant email',
+          'applicant_email_block',
+          {
+            type: 'plain_text_input',
+            action_id: 'applicant_email',
+            placeholder: plain('Type the applicant email'),
+            ...(draft.applicantEmail ? { initial_value: draft.applicantEmail } : {}),
+          },
+          true,
+        ),
       ]),
-      ...(draft.candidateSearchQuery ? [section(candidateSearchSummary(draft))] : []),
-      {
-        type: 'input',
-        block_id: 'applicant_block',
-        optional: true,
-        dispatch_action: true,
-        label: plain('Candidate results'),
-        element: {
-          type: 'external_select',
-          action_id: 'applicant_select',
-          min_query_length: 0,
-          placeholder: plain('Select from search results'),
-          ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
-        },
-      },
-      input(
-        'Candidate name',
-        'manual_applicant_name_block',
-        {
-          type: 'plain_text_input',
-          action_id: 'manual_applicant_name',
-          placeholder: plain('Type the candidate name if not in search'),
-          ...(draft.manualApplicantName ? { initial_value: draft.manualApplicantName } : {}),
-        },
-        true,
-      ),
-      input(
-        'Applicant email',
-        'applicant_email_block',
-        {
-          type: 'plain_text_input',
-          action_id: 'applicant_email',
-          placeholder: plain('Autofills from the selected applicant'),
-          ...(draft.applicantEmail ? { initial_value: draft.applicantEmail } : {}),
-        },
-        true,
-      ),
       ...applicantDetailBlocks(draft),
       input('Stage', 'stage_block', {
         type: 'static_select',
@@ -1002,6 +1018,16 @@ function recruiterSelectElement({ recruiters, draft }) {
   }
 }
 
+function manualCandidateModeCheckbox(draft) {
+  const option = { text: plain('Enter candidate manually'), value: 'manual' }
+  return {
+    type: 'checkboxes',
+    action_id: 'manual_candidate_toggle',
+    options: [option],
+    ...(draft.manualCandidateMode ? { initial_options: [option] } : {}),
+  }
+}
+
 function candidateSearchSummary(draft) {
   const count = Number(draft.candidateSearchResultCount || 0)
   const pageSize = Number(draft.candidateSearchPageSize || 20)
@@ -1113,8 +1139,8 @@ function applicantDetailBlocks(draft) {
   return blocks;
 }
 
-function actions(elements) {
-  return { type: 'actions', elements };
+function actions(elements, blockId) {
+  return { type: 'actions', ...(blockId ? { block_id: blockId } : {}), elements };
 }
 
 function button(text, actionId, style, value) {
