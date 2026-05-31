@@ -15,6 +15,7 @@ function applicant(overrides = {}) {
 
 test('inactiveApplicantReason detects rejected and inactive applicant fields', () => {
   assert.equal(inactiveApplicantReason(applicant({ applicant_progress: 'Rejected' })), 'rejected');
+  assert.equal(inactiveApplicantReason(applicant({ stage: 'Resume Screening - Rejected by Recruiter' })), 'disposition:resume screening rejected by recruiter');
   assert.equal(inactiveApplicantReason(applicant({ status: 'Withdrawn' })), 'withdrawn');
   assert.equal(inactiveApplicantReason(applicant({ disposition: 'Declined' })), 'declined');
   assert.equal(inactiveApplicantReason(applicant({ jobs: { applicant_progress: 'Rejected' } })), 'rejected');

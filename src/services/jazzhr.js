@@ -209,6 +209,7 @@ function applicantStatusValues(item) {
     item?.applicant_progress,
     item?.status,
     item?.applicant_status,
+    item?.stage,
     item?.disposition,
     item?.disposition_status,
     item?.workflow_step,

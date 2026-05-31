@@ -20,7 +20,8 @@ import {
 } from '../data/search.js'
 import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, signedEmailBodiesFromPlainText, stripSignatureHtml } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
-import { fetchApplicantDetail, refreshJazzhrCache } from '../services/jazzhr.js'
+import { fetchApplicantDetail, inactiveApplicantReason, refreshJazzhrCache } from '../services/jazzhr.js'
+import { createJazzhrLiveSearchManager } from '../services/jazzhr-live-search.js'
 import { loadTalentDirectory } from '../services/talent-directory.js'
 import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
 import { recruiterPhoneLine } from '../services/recruiter-phone-export.js'
@@ -75,6 +76,14 @@ export function registerSlackHandlers(app, context) {
   const { store, logger, config } = context;
   const schedulingTimeZones = resolveSchedulingTimeZones(config)
   const defaultTimeZone = schedulingTimeZones[0] || SYDNEY_TIME_ZONE
+  const liveCandidateSearch = createJazzhrLiveSearchManager({
+    apiKey: config.jazzhr.apiKey,
+    logger,
+    pageSize: config.jazzhr.liveSearch?.pageSize,
+    concurrency: config.jazzhr.liveSearch?.concurrency,
+    maxPages: config.jazzhr.liveSearch?.maxPages,
+    ttlMs: config.jazzhr.liveSearch?.sessionTtlMs,
+  })
 
   app.event('app_home_opened', async ({ event, client }) => {
     await publishHome({ client, userId: event.user, store, logger, config });
@@ -237,16 +246,122 @@ export function registerSlackHandlers(app, context) {
   app.action('candidate_search_submit', async ({ ack, body, client }) => {
     await ack();
     const query = body.view?.state?.values?.candidate_search_block?.candidate_search?.value?.trim() || '';
-    const matches = await searchCandidateIndex(store, query, '', 100);
+    const session = query ? liveCandidateSearch.start({ query, userId: body.user?.id || '' }) : null
+    const templates = await loadSchedulingTemplates()
+    const updateResult = await refreshIntakeModal({
+      client,
+      body,
+      templates,
+      candidateSearchQuery: query,
+      candidateSearchSessionId: session?.id || '',
+      candidateSearchPage: 0,
+      candidateSearchResultCount: session?.resultCount || 0,
+      candidateSearchPageSize: session?.pageSize || config.jazzhr.liveSearch?.pageSize || 20,
+      candidateSearchComplete: session?.complete || false,
+      candidateSearchSearching: Boolean(session && !session.complete),
+      candidateSearchError: session?.error || '',
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    });
+    if (session && !session.complete) {
+      updateLiveCandidateSearchModal({
+        liveCandidateSearch,
+        client,
+        body: bodyWithUpdatedView(body, updateResult),
+        templates,
+        sessionId: session.id,
+        version: session.version,
+        page: 0,
+        timeZones: schedulingTimeZones,
+        defaultTimeZone,
+        logger,
+      }).catch((error) => {
+        logger.warn('candidate_live_search_modal_update_failed', { error: error.message })
+      })
+    }
+  });
+
+  app.action('candidate_search_prev', async ({ ack, body, client }) => {
+    await ack()
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const page = Math.max(0, Number(metadata.candidateSearchPage || 0) - 1)
+    const session = liveCandidateSearch.get(metadata.candidateSearchSessionId)
     await refreshIntakeModal({
       client,
       body,
       templates: await loadSchedulingTemplates(),
-      candidateSearchQuery: query,
-      candidateSearchResultCount: matches.length,
+      candidateSearchQuery: metadata.candidateSearchQuery || session?.query || '',
+      candidateSearchSessionId: metadata.candidateSearchSessionId || '',
+      candidateSearchPage: page,
+      candidateSearchResultCount: session?.resultCount || 0,
+      candidateSearchPageSize: session?.pageSize || config.jazzhr.liveSearch?.pageSize || 20,
+      candidateSearchComplete: session?.complete || false,
+      candidateSearchSearching: session?.searching || false,
+      candidateSearchError: session?.error || '',
       timeZones: schedulingTimeZones,
       defaultTimeZone,
-    });
+    })
+  })
+
+  app.action('candidate_search_next', async ({ ack, body, client }) => {
+    await ack()
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const session = liveCandidateSearch.get(metadata.candidateSearchSessionId)
+    if (!session) {
+      await refreshIntakeModal({
+        client,
+        body,
+        templates: await loadSchedulingTemplates(),
+        candidateSearchQuery: metadata.candidateSearchQuery || '',
+        candidateSearchSessionId: '',
+        candidateSearchPage: 0,
+        candidateSearchResultCount: 0,
+        candidateSearchPageSize: config.jazzhr.liveSearch?.pageSize || 20,
+        candidateSearchComplete: true,
+        candidateSearchSearching: false,
+        candidateSearchError: 'Search expired. Press Search again.',
+        timeZones: schedulingTimeZones,
+        defaultTimeZone,
+      })
+      return
+    }
+
+    const requestedPage = Number(metadata.candidateSearchPage || 0) + 1
+    const maxLoadedPage = Math.max(0, Math.ceil(session.resultCount / session.pageSize) - 1)
+    const page = session.complete && requestedPage > maxLoadedPage ? maxLoadedPage : requestedPage
+    const needsSearch = !session.complete && session.resultCount < (page + 1) * session.pageSize
+    const templates = await loadSchedulingTemplates()
+    const updateResult = await refreshIntakeModal({
+      client,
+      body,
+      templates,
+      candidateSearchQuery: session.query,
+      candidateSearchSessionId: session.id,
+      candidateSearchPage: page,
+      candidateSearchResultCount: session.resultCount,
+      candidateSearchPageSize: session.pageSize,
+      candidateSearchComplete: session.complete,
+      candidateSearchSearching: needsSearch,
+      candidateSearchError: session.error,
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+    if (needsSearch) {
+      updateLiveCandidateSearchModal({
+        liveCandidateSearch,
+        client,
+        body: bodyWithUpdatedView(body, updateResult),
+        templates,
+        sessionId: session.id,
+        version: session.version,
+        page,
+        timeZones: schedulingTimeZones,
+        defaultTimeZone,
+        logger,
+      }).catch((error) => {
+        logger.warn('candidate_live_search_modal_update_failed', { error: error.message })
+      })
+    }
   });
 
   app.action('open_schedule_tracker', async ({ ack, body, client }) => {
@@ -269,8 +384,10 @@ export function registerSlackHandlers(app, context) {
     await ack();
     logger.info('applicant_select_fired', { selectedId: selectedOptionValue(body) });
     const selectedId = selectedOptionValue(body);
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const liveCandidate = liveCandidateSearch.getCandidate(metadata.candidateSearchSessionId, selectedId)
     const indexedCandidate = await resolveCandidateIndexRecord(store, selectedId);
-    let applicant = findApplicant(selectedId) || applicantFromCandidateIndex(indexedCandidate);
+    let applicant = findApplicant(selectedId) || applicantFromCandidateIndex(liveCandidate) || applicantFromCandidateIndex(indexedCandidate);
 
     if (applicant?.jazzhrApplicationId) {
       try {
@@ -279,6 +396,20 @@ export function registerSlackHandlers(app, context) {
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
         ]);
         if (detail) {
+          const inactiveReason = inactiveApplicantReason(detail)
+          if (inactiveReason) {
+            logger.info('inactive_applicant_selection_blocked', {
+              applicantId: selectedId,
+              jazzhrApplicationId: applicant.jazzhrApplicationId,
+              inactiveReason,
+            })
+            await client.chat.postEphemeral({
+              channel: resolvePostingChannel(config, getChannelId(body.view) || body.user.id),
+              user: body.user.id,
+              text: `This candidate is not available for scheduling because their JazzHR stage is "${detail.stage || inactiveReason}".`,
+            })
+            return
+          }
           applicant = mergeApplicantDetail(applicant, detail);
           setApplicantDetail(selectedId, detail);
         }
@@ -439,10 +570,15 @@ export function registerSlackHandlers(app, context) {
 
   app.options('applicant_select', async ({ options, ack }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
+    const liveSessionId = metadata?.candidateSearchSessionId || ''
+    const livePage = Number(metadata?.candidateSearchPage || 0)
+    const liveCandidates = liveCandidateSearch.getPageCandidates(liveSessionId, livePage, options.value)
     const baseQuery = metadata?.candidateSearchQuery || ''
-    const candidates = await searchCandidateIndex(store, options.value, baseQuery, 100)
-    const resolvedOptions = candidates.length > 0 || baseQuery
-      ? candidates.map(candidateToSlackOption)
+    const candidates = liveCandidates.length > 0 || liveSessionId
+      ? liveCandidates
+      : await searchCandidateIndex(store, options.value, baseQuery, 100)
+    const resolvedOptions = candidates.length > 0 || baseQuery || liveSessionId
+      ? candidates.slice(0, 100).map(candidateToSlackOption)
       : applicantOptions(options.value, getApplicants())
     await ack({ options: resolvedOptions });
   });
@@ -1748,7 +1884,36 @@ function buildPrivateMetadata(view, overrides = {}) {
   const candidateSearchResultCount = 'candidateSearchResultCount' in overrides
     ? overrides.candidateSearchResultCount
     : parsed.candidateSearchResultCount || 0;
-  return JSON.stringify({ channelId, showDetails, candidateSearchQuery, candidateSearchResultCount });
+  const candidateSearchPageSize = 'candidateSearchPageSize' in overrides
+    ? overrides.candidateSearchPageSize
+    : parsed.candidateSearchPageSize || 20
+  const candidateSearchSessionId = 'candidateSearchSessionId' in overrides
+    ? overrides.candidateSearchSessionId
+    : parsed.candidateSearchSessionId || ''
+  const candidateSearchPage = 'candidateSearchPage' in overrides
+    ? overrides.candidateSearchPage
+    : parsed.candidateSearchPage || 0
+  const candidateSearchComplete = 'candidateSearchComplete' in overrides
+    ? overrides.candidateSearchComplete
+    : parsed.candidateSearchComplete || false
+  const candidateSearchSearching = 'candidateSearchSearching' in overrides
+    ? overrides.candidateSearchSearching
+    : parsed.candidateSearchSearching || false
+  const candidateSearchError = 'candidateSearchError' in overrides
+    ? overrides.candidateSearchError
+    : parsed.candidateSearchError || ''
+  return JSON.stringify({
+    channelId,
+    showDetails,
+    candidateSearchQuery,
+    candidateSearchSessionId,
+    candidateSearchPage,
+    candidateSearchResultCount,
+    candidateSearchPageSize,
+    candidateSearchComplete,
+    candidateSearchSearching,
+    candidateSearchError,
+  });
 }
 
 async function refreshIntakeModal({
@@ -1761,20 +1926,39 @@ async function refreshIntakeModal({
   selectedApplicant,
   showDetails,
   candidateSearchQuery,
+  candidateSearchSessionId,
+  candidateSearchPage,
   candidateSearchResultCount,
+  candidateSearchPageSize,
+  candidateSearchComplete,
+  candidateSearchSearching,
+  candidateSearchError,
   timeZones = [],
   defaultTimeZone,
+  useHash = true,
 }) {
   if (!body.view?.id || !body.view?.hash) return;
   const overrides = { [selectedKey]: selectedId }
   const metadata = parsePrivateMetadata(body.view.private_metadata) || {}
   if (candidateSearchQuery === undefined && metadata.candidateSearchQuery) {
     overrides.candidateSearchQuery = metadata.candidateSearchQuery
+    overrides.candidateSearchSessionId = metadata.candidateSearchSessionId || ''
+    overrides.candidateSearchPage = metadata.candidateSearchPage || 0
     overrides.candidateSearchResultCount = metadata.candidateSearchResultCount || 0
+    overrides.candidateSearchPageSize = metadata.candidateSearchPageSize || 20
+    overrides.candidateSearchComplete = metadata.candidateSearchComplete || false
+    overrides.candidateSearchSearching = metadata.candidateSearchSearching || false
+    overrides.candidateSearchError = metadata.candidateSearchError || ''
   }
   if (candidateSearchQuery !== undefined) {
     overrides.candidateSearchQuery = candidateSearchQuery
+    overrides.candidateSearchSessionId = candidateSearchSessionId || ''
+    overrides.candidateSearchPage = Number(candidateSearchPage || 0)
     overrides.candidateSearchResultCount = candidateSearchResultCount || 0
+    overrides.candidateSearchPageSize = candidateSearchPageSize || 20
+    overrides.candidateSearchComplete = Boolean(candidateSearchComplete)
+    overrides.candidateSearchSearching = Boolean(candidateSearchSearching)
+    overrides.candidateSearchError = candidateSearchError || ''
   }
   if (selectedKey === 'applicant' && selectedApplicant) {
     overrides.applicantRecord = selectedApplicant
@@ -1827,17 +2011,81 @@ async function refreshIntakeModal({
     channelId: getChannelId(body.view) || body.channel?.id || body.user.id,
     showDetails: resolvedShowDetails,
     candidateSearchQuery: draft.candidateSearchQuery,
+    candidateSearchSessionId: draft.candidateSearchSessionId,
+    candidateSearchPage: draft.candidateSearchPage,
     candidateSearchResultCount: draft.candidateSearchResultCount,
+    candidateSearchPageSize: draft.candidateSearchPageSize,
+    candidateSearchComplete: draft.candidateSearchComplete,
+    candidateSearchSearching: draft.candidateSearchSearching,
+    candidateSearchError: draft.candidateSearchError,
   });
 
-  await client.views.update({
+  return client.views.update({
     view_id: body.view.id,
-    hash: body.view.hash,
+    ...(useHash ? { hash: body.view.hash } : {}),
     view: {
       ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getTalentRecruiters() }),
       private_metadata: privateMetadata,
     },
   });
+}
+
+function bodyWithUpdatedView(body, updateResult) {
+  const updatedView = updateResult?.view
+  if (!updatedView?.hash) return body
+  return {
+    ...body,
+    view: {
+      ...body.view,
+      id: updatedView.id || body.view?.id,
+      hash: updatedView.hash,
+      private_metadata: updatedView.private_metadata || body.view?.private_metadata,
+    },
+  }
+}
+
+async function updateLiveCandidateSearchModal({
+  liveCandidateSearch,
+  client,
+  body,
+  templates,
+  sessionId,
+  version,
+  page,
+  timeZones = [],
+  defaultTimeZone,
+  logger,
+}) {
+  const snapshot = await liveCandidateSearch.ensurePage(sessionId, page)
+  if (!snapshot || !liveCandidateSearch.isCurrent(sessionId, snapshot.version)) return
+  if (version && snapshot.version < version) return
+
+  logger.info('candidate_live_search_page_ready', {
+    sessionId,
+    query: snapshot.query,
+    page,
+    resultCount: snapshot.resultCount,
+    complete: snapshot.complete,
+    searching: snapshot.searching,
+    error: snapshot.error,
+  })
+
+  await refreshIntakeModal({
+    client,
+    body,
+    templates,
+    candidateSearchQuery: snapshot.query,
+    candidateSearchSessionId: snapshot.id,
+    candidateSearchPage: page,
+    candidateSearchResultCount: snapshot.resultCount,
+    candidateSearchPageSize: snapshot.pageSize,
+    candidateSearchComplete: snapshot.complete,
+    candidateSearchSearching: snapshot.searching,
+    candidateSearchError: snapshot.error,
+    timeZones,
+    defaultTimeZone,
+    useHash: true,
+  })
 }
 
 async function refreshSchedulingModal({ client, body, store, selectedStageKey }) {
@@ -2265,6 +2513,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     overrides.manualApplicantName !== undefined ? overrides.manualApplicantName : getInputValue(values, 'manual_applicant_name')
   const applicantEmailOverride = overrides.applicantEmail !== undefined ? overrides.applicantEmail : getInputValue(values, 'applicant_email')
   const candidateSearchQuery = overrides.candidateSearchQuery ?? getInputValue(values, 'candidate_search')
+  const candidateSearchPage = Number(overrides.candidateSearchPage || 0)
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
   const legacyTemplateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
   const stageKey = normalizeStageKey(selectedStageKey || resolveStageFromTemplate(legacyTemplateId));
@@ -2317,7 +2566,13 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     templateOption: template ? toSlackOption(template.label, template.id) : undefined,
     stageOption,
     candidateSearchQuery,
+    candidateSearchSessionId: overrides.candidateSearchSessionId || '',
+    candidateSearchPage,
     candidateSearchResultCount: overrides.candidateSearchResultCount || 0,
+    candidateSearchComplete: Boolean(overrides.candidateSearchComplete),
+    candidateSearchSearching: Boolean(overrides.candidateSearchSearching),
+    candidateSearchError: overrides.candidateSearchError || '',
+    candidateSearchPageSize: overrides.candidateSearchPageSize || 20,
     manualApplicantName,
     applicantEmail: applicant?.email || '',
     recruiterEmail: recruiter?.email || '',

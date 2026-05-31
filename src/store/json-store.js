@@ -66,7 +66,9 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
 
     async getJazzhrCandidate(jazzhrApplicationId) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
-      return state.jazzhrCandidates.find((candidate) => candidate.jazzhrApplicationId === id) || null;
+      const candidate = state.jazzhrCandidates.find((item) => item.jazzhrApplicationId === id) || null;
+      if (!candidate) return null;
+      return searchJazzhrCandidateRecords([candidate], '', { limit: 1 })[0] || null;
     },
 
     async getGoogleToken(recruiterId) {

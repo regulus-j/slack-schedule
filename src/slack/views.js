@@ -163,6 +163,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       ),
       actions([
         button('Search', 'candidate_search_submit', 'primary'),
+        ...candidateSearchPaginationButtons(draft),
       ]),
       ...(draft.candidateSearchQuery ? [section(candidateSearchSummary(draft))] : []),
       {
@@ -1003,9 +1004,41 @@ function recruiterSelectElement({ recruiters, draft }) {
 
 function candidateSearchSummary(draft) {
   const count = Number(draft.candidateSearchResultCount || 0)
+  const pageSize = Number(draft.candidateSearchPageSize || 20)
+  const page = Math.max(0, Number(draft.candidateSearchPage || 0))
+  const start = count > 0 ? page * pageSize + 1 : 0
+  const end = Math.min(count, (page + 1) * pageSize)
   if (!draft.candidateSearchQuery) return ''
-  if (count === 0) return `No JazzHR candidates found for "${draft.candidateSearchQuery}".`
-  return `Found ${count} JazzHR candidate${count === 1 ? '' : 's'} for "${draft.candidateSearchQuery}". Select a result below or type in the selector to filter these results.`
+  if (draft.candidateSearchError) return `JazzHR search for "${draft.candidateSearchQuery}" could not continue: ${draft.candidateSearchError}`
+  if (draft.candidateSearchSearching && count === 0) {
+    return `Searching JazzHR for "${draft.candidateSearchQuery}"...`
+  }
+  if (count === 0 && draft.candidateSearchComplete) return `No JazzHR candidates found for "${draft.candidateSearchQuery}".`
+  if (count === 0) return `Searching JazzHR for "${draft.candidateSearchQuery}"...`
+  if (count <= page * pageSize && draft.candidateSearchSearching) {
+    return `Searching JazzHR for page ${page + 1} of "${draft.candidateSearchQuery}". Loaded ${count} candidate${count === 1 ? '' : 's'} so far.`
+  }
+  if (count <= page * pageSize && draft.candidateSearchComplete) {
+    return `No more JazzHR candidates found for "${draft.candidateSearchQuery}".`
+  }
+
+  const total = draft.candidateSearchComplete ? String(count) : `${count}+`
+  const status = draft.candidateSearchSearching ? ' Still searching JazzHR for more results.' : ''
+  return `Showing ${start}-${end} of ${total} JazzHR candidate${count === 1 ? '' : 's'} for "${draft.candidateSearchQuery}" on page ${page + 1}.${status} Select a result below or type in the selector to filter this page.`
+}
+
+function candidateSearchPaginationButtons(draft) {
+  if (!draft.candidateSearchQuery) return []
+  const page = Math.max(0, Number(draft.candidateSearchPage || 0))
+  const count = Number(draft.candidateSearchResultCount || 0)
+  const pageSize = Number(draft.candidateSearchPageSize || 20)
+  const hasPrevious = page > 0
+  const hasLoadedNext = count > (page + 1) * pageSize
+  const hasSearchableNext = !draft.candidateSearchComplete && !draft.candidateSearchError
+  return [
+    hasPrevious ? button('Previous', 'candidate_search_prev') : null,
+    (hasLoadedNext || hasSearchableNext) ? button('Next', 'candidate_search_next') : null,
+  ].filter(Boolean)
 }
 
 function applicantDetailBlocks(draft) {

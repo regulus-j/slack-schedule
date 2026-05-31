@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { decryptJson, encryptJson } from '../security/crypto.js';
-import { normalizeJazzhrCandidate, normalizeJazzhrCandidates } from './candidate-index.js';
+import { candidateInactiveReason, normalizeJazzhrCandidate, normalizeJazzhrCandidates } from './candidate-index.js';
 
 export function createPostgresStore(databaseUrl, encryptionKey = '') {
   let pool;
@@ -208,7 +208,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           jazzhr_application_id ILIKE $${params.length}
         )`);
       }
-      params.push(limit);
+      params.push(limit * 5);
       const result = await query(
         `SELECT *
          FROM jazzhr_candidates
@@ -217,13 +217,18 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
          LIMIT $${params.length}`,
         params,
       );
-      return result.rows.map(rowToJazzhrCandidate);
+      return result.rows
+        .map(rowToJazzhrCandidate)
+        .filter((candidate) => !candidateInactiveReason(candidate))
+        .slice(0, limit);
     },
 
     async getJazzhrCandidate(jazzhrApplicationId) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
       const result = await query('SELECT * FROM jazzhr_candidates WHERE jazzhr_application_id = $1', [id]);
-      return result.rows[0] ? rowToJazzhrCandidate(result.rows[0]) : null;
+      if (!result.rows[0]) return null;
+      const candidate = rowToJazzhrCandidate(result.rows[0]);
+      return candidateInactiveReason(candidate) ? null : candidate;
     },
 
     async listTalentDirectory() {

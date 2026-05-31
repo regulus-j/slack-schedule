@@ -26,6 +26,12 @@ export function loadConfig(env = process.env) {
     jazzhr: {
       apiKey: mergedEnv.JAZZHR_API_KEY,
       applicantMaxPages: positiveInteger(mergedEnv.JAZZHR_APPLICANT_MAX_PAGES, 250),
+      liveSearch: {
+        pageSize: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_RESULT_PAGE_SIZE, 20),
+        concurrency: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_CONCURRENCY, 2),
+        maxPages: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_MAX_PAGES, 1000),
+        sessionTtlMs: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_SESSION_TTL_MS, 900000),
+      },
     },
     google: {
       clientId: mergedEnv.GOOGLE_CLIENT_ID,

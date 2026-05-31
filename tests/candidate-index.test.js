@@ -32,6 +32,29 @@ test('searches candidate names within an optional base query', () => {
   assert.deepEqual(results.map((record) => record.fullName), ['Alex Reyes'])
 })
 
+test('candidate index excludes rejected stages from search results', () => {
+  const records = [
+    {
+      jazzhrApplicationId: '1',
+      fullName: 'Ashwini Megajayaraman',
+      jobTitle: 'Business Data Analyst - India',
+      stage: 'Resume Screening - Rejected by Recruiter',
+      appliedAt: '2026-02-12',
+    },
+    {
+      jazzhrApplicationId: '2',
+      fullName: 'Ashwini Active',
+      jobTitle: 'Business Data Analyst - India',
+      stage: 'Resume Screening',
+      appliedAt: '2026-02-13',
+    },
+  ]
+
+  const results = searchJazzhrCandidateRecords(records, 'ashwini')
+
+  assert.deepEqual(results.map((record) => record.fullName), ['Ashwini Active'])
+})
+
 test('json store persists and searches JazzHR candidate index', async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'candidate-index-'))
   try {

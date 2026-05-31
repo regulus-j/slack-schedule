@@ -27,6 +27,7 @@ export function normalizeJazzhrCandidates(records = []) {
   return (Array.isArray(records) ? records : [])
     .map((record, index) => normalizeJazzhrCandidate(record, index))
     .filter(Boolean)
+    .filter((record) => !candidateInactiveReason(record))
     .sort(compareJazzhrCandidates)
 }
 
@@ -35,12 +36,37 @@ export function searchJazzhrCandidateRecords(records = [], query = '', { limit =
   const normalizedBaseQuery = normalizeSearchText(baseQuery)
   return normalizeJazzhrCandidates(records)
     .filter((record) => {
+      if (candidateInactiveReason(record)) return false
       const haystack = candidateSearchText(record)
       if (normalizedBaseQuery && !haystack.includes(normalizedBaseQuery)) return false
       if (normalizedQuery && !haystack.includes(normalizedQuery)) return false
       return true
     })
     .slice(0, limit)
+}
+
+export function candidateInactiveReason(record) {
+  const statusValues = [
+    record?.stage,
+    record?.status,
+    record?.applicantProgress,
+    record?.applicant_progress,
+    record?.disposition,
+    record?.dispositionStatus,
+    record?.disposition_status,
+    record?.workflowStep,
+    record?.workflow_step,
+  ].filter(Boolean)
+
+  for (const value of statusValues) {
+    const normalized = normalizeSearchText(value).replace(/[_-]+/g, ' ')
+    if (!normalized) continue
+    if (INACTIVE_STATUS_KEYS.has(statusKey(normalized))) return `disposition:${normalized}`
+    const term = INACTIVE_STATUS_TERMS.find((item) => normalized.includes(item))
+    if (term) return term
+  }
+
+  return ''
 }
 
 export function compareJazzhrCandidates(left, right) {
@@ -70,3 +96,44 @@ function dateSortValue(value) {
   const time = Date.parse(value)
   return Number.isFinite(time) ? time : 0
 }
+
+function statusKey(value) {
+  return normalizeSearchText(value).replace(/[^a-z0-9]+/g, '')
+}
+
+const INACTIVE_STATUS_TERMS = [
+  'rejected',
+  'reject',
+  'declined',
+  'decline',
+  'withdrawn',
+  'withdraw',
+  'hired',
+  'archived',
+  'deleted',
+  'closed',
+  'unresponsive',
+  'black listed',
+  'blacklisted',
+  'offboarded',
+]
+
+const INACTIVE_STATUS_KEYS = new Set([
+  '1stinterviewrejectedbyrecruiter',
+  'resumescreeningrejectedbyrecruiter',
+  '2ndorfinalinterviewrejectedbyhiringmanager',
+  'rejectedduetofailedassessment',
+  'blacklistedandnotculturefit',
+  'outofthehiringarea',
+  'outofsydneyaustralia',
+  'withdrewapplication',
+  'autorejectionduelackofexperience',
+  'autorejectionoutofthehiringarea',
+  'missedinterview',
+  'unresponsive',
+  'goodforfuturehire',
+  'endorsedtoanotherrole',
+  'declinedjoboffer',
+  'failedtrialperiodrejectedbyhm',
+  'offboarded',
+])
