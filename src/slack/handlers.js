@@ -686,7 +686,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          resume_block: 'Paste a resume link for the 2nd/final interview.',
+          resume_block: 'Upload a resume for the 2nd/final interview.',
         },
       });
       return;
@@ -797,7 +797,7 @@ export function registerSlackHandlers(app, context) {
     if (!caseRecord.resumeLink) {
       await client.chat.postMessage({
         channel: resolvePostingChannel(config, body.user.id),
-        text: `📄 No resume link has been added for ${caseRecord.id} yet.`,
+        text: `📄 No resume has been uploaded for ${caseRecord.id} yet.`,
       });
       return;
     }
@@ -2627,7 +2627,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     recruiterEmail: recruiter?.email || '',
     hiringManagerEmail: hiringManager?.email || '',
     notes: getInputValue(values, 'notes'),
-    resumeLink: extractResumeLink(values),
+    resumeLink: extractResumeFileReference(values),
     interviewWindowStartDate: '',
     interviewWindowEndDate: '',
     interviewTimezone,
@@ -2872,9 +2872,24 @@ function asHiringManager(person) {
   }
 }
 
-function extractResumeLink(values) {
-  const resumeElement = values.resume_block?.resume_link
-  return resumeElement?.value?.trim() || ''
+function extractResumeFileReference(values) {
+  const resumeElement = values.resume_block?.resume_file
+  const file = Array.isArray(resumeElement?.files) ? resumeElement.files[0] : null
+  if (file) return resumeFileReference(file)
+
+  const legacyLinkElement = values.resume_block?.resume_link
+  return legacyLinkElement?.value?.trim() || ''
+}
+
+function resumeFileReference(file) {
+  return String(
+    file.permalink ||
+    file.url_private ||
+    file.url_private_download ||
+    file.id ||
+    file.name ||
+    '',
+  ).trim()
 }
 
 async function openDm(client, userId) {

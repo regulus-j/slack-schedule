@@ -452,7 +452,7 @@ test('intake modal candidate details hides JazzHR resume and rating fields', () 
   assert.match(text, /LinkedIn profile/);
 });
 
-test('intake modal includes a resume link field', () => {
+test('intake modal includes a resume file upload field', () => {
   const view = intakeModal({
     templates: [
       {
@@ -466,8 +466,10 @@ test('intake modal includes a resume link field', () => {
 
   const resumeBlock = view.blocks.find((block) => block.block_id === 'resume_block');
   assert.ok(resumeBlock);
-  assert.equal(resumeBlock.element.type, 'plain_text_input');
-  assert.equal(resumeBlock.element.action_id, 'resume_link');
+  assert.equal(resumeBlock.element.type, 'file_input');
+  assert.equal(resumeBlock.element.action_id, 'resume_file');
+  assert.equal(resumeBlock.element.max_files, 1);
+  assert.deepEqual(resumeBlock.element.filetypes, ['pdf', 'doc', 'docx']);
   assert.equal(resumeBlock.optional, true);
 });
 
@@ -544,7 +546,7 @@ test('intake modal shows required manual candidate fields only in manual mode', 
   assert.equal(applicantEmailBlock.element.initial_value, 'maria@example.com');
 });
 
-test('intake modal requires HM fields and resume link for later-stage interviews', () => {
+test('intake modal requires HM fields and resume upload for later-stage interviews', () => {
   const view = intakeModal({
     templates: [],
     draft: {
@@ -565,8 +567,8 @@ test('intake modal requires HM fields and resume link for later-stage interviews
   assert.equal(hmEmailBlock.element.type, 'plain_text_input');
   assert.equal(hmEmailBlock.optional, false);
   assert.equal(hmNameBlock.element.initial_option.value, 'hm-ana');
-  assert.equal(resumeBlock.element.type, 'plain_text_input');
-  assert.equal(resumeBlock.element.action_id, 'resume_link');
+  assert.equal(resumeBlock.element.type, 'file_input');
+  assert.equal(resumeBlock.element.action_id, 'resume_file');
   assert.equal(resumeBlock.optional, false);
 });
 
@@ -612,7 +614,17 @@ test('builds intake draft emails from selected people and overrides', () => {
       'hm_email_block_hm-ana': { 'hm_email_hm-ana': { value: 'custom-hm@example.com' } },
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
-      resume_block: { resume_link: { value: 'https://example.com/resume.pdf' } },
+      resume_block: {
+        resume_file: {
+          files: [
+            {
+              id: 'F123',
+              name: 'resume.pdf',
+              permalink: 'https://files.slack.com/files-pri/T123-F123/resume.pdf',
+            },
+          ],
+        },
+      },
     },
     [
       {
@@ -633,9 +645,55 @@ test('builds intake draft emails from selected people and overrides', () => {
   assert.equal(draft.stageKey, 'final-interview');
   assert.equal(draft.templateId, '2nd-or-Final-invite');
   assert.equal(draft.notes, 'Notes');
-  assert.equal(draft.resumeLink, 'https://example.com/resume.pdf');
+  assert.equal(draft.resumeLink, 'https://files.slack.com/files-pri/T123-F123/resume.pdf');
   assert.equal(draft.interviewWindowStartDate, '');
   assert.equal(draft.interviewWindowEndDate, '');
+});
+
+test('builds intake draft resume reference from Slack file fallbacks', () => {
+  setApplicants(SAMPLE_APPLICANTS);
+  setRecruiters([]);
+  setHiringManagers([]);
+
+  const draft = buildIntakeDraft(
+    {
+      applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
+      resume_block: {
+        resume_file: {
+          files: [
+            {
+              id: 'F456',
+              name: 'resume.docx',
+              url_private: 'https://files.slack.com/files-pri/T123-F456/resume.docx',
+            },
+          ],
+        },
+      },
+    },
+    [],
+  );
+
+  assert.equal(draft.resumeLink, 'https://files.slack.com/files-pri/T123-F456/resume.docx');
+});
+
+test('builds intake draft resume reference from Slack file id when no URL is available', () => {
+  setApplicants(SAMPLE_APPLICANTS);
+  setRecruiters([]);
+  setHiringManagers([]);
+
+  const draft = buildIntakeDraft(
+    {
+      applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
+      resume_block: {
+        resume_file: {
+          files: [{ id: 'F789', name: 'resume.pdf' }],
+        },
+      },
+    },
+    [],
+  );
+
+  assert.equal(draft.resumeLink, 'F789');
 });
 
 test('builds intake draft from a manually entered candidate name', () => {
