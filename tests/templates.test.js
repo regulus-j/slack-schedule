@@ -55,6 +55,12 @@ test('renderTemplate resolves [signature] to HTML signature block', () => {
   assert.match(rendered.body, /<table/)
   assert.match(rendered.body, /recruitment@opglobal\.com\.hk/)
   assert.match(rendered.body, /cid:opg-logo/)
+  assert.match(rendered.body, /data-opg-signature="true"/)
+  assert.match(rendered.body, /font-size:14px;line-height:1\.6/)
+  assert.match(rendered.body, /<span style="display:block;margin-top:14px;">Best Regards,<\/span>/)
+  assert.doesNotMatch(rendered.body, /font-size:small/)
+  assert.doesNotMatch(rendered.body, /font-size:medium/)
+  assert.doesNotMatch(rendered.body, /<font\b/)
   assert.match(rendered.body, /IMPORTANT: The contents of this email/)
 })
 
@@ -89,6 +95,7 @@ test('signedEmailBodiesFromPlainText appends plain signature and restores HTML s
   assert.match(email.htmlBody, /^<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">/)
   assert.match(email.htmlBody, /<table/)
   assert.match(email.htmlBody, /cid:opg-logo/)
+  assert.match(email.htmlBody, /data-opg-signature="true"/)
   assert.match(email.htmlBody, /IMPORTANT: The contents of this email/)
 })
 

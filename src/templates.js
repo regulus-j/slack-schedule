@@ -155,9 +155,11 @@ export function stripSignatureHtml(html) {
   const value = String(html || '').trim()
   if (!value) return ''
 
-  const marker = /<br>\s*<div[^>]*>\s*<span>--<\/span><br><br>\s*<span>Best Regards,<\/span>/i
+  const marker = /<br>\s*<div[^>]*data-opg-signature=["']true["'][^>]*>/i
+  const legacyMarker = /<br>\s*<div[^>]*>\s*<span>--<\/span><br><br>\s*<span>Best Regards,<\/span>/i
   const match = value.match(marker)
-  let stripped = match ? value.slice(0, match.index).trim() : value
+  const legacyMatch = match ? null : value.match(legacyMarker)
+  let stripped = match || legacyMatch ? value.slice(0, (match || legacyMatch).index).trim() : value
 
   stripped = stripped.replace(/<\/?(?:html|body)[^>]*>/gi, '').trim()
   return stripped
