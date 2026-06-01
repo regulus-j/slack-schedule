@@ -187,6 +187,9 @@ test('cancellation email is sent to candidate and CCs involved meeting participa
   assert.match(email.plainBody, /Your interview for Customer Support Specialist has been cancelled/);
   assert.match(email.plainBody, /Date: 2026-05-20/);
   assert.match(email.plainBody, /Outsourced Pro Global Limited/);
+  assert.match(email.htmlBody, /background-color: #f5f5f5/);
+  assert.match(email.htmlBody, /Cancelled interview details:/);
+  assert.match(email.htmlBody, /<strong>Zoom Link:<\/strong> <a href="https:\/\/zoom\.us\/j\/demo"/);
   assert.match(email.htmlBody, /cid:opg-logo/);
   assert.match(email.htmlBody, /IMPORTANT: The contents of this email/);
 });
@@ -869,6 +872,9 @@ test('builds a reminder email from the current schedule', () => {
   assert.match(email.subject, /Reminder/);
   assert.match(email.body, /2026-05-20/);
   assert.match(email.body, /09:30/);
+  assert.match(email.htmlBody, /line-height: 1\.6/);
+  assert.match(email.htmlBody, /background-color: #f5f5f5/);
+  assert.match(email.htmlBody, /<strong>Interview details:<\/strong>/);
 });
 
 test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
@@ -1007,6 +1013,9 @@ test('reschedule and reminder emails include stored schedule duration', () => {
 
   assert.match(reschedule.plainBody, /Duration: 40 minutes/);
   assert.match(reminder.plainBody, /Duration: 40 minutes/);
+  assert.match(reschedule.htmlBody, /background-color: #f5f5f5/);
+  assert.match(reschedule.htmlBody, /<strong>Duration:<\/strong> 40 minutes/);
+  assert.match(reminder.htmlBody, /<strong>Duration:<\/strong> 40 minutes/);
 });
 
 test('buildTemplateVariables falls back to recruiter and coordinator emails without recruiter phone', () => {
@@ -1066,6 +1075,8 @@ test('attendee invite emails are personalized and exclude candidate and recruite
   assert.match(email.plainBody, /Support Specialist/);
   assert.match(email.plainBody, /https:\/\/zoom\.us\/j\/demo/);
   assert.match(email.plainBody, /Outsourced Pro Global Limited/);
+  assert.match(email.htmlBody, /background-color: #f5f5f5/);
+  assert.match(email.htmlBody, /<strong>Interview details:<\/strong>/);
   assert.match(email.htmlBody, /cid:opg-logo/);
 });
 

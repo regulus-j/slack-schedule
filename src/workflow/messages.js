@@ -1,34 +1,84 @@
 import { generateSignatureHTML, signaturePlainText } from '../signature.js'
-import { stripHtmlBody } from '../templates.js'
+
+const GENERATED_EMAIL_BODY_STYLE = 'font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;'
+const EMAIL_PARAGRAPH_STYLE = 'margin: 0 0 14px 0;'
+const EMAIL_DETAIL_BLOCK_STYLE = 'margin: 0 0 14px 0; padding: 12px 16px; background-color: #f5f5f5; border-left: 3px solid #cccccc; line-height: 2;'
+
+export function escapeEmailHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function escapeEmailAttribute(value) {
+  return escapeEmailHtml(value).replace(/"/g, '&quot;')
+}
+
+export function emailLink(url, fallbackText = url) {
+  const href = String(url || '').trim()
+  const text = escapeEmailHtml(fallbackText || href || 'TBD')
+  if (!href || href === 'TBD' || href.startsWith('[')) return text
+  return `<a href="${escapeEmailAttribute(href)}" style="color: #1155cc;">${text}</a>`
+}
+
+export function emailParagraph(content) {
+  return `<p style="${EMAIL_PARAGRAPH_STYLE}">${content}</p>`
+}
+
+export function emailDetailsBlock(title, rows) {
+  const renderedRows = rows
+    .filter((row) => row?.value !== undefined && row.value !== null && String(row.value).trim() !== '')
+    .map((row) => `<strong>${escapeEmailHtml(row.label)}:</strong> ${row.value}`)
+    .join('<br>')
+
+  if (!renderedRows) return ''
+
+  return [
+    `<p style="margin: 0 0 8px 0;"><strong>${escapeEmailHtml(title)}</strong></p>`,
+    `<div style="${EMAIL_DETAIL_BLOCK_STYLE}">${renderedRows}</div>`,
+  ].join('\n')
+}
+
+export function generatedEmailHtml(parts) {
+  return [
+    `<html><body style="${GENERATED_EMAIL_BODY_STYLE}">`,
+    ...parts.filter(Boolean),
+    generateSignatureHTML(),
+    `</body></html>`,
+  ].join('\n')
+}
+
+export function generatedEmailPlainText(lines) {
+  return [
+    ...lines,
+    '',
+    signaturePlainText(),
+  ].join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
 
 export function buildRescheduleEmail(caseRecord, request) {
   const candidateName = caseRecord.applicant?.firstName || 'there'
   const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
-  const reasonLine = request.reason ? `<p><strong>Reason:</strong> ${request.reason}</p>` : ''
-  const noteLine = request.note ? `<p><strong>Additional note:</strong> ${request.note}</p>` : ''
   const durationText = formatEmailDuration(request.durationMinutes || caseRecord.currentSchedule?.durationMinutes)
-  const durationHtmlLine = durationText ? `Duration: ${durationText}<br>` : ''
   const durationPlainLine = durationText ? [`Duration: ${durationText}`] : []
+  const timeText = `${request.time || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim()
+  const zoomLink = request.zoomLink || 'TBD'
+  const htmlBody = generatedEmailHtml([
+    emailParagraph(`Hi <strong>${escapeEmailHtml(candidateName)}</strong>,`),
+    emailParagraph(`We need to reschedule your interview for the <strong>${escapeEmailHtml(jobTitle)}</strong> role at Outsourced Pro Global.`),
+    request.reason ? emailParagraph(`<strong>Reason:</strong> ${escapeEmailHtml(request.reason)}`) : '',
+    emailDetailsBlock('New interview details:', [
+      { label: 'Date', value: escapeEmailHtml(request.date || 'TBD') },
+      { label: 'Time', value: escapeEmailHtml(timeText) },
+      durationText ? { label: 'Duration', value: escapeEmailHtml(durationText) } : null,
+      { label: 'Zoom Link', value: emailLink(zoomLink) },
+    ]),
+    request.note ? emailParagraph(`<strong>Additional note:</strong> ${escapeEmailHtml(request.note)}`) : '',
+    emailParagraph('Please let us know if this updated schedule works well for you.'),
+  ])
 
-  const signatureHtml = generateSignatureHTML()
-
-  const htmlBody = [
-    `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">`,
-    `<p><strong>Hi ${candidateName},</strong></p>`,
-    `<p>We need to reschedule your interview for the <strong>${jobTitle}</strong> role at Outsourced Pro Global.</p>`,
-    reasonLine,
-    `<p><strong>New interview details:</strong><br>`,
-    `Date: ${request.date}<br>`,
-    `Time: ${request.time} ${caseRecord.interviewTimezone || ''}<br>`,
-    durationHtmlLine,
-    `Zoom Link: <a href="${request.zoomLink}">${request.zoomLink}</a></p>`,
-    noteLine,
-    `<p>Please let us know if this updated schedule works well for you.</p>`,
-    signatureHtml,
-    `</body></html>`,
-  ].filter(Boolean).join('\n')
-
-  const plainBody = [
+  const plainBody = generatedEmailPlainText([
     `Hi ${candidateName},`,
     '',
     `We need to reschedule your interview for the ${jobTitle} role at Outsourced Pro Global.`,
@@ -36,17 +86,15 @@ export function buildRescheduleEmail(caseRecord, request) {
     request.reason ? `Reason: ${request.reason}` : '',
     '',
     'New interview details:',
-    `Date: ${request.date}`,
-    `Time: ${request.time} ${caseRecord.interviewTimezone || ''}`,
+    `Date: ${request.date || 'TBD'}`,
+    `Time: ${timeText}`,
     ...durationPlainLine,
-    `Zoom Link: ${request.zoomLink}`,
+    `Zoom Link: ${zoomLink}`,
     '',
     request.note ? `Additional note: ${request.note}` : '',
     '',
     'Please let us know if this updated schedule works well for you.',
-    '',
-    signaturePlainText(),
-  ].filter(Boolean).join('\n')
+  ])
 
   return {
     to: caseRecord.applicant?.email,
@@ -63,40 +111,34 @@ export function buildReminderEmail(caseRecord) {
   const currentSchedule = caseRecord.currentSchedule || {}
   const jobTitle = caseRecord.applicant?.jobTitle || 'Interview'
   const durationText = formatEmailDuration(currentSchedule.durationMinutes)
-  const durationHtmlLine = durationText ? `Duration: ${durationText}<br>` : ''
   const durationPlainLine = durationText ? [`Duration: ${durationText}`] : []
+  const timeText = `${currentSchedule.time || '[time]'} ${caseRecord.interviewTimezone || ''}`.trim()
+  const zoomLink = currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '[zoom_link]'
+  const htmlBody = generatedEmailHtml([
+    emailParagraph(`Hi <strong>${escapeEmailHtml(candidateName)}</strong>,`),
+    emailParagraph(`This is a friendly reminder about your upcoming interview for the <strong>${escapeEmailHtml(jobTitle)}</strong> role at Outsourced Pro Global.`),
+    emailDetailsBlock('Interview details:', [
+      { label: 'Date', value: escapeEmailHtml(currentSchedule.date || '[date]') },
+      { label: 'Time', value: escapeEmailHtml(timeText) },
+      durationText ? { label: 'Duration', value: escapeEmailHtml(durationText) } : null,
+      { label: 'Zoom Link', value: emailLink(zoomLink) },
+    ]),
+    emailParagraph('Please let us know if you need any support before the interview.'),
+  ])
 
-  const signatureHtml = generateSignatureHTML()
-
-  const htmlBody = [
-    `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">`,
-    `<p><strong>Hi ${candidateName},</strong></p>`,
-    `<p>This is a friendly reminder about your upcoming interview for the <strong>${jobTitle}</strong> role at Outsourced Pro Global.</p>`,
-    `<p><strong>Interview details:</strong><br>`,
-    `Date: ${currentSchedule.date || '[date]'}<br>`,
-    `Time: ${currentSchedule.time || '[time]'} ${caseRecord.interviewTimezone || ''}<br>`,
-    durationHtmlLine,
-    `Zoom Link: <a href="${currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '#'}">${currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '[zoom_link]'}</a></p>`,
-    `<p>Please let us know if you need any support before the interview.</p>`,
-    signatureHtml,
-    `</body></html>`,
-  ].join('\n')
-
-  const plainBody = [
+  const plainBody = generatedEmailPlainText([
     `Hi ${candidateName},`,
     '',
     `This is a friendly reminder about your upcoming interview for the ${jobTitle} role at Outsourced Pro Global.`,
     '',
     'Interview details:',
     `Date: ${currentSchedule.date || '[date]'}`,
-    `Time: ${currentSchedule.time || '[time]'} ${caseRecord.interviewTimezone || ''}`,
+    `Time: ${timeText}`,
     ...durationPlainLine,
-    `Zoom Link: ${currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '[zoom_link]'}`,
+    `Zoom Link: ${zoomLink}`,
     '',
     'Please let us know if you need any support before the interview.',
-    '',
-    signaturePlainText(),
-  ].join('\n')
+  ])
 
   return {
     to: caseRecord.applicant?.email,

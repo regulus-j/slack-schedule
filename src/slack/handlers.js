@@ -45,7 +45,16 @@ import {
   canStartReschedule,
   isScheduledCase,
 } from '../workflow/reschedule.js'
-import { buildReminderEmail, buildRescheduleEmail } from '../workflow/messages.js'
+import {
+  buildReminderEmail,
+  buildRescheduleEmail,
+  emailDetailsBlock,
+  emailLink,
+  emailParagraph,
+  escapeEmailHtml,
+  generatedEmailHtml,
+  generatedEmailPlainText,
+} from '../workflow/messages.js'
 import {
   normalizeStageKey,
   resolveStageFromTemplate,
@@ -2211,12 +2220,15 @@ export function buildCancellationEmail(caseRecord) {
   const schedule = caseRecord.currentSchedule || {}
   const candidateName = caseRecord.applicant?.firstName || 'there'
   const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
+  const dateText = schedule.date || caseRecord.selectedInterviewDate || 'TBD'
+  const timeText = `${schedule.time || caseRecord.selectedInterviewTime || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim()
+  const zoomLink = schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'
   const scheduleLines = [
-    `Date: ${schedule.date || caseRecord.selectedInterviewDate || 'TBD'}`,
-    `Time: ${schedule.time || caseRecord.selectedInterviewTime || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim(),
-    `Zoom link: ${schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'}`,
+    `Date: ${dateText}`,
+    `Time: ${timeText}`,
+    `Zoom link: ${zoomLink}`,
   ]
-  const plainBody = [
+  const plainBody = generatedEmailPlainText([
     `Hi ${candidateName},`,
     '',
     `Your interview for ${jobTitle} has been cancelled.`,
@@ -2225,14 +2237,23 @@ export function buildCancellationEmail(caseRecord) {
     ...scheduleLines,
     '',
     `If you have any questions, please contact ${caseRecord.recruiter?.name || 'your recruiter'}.`,
-  ].join('\n')
-  const emailBodies = signedEmailBodiesFromPlainText(plainBody)
+  ])
+  const htmlBody = generatedEmailHtml([
+    emailParagraph(`Hi <strong>${escapeEmailHtml(candidateName)}</strong>,`),
+    emailParagraph(`Your interview for the <strong>${escapeEmailHtml(jobTitle)}</strong> role at Outsourced Pro Global has been cancelled.`),
+    emailDetailsBlock('Cancelled interview details:', [
+      { label: 'Date', value: escapeEmailHtml(dateText) },
+      { label: 'Time', value: escapeEmailHtml(timeText) },
+      { label: 'Zoom Link', value: emailLink(zoomLink) },
+    ]),
+    emailParagraph(`If you have any questions, please contact ${escapeEmailHtml(caseRecord.recruiter?.name || 'your recruiter')}.`),
+  ])
 
   return {
     subject: `Interview cancelled: ${jobTitle}`,
-    body: emailBodies.htmlBody,
-    htmlBody: emailBodies.htmlBody,
-    plainBody: emailBodies.plainBody,
+    body: htmlBody,
+    htmlBody,
+    plainBody,
     to: caseRecord.applicant?.email,
     cc: ccRecipientsFromAttendees(caseRecord, schedule.attendees || caseRecord.guests || []),
     from: caseRecord.recruiter?.email,
@@ -2300,26 +2321,41 @@ export function buildAttendeeInviteEmail(caseRecord, attendee) {
   const candidateName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' ') || 'the candidate'
   const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
   const subject = `Interview invite: ${candidateName} - ${jobTitle}`
-  const plainBody = [
+  const dateText = schedule.date || caseRecord.selectedInterviewDate || 'TBD'
+  const timeText = `${schedule.time || caseRecord.selectedInterviewTime || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim()
+  const zoomLink = schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'
+  const recruiterText = `Recruiter: ${caseRecord.recruiter?.name || ''}${caseRecord.recruiter?.email ? ` (${caseRecord.recruiter.email})` : ''}`.trim()
+  const plainBody = generatedEmailPlainText([
     `Hi ${attendee.name || 'there'},`,
     '',
     `You are included as an interviewer/attendee for ${candidateName}'s interview for ${jobTitle}.`,
     '',
-    `Date: ${schedule.date || caseRecord.selectedInterviewDate || 'TBD'}`,
-    `Time: ${schedule.time || caseRecord.selectedInterviewTime || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim(),
-    `Zoom link: ${schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'}`,
+    'Interview details:',
+    `Date: ${dateText}`,
+    `Time: ${timeText}`,
+    `Zoom link: ${zoomLink}`,
     '',
-    `Recruiter: ${caseRecord.recruiter?.name || ''}${caseRecord.recruiter?.email ? ` (${caseRecord.recruiter.email})` : ''}`.trim(),
+    recruiterText,
     '',
     'Thank you.',
-  ].join('\n')
-  const emailBodies = signedEmailBodiesFromPlainText(plainBody)
+  ])
+  const htmlBody = generatedEmailHtml([
+    emailParagraph(`Hi <strong>${escapeEmailHtml(attendee.name || 'there')}</strong>,`),
+    emailParagraph(`You are included as an interviewer/attendee for <strong>${escapeEmailHtml(candidateName)}</strong>'s interview for <strong>${escapeEmailHtml(jobTitle)}</strong>.`),
+    emailDetailsBlock('Interview details:', [
+      { label: 'Date', value: escapeEmailHtml(dateText) },
+      { label: 'Time', value: escapeEmailHtml(timeText) },
+      { label: 'Zoom Link', value: emailLink(zoomLink) },
+      recruiterText ? { label: 'Recruiter', value: escapeEmailHtml(recruiterText.replace(/^Recruiter:\s*/i, '')) } : null,
+    ]),
+    emailParagraph('Thank you.'),
+  ])
 
   return {
     subject,
-    body: emailBodies.htmlBody,
-    htmlBody: emailBodies.htmlBody,
-    plainBody: emailBodies.plainBody,
+    body: htmlBody,
+    htmlBody,
+    plainBody,
     to: attendee.email,
     from: caseRecord.recruiter?.email,
   }
