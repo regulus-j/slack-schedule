@@ -74,7 +74,6 @@ export function buildRescheduleEmail(caseRecord, request) {
       durationText ? { label: 'Duration', value: escapeEmailHtml(durationText) } : null,
       { label: 'Zoom Link', value: emailLink(zoomLink) },
     ]),
-    request.note ? emailParagraph(`<strong>Additional note:</strong> ${escapeEmailHtml(request.note)}`) : '',
     emailParagraph('Please let us know if this updated schedule works well for you.'),
   ])
 
@@ -90,8 +89,6 @@ export function buildRescheduleEmail(caseRecord, request) {
     `Time: ${timeText}`,
     ...durationPlainLine,
     `Zoom Link: ${zoomLink}`,
-    '',
-    request.note ? `Additional note: ${request.note}` : '',
     '',
     'Please let us know if this updated schedule works well for you.',
   ])

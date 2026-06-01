@@ -1009,10 +1009,14 @@ test('reschedule and reminder emails include stored schedule duration', () => {
     time: '10:00',
     zoomLink: 'https://zoom.us/j/demo',
     durationMinutes: 40,
+    note: 'Candidate asked for this note to be included',
   });
   const reminder = buildReminderEmail(scheduledCase);
 
   assert.match(reschedule.plainBody, /Duration: 40 minutes/);
+  assert.doesNotMatch(reschedule.plainBody, /Additional note/);
+  assert.doesNotMatch(reschedule.htmlBody, /Additional note/);
+  assert.doesNotMatch(reschedule.htmlBody, /Candidate asked for this note to be included/);
   assert.match(reminder.plainBody, /Duration: 40 minutes/);
   assert.match(reschedule.htmlBody, /background-color: #f5f5f5/);
   assert.match(reschedule.htmlBody, /<strong>Duration:<\/strong> 40 minutes/);
