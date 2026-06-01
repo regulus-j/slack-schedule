@@ -318,7 +318,15 @@ export function registerSlackHandlers(app, context) {
   app.action('candidate_search_next', async ({ ack, body, client }) => {
     await ack()
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
-    const session = liveCandidateSearch.get(metadata.candidateSearchSessionId)
+    const requestedPage = Number(metadata.candidateSearchPage || 0) + 1
+    const session = recoverLiveCandidateSearchSession({
+      liveCandidateSearch,
+      sessionId: metadata.candidateSearchSessionId,
+      query: metadata.candidateSearchQuery,
+      userId: body.user?.id || '',
+      requestedPage,
+      logger,
+    })
     if (!session) {
       await refreshIntakeModal({
         client,
@@ -338,7 +346,6 @@ export function registerSlackHandlers(app, context) {
       return
     }
 
-    const requestedPage = Number(metadata.candidateSearchPage || 0) + 1
     const maxLoadedPage = Math.max(0, Math.ceil(session.resultCount / session.pageSize) - 1)
     const page = session.complete && requestedPage > maxLoadedPage ? maxLoadedPage : requestedPage
     const needsSearch = !session.complete && session.resultCount < (page + 1) * session.pageSize
@@ -2084,6 +2091,32 @@ function bodyWithUpdatedView(body, updateResult) {
       private_metadata: updatedView.private_metadata || body.view?.private_metadata,
     },
   }
+}
+
+export function recoverLiveCandidateSearchSession({
+  liveCandidateSearch,
+  sessionId = '',
+  query = '',
+  userId = '',
+  requestedPage = 0,
+  logger = console,
+} = {}) {
+  const session = liveCandidateSearch?.get?.(sessionId)
+  if (session) return session
+
+  const normalizedQuery = String(query || '').trim()
+  if (!normalizedQuery) return null
+
+  const restarted = liveCandidateSearch?.start?.({ query: normalizedQuery, userId })
+  if (!restarted) return null
+
+  logger.warn?.('candidate_live_search_session_restarted', {
+    previousSessionId: sessionId || '',
+    sessionId: restarted.id,
+    query: restarted.query,
+    requestedPage,
+  })
+  return restarted
 }
 
 async function updateLiveCandidateSearchModal({

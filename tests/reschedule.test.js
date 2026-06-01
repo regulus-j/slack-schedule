@@ -15,6 +15,7 @@ import {
   buildAttendeeInviteEmail,
   buildCancellationEmail,
   buildIntakeDraft,
+  recoverLiveCandidateSearchSession,
   buildScheduledCandidateEmail,
   buildTemplateVariables,
   ccRecipientsFromAttendees,
@@ -1078,6 +1079,52 @@ test('attendee invite emails are personalized and exclude candidate and recruite
   assert.match(email.htmlBody, /background-color: #f5f5f5/);
   assert.match(email.htmlBody, /<strong>Interview details:<\/strong>/);
   assert.match(email.htmlBody, /cid:opg-logo/);
+});
+
+test('candidate live search restart recovers a missing pagination session', () => {
+  const events = [];
+  const liveCandidateSearch = {
+    get(sessionId) {
+      assert.equal(sessionId, 'missing-session');
+      return null;
+    },
+    start({ query, userId }) {
+      return {
+        id: 'new-session',
+        query,
+        userId,
+        pageSize: 20,
+        resultCount: 0,
+        complete: false,
+        error: '',
+      };
+    },
+  };
+
+  const session = recoverLiveCandidateSearchSession({
+    liveCandidateSearch,
+    sessionId: 'missing-session',
+    query: 'j',
+    userId: 'U123',
+    requestedPage: 1,
+    logger: {
+      warn(event, data) {
+        events.push({ event, data });
+      },
+    },
+  });
+
+  assert.equal(session.id, 'new-session');
+  assert.equal(session.query, 'j');
+  assert.deepEqual(events, [{
+    event: 'candidate_live_search_session_restarted',
+    data: {
+      previousSessionId: 'missing-session',
+      sessionId: 'new-session',
+      query: 'j',
+      requestedPage: 1,
+    },
+  }]);
 });
 
 test('scheduled candidate email cc includes recruiter and attendee recipients', async () => {
