@@ -1040,7 +1040,7 @@ test('scheduled candidate email renders selected duration from stage overrides',
     },
   });
 
-  assert.match(email.body, /25-minute Zoom chat/);
+  assert.match(email.body, /25-minute Zoom first interview/);
   assert.doesNotMatch(email.body, /15-20 minute/);
 });
 
