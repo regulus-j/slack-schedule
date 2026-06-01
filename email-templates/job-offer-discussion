@@ -2,51 +2,37 @@ Subject: [applicant_full_name] - [job_title] with [company_name]
 
 Body:
 <html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">
-<p>Hello&nbsp;<strong>[applicant_first_name]</strong>,</p>
+<p>Hi <strong>[applicant_first_name]</strong>,</p>
 
-<p>We are pleased to inform you that you have been selected for the <strong>[job_title] </strong>role at <strong>Outsourced Pro Global</strong>!</p>
+<p>We are pleased to inform you that you have been selected for the <strong>[job_title]</strong> role at <strong>Outsourced Pro Global</strong>.</p>
 
 <p>As the next step, we would like to invite you for a <strong>job offer discussion</strong>. During this discussion, we will:</p>
 
 <ol>
-<li>
-<p>Go through your <strong>job offer letter</strong>, including&nbsp;professional service fee, benefits, and requirements before your onboarding date.</p>
-</li>
-<li>
-<p>Conduct a <strong>system check</strong> of your working device to ensure it meets our required standards.</p>
-</li>
-<li>
-<p>Request you to <strong>submit 2 valid government IDs</strong> back-to-back within the day.</p>
-</li>
-<li>
-<p>Prepare&nbsp;<strong>3 character references</strong> along with their availability for a verification call.</p>
-</li>
-<li>
-<p>Send in your&nbsp;<strong>NBI/PCC clearance</strong> with at least 6 months of validity. If this is not yet available, please send an <strong>appointment receipt</strong> instead.</p>
-</li>
+<li><p>Go through your <strong>job offer letter</strong>, including your professional service fees, benefits, and requirements ahead of your onboarding date.</p></li>
+<li><p>Conduct a <strong>system check</strong> of your working device to ensure it meets our required standards.</p></li>
+<li><p>Submit <strong>2 valid government IDs</strong> (front and back) on the same day.</p></li>
+<li><p>Prepare <strong>3 character references</strong> along with their availability for a verification call.</p></li>
+<li><p>Send your <strong>NBI/PCC clearance</strong>, ensuring it has at least 6 months of validity remaining. If it is not yet available, send an <strong>appointment receipt</strong> instead.</p></li>
 </ol>
 
-<p>
-<br />Date&nbsp;-&nbsp;[Date]
-<br />Time&nbsp;-&nbsp;[Time] [Timezone]
-<br />Zoom Link&nbsp;-&nbsp;[Link]</p>
-
-<p>&nbsp;</p>
+<p><strong>Date:</strong> [Date]<br>
+<strong>Time:</strong> [Time] [Timezone]<br>
+<strong>Platform:</strong> Zoom<br>
+<strong>Zoom Link:</strong> [Link]</p>
 
 <p><strong>Friendly Reminders:</strong></p>
 
 <ul>
-<li>Kindly&nbsp;<strong>connect 10&nbsp;minutes early</strong>&nbsp;to make sure your camera and microphone are working properly.</li>
+<li>Kindly <strong>connect 10 minutes early</strong> to make sure your camera and microphone are working properly.</li>
 <li>Use your laptop or PC for this interview.</li>
-<li>Make sure that your&nbsp;<strong>Full Name&nbsp;</strong>and the<strong>&nbsp;role&nbsp;</strong>you are interviewing for are reflected in the Zoom meeting.</li>
-<li>Please be reminded that this is a formal meeting, be in your business attire.</li>
-<li>If you have any questions, feel free to reach to any of our recruiters at&nbsp;<strong>+61 489 275 966 (AU)</strong>&nbsp;or <strong>[recruiter_phone_line]</strong></li>
+<li>Make sure that your <strong>Full Name</strong> and the <strong>role</strong> you are interviewing for are reflected in the Zoom meeting.</li>
+<li>Please note that this is a formal meeting - please dress in business attire.</li>
+<li>If you have any questions, feel free to reach out to any of our recruiters at <strong>+61 489 275 966 (AU)</strong> or <strong>[recruiter_phone_line]</strong></li>
 </ul>
 
-<p>
-<br />
-<br /><strong>Yours in Outsourced Pro Global,</strong>
-<br /><strong>Recruitment Team</strong></p>
+<p><strong>Warm regards,</strong><br>
+<strong>Recruitment Team, Outsourced Pro Global</strong></p>
 
 [signature]
 </body></html>

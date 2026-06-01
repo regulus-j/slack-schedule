@@ -1,20 +1,19 @@
-Subject: Reminder: Your Interview for the [job_title] role at Outsourced Pro Global - See You Soon!
+Subject: Interview Reminder: [job_title] at Outsourced Pro Global
 
 Body:
 <html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">
-<p><strong>Hi [applicant_first_name],</strong></p>
+<p>Hi <strong>[applicant_first_name]</strong>,</p>
 
-<p>Just a quick reminder about your interview for the [job_title] role at Outsourced Pro Global. We're excited to connect with you!</p>
+<p>This is a friendly reminder about your upcoming interview for the [job_title] role at Outsourced Pro Global.</p>
 
 <p>Please join the Zoom meeting 10 minutes early to make sure everything runs smoothly.</p>
 
-<p><strong>Here are your interview details:</strong><br>
-Date: [Date]<br>
-Time: [Time] [Timezone]<br>
-Platform: Zoom<br>
-Meeting Link: [Link]</p>
+<p><strong>Date:</strong> [Date]<br>
+<strong>Time:</strong> [Time] [Timezone]<br>
+<strong>Platform:</strong> Zoom<br>
+<strong>Zoom Link:</strong> [Link]</p>
 
-<p>If you have any questions or run into any issues, don't hesitate to reach out to us. We're here to help!</p>
+<p>If you have any questions or run into any issues, don't hesitate to reach out to us. We're here to help.</p>
 
 <p>Recruiter contact: [recruiter_phone_line]</p>
 

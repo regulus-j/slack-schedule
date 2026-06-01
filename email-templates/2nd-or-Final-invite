@@ -2,42 +2,35 @@ Subject: Your [interview_stage] for [job_title] at Outsourced Pro Global!
 
 Body:
 <html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">
-<p><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Hi</span></span></strong><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none"> [applicant_first_name],</span></span></strong></span></span></span></span></p>
+<p>Hi <strong>[applicant_first_name]</strong>,</p>
 
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><span style="font-weight:400"><span style="font-style:normal"><span style="text-decoration:none">Thank you for your interest in joining </span></span></span></span></span><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Outsourced Pro Global</span></span></strong></span></span><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><span style="font-weight:400"><span style="font-style:normal"><span style="text-decoration:none">! We&rsquo;re excited to let you know that your profile has been shortlisted, and you&rsquo;re moving forward to the next step in our hiring process.</span></span></span></span></span></span></span></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">Thank you for your interest in joining <strong>Outsourced Pro Global</strong>. We're excited to let you know that your profile has been shortlisted, and you're moving on to the next step in our hiring process.</p>
 
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">[hiring_manager_name], our [position_title]</span></span></strong></span></span><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><span style="font-weight:400"><span style="font-style:normal"><span style="text-decoration:none"> will meet with you via Zoom.</span></span></span></span></span></span></span>
-<br />
-<br />&nbsp;</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><strong>[hiring_manager_name], our [position_title],</strong> will meet with you via Zoom.</p>
 
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><span style="font-weight:400"><span style="font-style:normal"><span style="text-decoration:none">Here are the details:</span></span></span></span></span></span></span></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">Please find the applicant's resume here: [resume_link]</p>
 
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Date: [Date]</span></span></strong></span></span></span></span>
-<br /><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Time: [Time] [Timezone]</span></span></strong></span></span></span></span>
-<br /><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><span style="font-variant:normal; white-space:pre-wrap"><span style="color:#000000"><strong style="font-weight:700"><span style="font-style:normal"><span style="text-decoration:none">Zoom Link: [Link]</span></span></strong></span></span></span></span>
-<br />
-<br />&nbsp;</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">Here are the details:</p>
 
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">Resume: [resume_link]</p>
+<p><strong>Date:</strong> [Date]<br>
+<strong>Time:</strong> [Time] [Timezone]<br>
+<strong>Platform:</strong> Zoom<br>
+<strong>Zoom Link:</strong> [Link]</p>
 
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;white-space:pre-line;"><strong>Meeting guests:</strong><br />[guest_list_text]</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;white-space:pre-line;"><strong>Meeting guests:</strong><br>[guest_list_text]</p>
 
 <p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><strong>Friendly Reminders:</strong></p>
 
 <ul>
-<li>Kindly connect 10&nbsp;minutes early to make sure your camera and microphone are working properly.</li>
+<li>Kindly connect 10 minutes early to make sure your camera and microphone are working properly.</li>
 <li>Use your laptop or PC for this interview.</li>
-<li>Make sure that your&nbsp;<strong>Full Name&nbsp;</strong>and the<strong>&nbsp;role&nbsp;</strong>you are interviewing for are reflected in the Zoom meeting.</li>
-<li>Please be reminded that this is a formal meeting, be in your business attire.</li>
-<li>If you have any questions, feel free to reach to any of our recruiters at&nbsp;<strong>+61 489 275 966 (AU)&nbsp;</strong>or through their<strong>&nbsp;mobile no.&nbsp;</strong></li>
+<li>Make sure that your <strong>Full Name</strong> and the <strong>role</strong> you are interviewing for are reflected in the Zoom meeting.</li>
+<li>Please note that this is a formal meeting - please dress in business attire.</li>
+<li>If you have any questions, feel free to reach out to any of our recruiters at <strong>+61 489 275 966 (AU)</strong> or through their <strong>mobile no.</strong></li>
 </ul>
 
-<p>&nbsp;</p>
-
-<p>&nbsp;</p>
-
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><strong>Yours in Outsourced Pro Global,</strong>
-<br /><strong>Recruitment Team</strong></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><strong>Warm regards,</strong><br>
+<strong>Recruitment Team, Outsourced Pro Global</strong></p>
 
 [signature]
 </body></html>

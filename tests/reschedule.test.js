@@ -938,7 +938,7 @@ test('2nd/final candidate email includes resume link and all meeting guests', as
     },
   });
 
-  assert.match(email.body, /Resume: https:\/\/example\.com\/resume\.pdf/);
+  assert.match(email.body, /Please find the applicant's resume here: https:\/\/example\.com\/resume\.pdf/);
   assert.match(email.body, /Meeting guests:/);
   assert.match(email.body, /Alex Reyes: alex@example\.com/);
   assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);
