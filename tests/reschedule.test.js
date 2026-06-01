@@ -507,7 +507,9 @@ test('intake modal hides HM fields before a later-stage interview is selected', 
   assert.equal(manualToggle.type, 'checkboxes');
   assert.equal(manualApplicantNameBlock, undefined);
   assert.equal(recruiterNameBlock.element.type, 'external_select');
-  assert.equal(applicantEmailBlock, undefined);
+  assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
+  assert.equal(applicantEmailBlock.optional, true);
+  assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
   assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
   assert.equal(hmNameBlock, undefined);
   assert.equal(hmEmailBlock, undefined);
@@ -538,7 +540,7 @@ test('intake modal shows required manual candidate fields only in manual mode', 
   assert.equal(manualNameBlock.element.initial_value, 'Maria Santos');
   assert.equal(manualRoleBlock.optional, false);
   assert.equal(manualRoleBlock.element.initial_value, 'Executive Assistant');
-  assert.equal(applicantEmailBlock.optional, true);
+  assert.equal(applicantEmailBlock.optional, false);
   assert.equal(applicantEmailBlock.element.initial_value, 'maria@example.com');
 });
 
@@ -604,7 +606,7 @@ test('builds intake draft emails from selected people and overrides', () => {
     {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'rec-jam' } } },
-      applicant_email_block: { applicant_email: { value: '' } },
+      applicant_email_block: { applicant_email: { value: 'custom-applicant@example.com' } },
       'recruiter_email_block_rec-jam': { 'recruiter_email_rec-jam': { value: 'custom-recruiter@example.com' } },
       hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
       'hm_email_block_hm-ana': { 'hm_email_hm-ana': { value: 'custom-hm@example.com' } },
@@ -622,10 +624,10 @@ test('builds intake draft emails from selected people and overrides', () => {
     ],
   );
 
-  assert.equal(draft.applicantEmail, 'alex.reyes@example.com');
+  assert.equal(draft.applicantEmail, 'custom-applicant@example.com');
   assert.equal(draft.recruiterEmail, 'custom-recruiter@example.com');
   assert.equal(draft.hiringManagerEmail, 'custom-hm@example.com');
-  assert.equal(draft.applicant.email, 'alex.reyes@example.com');
+  assert.equal(draft.applicant.email, 'custom-applicant@example.com');
   assert.equal(draft.recruiter.email, 'custom-recruiter@example.com');
   assert.equal(draft.hiringManager.email, 'custom-hm@example.com');
   assert.equal(draft.stageKey, 'final-interview');

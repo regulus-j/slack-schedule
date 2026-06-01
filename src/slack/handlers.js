@@ -656,6 +656,9 @@ export function registerSlackHandlers(app, context) {
       if (!intakeDraft.manualApplicantRole) {
         errors.manual_applicant_role_block = 'Enter the candidate role.';
       }
+      if (!intakeDraft.applicantEmail) {
+        errors.applicant_email_block = 'Enter applicant email.';
+      }
     } else if (!intakeDraft.applicant) {
       errors.applicant_block = 'Choose a candidate.';
     }
@@ -2549,9 +2552,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const manualApplicantRole = manualCandidateMode
     ? (overrides.manualApplicantRole !== undefined ? overrides.manualApplicantRole : getInputValue(values, 'manual_applicant_role'))
     : ''
-  const applicantEmailOverride = manualCandidateMode
-    ? (overrides.applicantEmail !== undefined ? overrides.applicantEmail : getInputValue(values, 'applicant_email'))
-    : ''
+  const applicantEmailOverride =
+    overrides.applicantEmail !== undefined ? overrides.applicantEmail : getInputValue(values, 'applicant_email')
   const candidateSearchQuery = overrides.candidateSearchQuery ?? getInputValue(values, 'candidate_search')
   const candidateSearchPage = Number(overrides.candidateSearchPage || 0)
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');

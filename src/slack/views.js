@@ -183,6 +183,17 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
           },
         },
+        input(
+          'Applicant email',
+          'applicant_email_block',
+          {
+            type: 'plain_text_input',
+            action_id: 'applicant_email',
+            placeholder: plain('Override the applicant email'),
+            ...(draft.applicantEmail ? { initial_value: draft.applicantEmail } : {}),
+          },
+          true,
+        ),
       ] : [
         input(
           'Candidate name',
@@ -215,7 +226,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             placeholder: plain('Type the applicant email'),
             ...(draft.applicantEmail ? { initial_value: draft.applicantEmail } : {}),
           },
-          true,
+          false,
         ),
       ]),
       ...applicantDetailBlocks(draft),
