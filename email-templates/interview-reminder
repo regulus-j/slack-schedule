@@ -1,21 +1,24 @@
 Subject: Interview Reminder: [job_title] at Outsourced Pro Global
 
 Body:
-<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">
-<p>Hi <strong>[applicant_first_name]</strong>,</p>
+<html><body style="font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;">
+<p style="margin: 0 0 14px 0;">Hi <strong>[applicant_first_name]</strong>,</p>
 
-<p>This is a friendly reminder about your upcoming interview for the [job_title] role at Outsourced Pro Global.</p>
+<p style="margin: 0 0 14px 0;">This is a friendly reminder about your upcoming interview for the <strong>[job_title]</strong> role at Outsourced Pro Global.</p>
 
-<p>Please join the Zoom meeting 10 minutes early to make sure everything runs smoothly.</p>
+<p style="margin: 0 0 14px 0;">Please join the Zoom meeting 10 minutes early to make sure everything runs smoothly.</p>
 
-<p><strong>Date:</strong> [Date]<br>
-<strong>Time:</strong> [Time] [Timezone]<br>
-<strong>Platform:</strong> Zoom<br>
-<strong>Zoom Link:</strong> [Link]</p>
+<p style="margin: 0 0 8px 0;"><strong>Interview details:</strong></p>
+<p style="margin: 0 0 14px 0; padding: 12px 16px; background-color: #f5f5f5; border-left: 3px solid #cccccc; line-height: 2;">
+  <strong>Date:</strong> [Date]<br>
+  <strong>Time:</strong> [Time] [Timezone]<br>
+  <strong>Platform:</strong> Zoom<br>
+  <strong>Zoom Link:</strong> <a href="[Link]">[Link]</a>
+</p>
 
-<p>If you have any questions or run into any issues, don't hesitate to reach out to us. We're here to help.</p>
+<p style="margin: 0 0 14px 0;">If you have any questions or run into any issues, don't hesitate to reach out to us. We're here to help.</p>
 
-<p>Recruiter contact: [recruiter_phone_line]</p>
+<p style="margin: 0 0 14px 0;">Recruiter contact: [recruiter_phone_line]</p>
 
 [signature]
 </body></html>

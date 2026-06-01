@@ -1,20 +1,20 @@
 Subject: Still Interested in the [job_title] Role? Let's Connect!
 
 Body:
-<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">
-<p>Hi <strong>[applicant_first_name]</strong>,</p>
+<html><body style="font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;">
+<p style="margin: 0 0 14px 0;">Hi <strong>[applicant_first_name]</strong>,</p>
 
-<p>I hope you're doing well. We wanted to check in and see if you're still interested in the [job_title] role with Outsourced Pro Global.</p>
+<p style="margin: 0 0 14px 0;">I hope you're doing well. We wanted to check in and see if you're still interested in the <strong>[job_title]</strong> role with Outsourced Pro Global.</p>
 
-<p>Your application caught our attention, and we believe your skills and experience align well with what we're looking for. We're excited about the possibility of you joining our team.</p>
+<p style="margin: 0 0 14px 0;">Your application caught our attention, and we believe your skills and experience align well with what we're looking for. We're excited about the possibility of you joining our team.</p>
 
-<p>If you'd like to move forward, simply schedule an interview at a time that works best for you using the link below:</p>
+<p style="margin: 0 0 14px 0;">If you'd like to move forward, simply schedule an interview at a time that works best for you using the link below:</p>
 
-<p><strong><a href="[Schedule Your Interview Here]">Schedule Your Interview Here</a></strong></p>
+<p style="margin: 0 0 14px 0;"><a href="[Schedule Your Interview Here]" style="display: inline-block; background-color: #0057b8; color: #ffffff; font-weight: bold; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-size: 14px;">Schedule Your Interview</a></p>
 
-<p>Should you have any concerns or questions, please email, call, or text your Recruitment Specialist: [recruiter_phone_line]</p>
+<p style="margin: 0 0 14px 0;">Should you have any concerns or questions, please email, call, or text your Recruitment Specialist: [recruiter_phone_line]</p>
 
-<p>Thank you for considering Outsourced Pro Global as your next career step. We look forward to connecting with you soon.</p>
+<p style="margin: 0 0 14px 0;">Thank you for considering Outsourced Pro Global as your next career step. We look forward to connecting with you soon.</p>
 
 [signature]
 </body></html>

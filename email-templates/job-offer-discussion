@@ -1,38 +1,41 @@
 Subject: [applicant_full_name] - [job_title] with [company_name]
 
 Body:
-<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">
-<p>Hi <strong>[applicant_first_name]</strong>,</p>
+<html><body style="font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;">
+<p style="margin: 0 0 14px 0;">Hi <strong>[applicant_first_name]</strong>,</p>
 
-<p>We are pleased to inform you that you have been selected for the <strong>[job_title]</strong> role at <strong>Outsourced Pro Global</strong>.</p>
+<p style="margin: 0 0 14px 0;">We are pleased to inform you that you have been selected for the <strong>[job_title]</strong> role at <strong>Outsourced Pro Global</strong>.</p>
 
-<p>As the next step, we would like to invite you for a <strong>job offer discussion</strong>. During this discussion, we will:</p>
+<p style="margin: 0 0 14px 0;">As the next step, we would like to invite you for a <strong>job offer discussion</strong>. During this discussion, we will:</p>
 
-<ol>
-<li><p>Go through your <strong>job offer letter</strong>, including your professional service fees, benefits, and requirements ahead of your onboarding date.</p></li>
-<li><p>Conduct a <strong>system check</strong> of your working device to ensure it meets our required standards.</p></li>
-<li><p>Submit <strong>2 valid government IDs</strong> (front and back) on the same day.</p></li>
-<li><p>Prepare <strong>3 character references</strong> along with their availability for a verification call.</p></li>
-<li><p>Send your <strong>NBI/PCC clearance</strong>, ensuring it has at least 6 months of validity remaining. If it is not yet available, send an <strong>appointment receipt</strong> instead.</p></li>
+<ol style="margin: 0 0 14px 0; padding-left: 20px;">
+<li style="margin-bottom: 10px;">Go through your <strong>job offer letter</strong>, including your professional service fees, benefits, and requirements ahead of your onboarding date.</li>
+<li style="margin-bottom: 10px;">Conduct a <strong>system check</strong> of your working device to ensure it meets our required standards.</li>
+<li style="margin-bottom: 10px;">Submit <strong>2 valid government IDs</strong> (front and back) on the same day.</li>
+<li style="margin-bottom: 10px;">Prepare <strong>3 character references</strong> along with their availability for a verification call.</li>
+<li style="margin-bottom: 10px;">Send your <strong>NBI/PCC clearance</strong>, ensuring it has at least 6 months of validity remaining. If it is not yet available, send an <strong>appointment receipt</strong> instead.</li>
 </ol>
 
-<p><strong>Date:</strong> [Date]<br>
-<strong>Time:</strong> [Time] [Timezone]<br>
-<strong>Platform:</strong> Zoom<br>
-<strong>Zoom Link:</strong> [Link]</p>
+<p style="margin: 0 0 8px 0;"><strong>Interview details:</strong></p>
+<p style="margin: 0 0 14px 0; padding: 12px 16px; background-color: #f5f5f5; border-left: 3px solid #cccccc; line-height: 2;">
+  <strong>Date:</strong> [Date]<br>
+  <strong>Time:</strong> [Time] [Timezone]<br>
+  <strong>Platform:</strong> Zoom<br>
+  <strong>Zoom Link:</strong> <a href="[Link]">[Link]</a>
+</p>
 
-<p><strong>Friendly Reminders:</strong></p>
+<p style="margin: 0 0 8px 0;"><strong>Friendly Reminders:</strong></p>
 
-<ul>
-<li>Kindly <strong>connect 10 minutes early</strong> to make sure your camera and microphone are working properly.</li>
-<li>Use your laptop or PC for this interview.</li>
-<li>Make sure that your <strong>Full Name</strong> and the <strong>role</strong> you are interviewing for are reflected in the Zoom meeting.</li>
-<li>Please note that this is a formal meeting - please dress in business attire.</li>
-<li>If you have any questions, feel free to reach out to any of our recruiters at <strong>+61 489 275 966 (AU)</strong> or <strong>[recruiter_phone_line]</strong></li>
+<ul style="margin: 0 0 14px 0; padding-left: 20px;">
+<li style="margin-bottom: 8px;">Kindly <strong>connect 10 minutes early</strong> to make sure your camera and microphone are working properly.</li>
+<li style="margin-bottom: 8px;">Use your laptop or PC for this interview.</li>
+<li style="margin-bottom: 8px;">Make sure that your <strong>Full Name</strong> and the <strong>role</strong> you are interviewing for are reflected in the Zoom meeting.</li>
+<li style="margin-bottom: 8px;">Please note that this is a formal meeting - please dress in business attire.</li>
+<li style="margin-bottom: 8px;">If you have any questions, feel free to reach out to any of our recruiters at <strong>+61 489 275 966 (AU)</strong> or <strong>[recruiter_phone_line]</strong>.</li>
 </ul>
 
-<p><strong>Warm regards,</strong><br>
-<strong>Recruitment Team, Outsourced Pro Global</strong></p>
+<p style="margin: 0 0 4px 0;">Warm regards,</p>
+<p style="margin: 0 0 14px 0;">Recruitment Team, Outsourced Pro Global</p>
 
 [signature]
 </body></html>
