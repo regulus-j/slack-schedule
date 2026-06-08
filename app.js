@@ -41,7 +41,7 @@ await app.start();
 logger.info('slack_app_started', { socketMode: true });
 
 ensureSlackDirectory({ client: app.client, config, logger }).catch((error) => {
-  logger.warn('slack_directory_startup_preload_failed', { error: error.message });
+  logger.warn('slack_directory_startup_preload_failed', slackApiErrorDetails(error));
 });
 
 if (config.jazzhr.refreshOnStartup || jazzhrHydration.records === 0) {
@@ -51,4 +51,13 @@ if (config.jazzhr.refreshOnStartup || jazzhrHydration.records === 0) {
     reason: 'persisted_cache_available',
     records: jazzhrHydration.records,
   });
+}
+
+function slackApiErrorDetails(error) {
+  return {
+    error: error.message,
+    slackError: error.data?.error,
+    needed: error.data?.needed,
+    provided: error.data?.provided,
+  };
 }

@@ -101,3 +101,78 @@ test('ensureSlackDirectory ignores recruitment channel config and does not warn 
   assert.equal(result.recruiters.length, 0)
   assert.equal(warnings.length, 0)
 })
+
+test('ensureSlackDirectory retries users.list with resolved team id when Slack requires it', async () => {
+  setSlackUsers([])
+
+  const listArgs = []
+  const client = {
+    auth: {
+      async test() {
+        return { team_id: 'T123' }
+      },
+    },
+    users: {
+      async list(args) {
+        listArgs.push(args)
+        if (!args.team_id) {
+          const error = new Error('An API error occurred: missing_argument')
+          error.data = { error: 'missing_argument', needed: 'team_id', provided: 'limit' }
+          throw error
+        }
+        return {
+          members: [
+            { id: 'U1', profile: { real_name_normalized: 'Recruiter One', email: 'rec1@opg.com' } },
+          ],
+          response_metadata: { next_cursor: '' },
+        }
+      },
+    },
+  }
+
+  const infos = []
+  const logger = {
+    info(event) {
+      infos.push(event)
+    },
+    warn() {},
+  }
+
+  const result = await ensureSlackDirectory({
+    client,
+    logger,
+    force: true,
+    config: { slack: {} },
+  })
+
+  assert.equal(result.users.length, 1)
+  assert.deepEqual(listArgs, [{ limit: 200 }, { limit: 200, team_id: 'T123' }])
+  assert.ok(infos.includes('slack_directory_team_id_resolved'))
+})
+
+test('ensureSlackDirectory includes configured Slack team id on users.list calls', async () => {
+  setSlackUsers([])
+
+  const listArgs = []
+  const client = {
+    users: {
+      async list(args) {
+        listArgs.push(args)
+        return {
+          members: [],
+          response_metadata: { next_cursor: '' },
+        }
+      },
+    },
+  }
+
+  const logger = { info() {}, warn() {} }
+  await ensureSlackDirectory({
+    client,
+    logger,
+    force: true,
+    config: { slack: { teamId: 'T456' } },
+  })
+
+  assert.deepEqual(listArgs, [{ limit: 200, team_id: 'T456' }])
+})

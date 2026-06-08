@@ -22,7 +22,7 @@ export async function ensureSlackDirectory({ client, config, logger, force = fal
 }
 
 async function loadSlackDirectory({ client, config, logger }) {
-  const users = await fetchAllSlackUsers({ client, logger })
+  const users = await fetchAllSlackUsers({ client, config, logger })
   setSlackUsers(users)
 
   directoryLoaded = true
@@ -75,21 +75,62 @@ export function normalizeSlackUser(user) {
   }
 }
 
-async function fetchAllSlackUsers({ client, logger }) {
+async function fetchAllSlackUsers({ client, config, logger }) {
   const users = []
   let cursor
+  let teamId = config?.slack?.teamId || ''
 
   do {
-    const result = await client.users.list({
-      limit: 200,
-      ...(cursor ? { cursor } : {}),
-    })
+    let result
+    try {
+      result = await client.users.list(buildSlackUsersListArgs({ cursor, teamId }))
+    } catch (error) {
+      if (!teamId && isMissingTeamIdError(error)) {
+        teamId = await resolveSlackTeamId({ client, logger })
+        if (teamId) {
+          logger.info('slack_directory_team_id_resolved')
+          result = await client.users.list(buildSlackUsersListArgs({ cursor, teamId }))
+        }
+      }
+      if (!result) throw error
+    }
     users.push(...(result.members || []).map(normalizeSlackUser).filter(Boolean))
     cursor = result.response_metadata?.next_cursor || ''
   } while (cursor)
 
   logger.info('slack_users_loaded', { count: users.length })
   return users
+}
+
+function buildSlackUsersListArgs({ cursor, teamId }) {
+  return {
+    limit: 200,
+    ...(cursor ? { cursor } : {}),
+    ...(teamId ? { team_id: teamId } : {}),
+  }
+}
+
+async function resolveSlackTeamId({ client, logger }) {
+  if (typeof client?.auth?.test !== 'function') return ''
+
+  try {
+    const result = await client.auth.test()
+    return result.team_id || result.team?.id || ''
+  } catch (error) {
+    logger.warn('slack_directory_team_id_resolve_failed', {
+      error: error.message,
+      slackError: error.data?.error,
+      needed: error.data?.needed,
+      provided: error.data?.provided,
+    })
+    return ''
+  }
+}
+
+function isMissingTeamIdError(error) {
+  const slackError = error?.data?.error
+  const needed = error?.data?.needed
+  return slackError === 'missing_argument' && (!needed || String(needed).includes('team_id'))
 }
 
 function upsertBySlackId(users, user) {

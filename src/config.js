@@ -22,6 +22,7 @@ export function loadConfig(env = process.env) {
       botToken: mergedEnv.SLACK_BOT_TOKEN,
       appToken: mergedEnv.SLACK_APP_TOKEN,
       postingChannelId: mergedEnv.SLACK_POSTING_CHANNEL_ID || null,
+      teamId: mergedEnv.SLACK_TEAM_ID || null,
     },
     jazzhr: {
       apiKey: mergedEnv.JAZZHR_API_KEY,
