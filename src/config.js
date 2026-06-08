@@ -49,6 +49,13 @@ export function loadConfig(env = process.env) {
       fileId: mergedEnv.RECRUITER_PHONE_EXPORT_FILE_ID || null,
       sheetName: mergedEnv.RECRUITER_PHONE_EXPORT_SHEET_NAME || null,
     },
+    roleAssignmentExport: {
+      url: mergedEnv.ROLE_ASSIGNMENT_EXPORT_URL || mergedEnv.RECRUITER_PHONE_EXPORT_URL || null,
+      token: mergedEnv.ROLE_ASSIGNMENT_EXPORT_TOKEN || mergedEnv.RECRUITER_PHONE_EXPORT_TOKEN || null,
+      fileId: mergedEnv.ROLE_ASSIGNMENT_EXPORT_FILE_ID || null,
+      sheetName: mergedEnv.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME || null,
+      sheetGid: mergedEnv.ROLE_ASSIGNMENT_EXPORT_SHEET_GID || null,
+    },
     security: {
       encryptionKey: mergedEnv.APP_ENCRYPTION_KEY,
     },

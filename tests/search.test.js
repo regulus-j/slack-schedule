@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applicantLabel,
   applicantPickerLabel,
+  filterApplicants,
   personLabel,
   personPickerLabel,
   searchRecords,
@@ -28,7 +29,7 @@ test('formats display and picker labels differently', () => {
       email: 'alex@example.com',
       jobTitle: 'Support',
     }),
-    'Alex Reyes - Support - alex@example.com',
+    'Alex Reyes - alex@example.com',
   );
 });
 
@@ -50,3 +51,16 @@ test('trims Slack option text to the requested maximum length', () => {
   assert.equal(trimForSlack(text).length, 75);
   assert.equal(trimForSlack(text), `${'A'.repeat(72)}...`);
 });
+
+test('filters applicants by JazzHR role and recruiter context', () => {
+  const results = filterApplicants([
+    { fullName: 'Alex One', jazzhrJobId: 'job-1', jobTitle: 'Support', recruiterId: 'rec-123' },
+    { fullName: 'Alex Two', jazzhrJobId: 'job-2', jobTitle: 'Sales', recruiterId: 'rec-123' },
+    { fullName: 'Alex Three', jazzhrJobId: 'job-1', jobTitle: 'Support', recruiterId: 'rec-999' },
+  ], {
+    roleId: 'job-1',
+    recruiterIds: ['123'],
+  })
+
+  assert.deepEqual(results.map((item) => item.fullName), ['Alex One'])
+})

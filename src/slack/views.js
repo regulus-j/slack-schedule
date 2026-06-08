@@ -3,6 +3,7 @@ import { TIMEZONE_COUNTRY_MAP } from '../data/timezones.js'
 import { isScheduledCase, normalizeCaseSchedule, visibleCaseActions } from '../workflow/reschedule.js'
 import { DEFAULT_STAGE_RULES, STAGE_OPTIONS, normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
 import { normalizeAttendees } from '../workflow/attendees.js'
+import { resumeSlackLink } from '../resume-display.js'
 import {
   BUSINESS_DAY_END,
   BUSINESS_DAY_START,
@@ -105,7 +106,7 @@ export function homeView({
   };
 }
 
-export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone, recruiters = [] }) {
+export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone, recruiters = [], roles = [] }) {
   const resolvedTimeZones = timeZones.length > 0 ? timeZones : [SYDNEY_TIME_ZONE]
   const selectedTimeZone = draft.interviewTimezone || defaultTimeZone || resolvedTimeZones[0] || SYDNEY_TIME_ZONE
   const selectedTimeZoneCountry = TIMEZONE_COUNTRY_MAP[selectedTimeZone]
@@ -113,8 +114,11 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     text: plain(selectedTimeZoneCountry ? `${selectedTimeZone} (${selectedTimeZoneCountry})` : selectedTimeZone),
     value: selectedTimeZone,
   }
+  const eventType = draft.eventType || ''
+  const standardEvent = isStandardIntakeEvent(eventType)
+  const customInvite = eventType === 'custom-invite'
   const recruiterSelect = recruiterSelectElement({ recruiters, draft })
-  const manualCandidateMode = Boolean(draft.manualCandidateMode)
+  const manualCandidateMode = customInvite && Boolean(draft.manualCandidateMode)
   const recruiterEmailBlockId = dynamicBlockId('recruiter_email_block', draft.recruiterId)
   const hiringManagerEmailBlockId = dynamicBlockId('hm_email_block', draft.hiringManagerId)
   const recruiterEmailActionId = dynamicBlockId('recruiter_email', draft.recruiterId)
@@ -143,6 +147,31 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ),
       ]
     : []
+  const standardRoleBlocks = standardEvent
+    ? [
+        input('JazzHR role', 'role_block', {
+          type: 'external_select',
+          action_id: 'role_select',
+          min_query_length: 0,
+          placeholder: plain('Search open role'),
+          ...(draft.roleOption ? { initial_option: draft.roleOption } : {}),
+        }, false, true),
+        input('Recruiters', 'recruiter_block', {
+          type: 'multi_external_select',
+          action_id: 'recruiter_select',
+          min_query_length: 0,
+          placeholder: plain('Select recruiter'),
+          ...(draft.recruiterOptions?.length ? { initial_options: draft.recruiterOptions } : {}),
+        }, false, true),
+        input('Hiring managers', 'hm_block', {
+          type: 'multi_external_select',
+          action_id: 'hm_select',
+          min_query_length: 0,
+          placeholder: plain('Select hiring manager'),
+          ...(draft.hiringManagerOptions?.length ? { initial_options: draft.hiringManagerOptions } : {}),
+        }, !hmRequired, true),
+      ]
+    : []
 
   return {
     type: 'modal',
@@ -151,8 +180,16 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     submit: plain('➕ Create'),
     close: plain('Cancel'),
     blocks: [
-      actions([manualCandidateModeCheckbox(draft)], 'manual_candidate_mode_block'),
-      ...(!manualCandidateMode ? [
+      input('Event type', 'event_type_block', {
+        type: 'static_select',
+        action_id: 'event_type_select',
+        placeholder: plain('Choose event type'),
+        options: intakeEventTypeOptions(),
+        ...(draft.eventTypeOption ? { initial_option: draft.eventTypeOption } : {}),
+      }, false, true),
+      ...standardRoleBlocks,
+      ...(customInvite ? [actions([manualCandidateModeCheckbox(draft)], 'manual_candidate_mode_block')] : []),
+      ...(!(standardEvent || customInvite) ? [] : !manualCandidateMode ? [
         input(
           'Candidate name search',
           'candidate_search_block',
@@ -230,6 +267,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ),
       ]),
       ...applicantDetailBlocks(draft),
+      ...(customInvite ? [
       input('Stage', 'stage_block', {
         type: 'static_select',
         action_id: 'stage_select',
@@ -250,6 +288,14 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         true,
       ),
       ...hiringManagerBlocks,
+      ] : []),
+      ...((standardEvent || customInvite) ? [
+      input('Zoom link', 'zoom_block', {
+        type: 'plain_text_input',
+        action_id: 'zoom_link',
+        placeholder: plain('Paste final Zoom link'),
+        ...(draft.zoomLink ? { initial_value: draft.zoomLink } : {}),
+      }, false),
       input(
         'Notes',
         'notes_block',
@@ -282,6 +328,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       }),
       section(`🕐 Interview timezone drives calendar invites. Times are shown in PH (${PH_TIME_ZONE}) with interview timezone equivalents.`),
       section('📝 Calendar descriptions are generated automatically from the schedule details. Add notes here only if you want extra intake context.'),
+      ] : []),
     ],
   };
 }
@@ -954,14 +1001,10 @@ function scheduleSummary(caseRecord) {
 
 function resumeSummary(caseRecord) {
   if (!caseRecord.resumeLink) {
-    return ['📄 Resume: not linked yet'];
+    return ['Resume: not linked yet']
   }
 
-  if (/^https?:\/\//i.test(String(caseRecord.resumeLink).trim())) {
-    return ['📄 Resume: linked', `🔗 View resume: ${caseRecord.resumeLink}`];
-  }
-
-  return ['📄 Resume: Slack file attached'];
+  return [`Resume: ${resumeSlackLink(caseRecord)}`]
 }
 
 function caseTitle(caseRecord) {
@@ -1204,6 +1247,20 @@ function intakeStageOptions() {
     text: plain(stage.label),
     value: stage.key
   }))
+}
+
+function intakeEventTypeOptions() {
+  return [
+    { text: plain('1st Interview'), value: '1st-interview' },
+    { text: plain('2nd Interview'), value: '2nd-interview' },
+    { text: plain('Final Interview'), value: 'final-interview' },
+    { text: plain('Job Offer'), value: 'job-offer' },
+    { text: plain('Custom Invite'), value: 'custom-invite' },
+  ]
+}
+
+function isStandardIntakeEvent(eventType) {
+  return ['1st-interview', '2nd-interview', 'final-interview', 'job-offer'].includes(eventType)
 }
 
 function durationSelectOptions(currentMinutes) {

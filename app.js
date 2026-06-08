@@ -36,6 +36,9 @@ httpServer.listen(config.port, () => {
 logger.info('recruiter_phone_export_configured', {
   configured: Boolean(config.recruiterPhoneExport.url && config.recruiterPhoneExport.token),
 });
+logger.info('role_assignment_export_configured', {
+  configured: Boolean(config.roleAssignmentExport.url && config.roleAssignmentExport.token),
+});
 
 await app.start();
 logger.info('slack_app_started', { socketMode: true });

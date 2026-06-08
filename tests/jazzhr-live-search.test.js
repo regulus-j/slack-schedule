@@ -165,6 +165,54 @@ test('live search paginates matching results twenty at a time', async () => {
   assert.equal(secondPage[0].fullName, 'Alex Candidate 20')
 })
 
+test('live search filters candidates to selected role and recruiter', async () => {
+  const fetchFn = async () => response(200, [
+    applicant('alex-1', 'Alex', 'One', { job_id: 'job-1', job_title: 'Support', recruiter_id: '123' }),
+    applicant('alex-2', 'Alex', 'Two', { job_id: 'job-2', job_title: 'Sales', recruiter_id: '123' }),
+    applicant('alex-3', 'Alex', 'Three', { job_id: 'job-1', job_title: 'Support', recruiter_id: '999' }),
+  ])
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'alex',
+    filters: {
+      roleId: 'job-1',
+      recruiterIds: ['rec-123'],
+    },
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.deepEqual(result.results.map((item) => item.fullName), ['Alex One'])
+})
+
+test('live search excludes rejected candidates without excluding screening', async () => {
+  const fetchFn = async () => response(200, [
+    applicant('alex-1', 'Alex', 'Screening', { job_id: 'job-1', applicant_progress: 'Resume Screening' }),
+    applicant('alex-2', 'Alex', 'Rejected', { job_id: 'job-1', disposition: 'Good for Future Hire' }),
+  ])
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'alex',
+    filters: { roleId: 'job-1' },
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.deepEqual(result.results.map((item) => item.fullName), ['Alex Screening'])
+})
+
 test('next page uses already collected live session results', async () => {
   const requestedUrls = []
   const fetchFn = async (url) => {

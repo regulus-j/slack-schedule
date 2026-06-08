@@ -22,7 +22,7 @@ import {
   isScheduleWorkflowTrigger,
 } from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
-import { setApplicants, setRecruiters, setHiringManagers } from '../src/data/cache.js';
+import { setApplicants, setRecruiters, setHiringManagers, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
 const baseCase = {
@@ -385,6 +385,10 @@ test('intake modal omits target window fields', () => {
         body: 'Body',
       },
     ],
+    draft: {
+      eventType: 'custom-invite',
+      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
+    },
   });
 
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
@@ -411,11 +415,26 @@ test('check availability modal keeps target window fields', () => {
   assert.ok(blockIds.includes('schedule_window_end_block'));
 });
 
-test('intake modal uses stage selection instead of template selection', () => {
-  const view = intakeModal({ templates: [] });
+test('intake modal starts with event type and custom invite uses stage selection', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: 'custom-invite',
+      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
+    },
+  });
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
+  const eventTypeBlock = inputBlocks[0];
   const stageBlock = inputBlocks.find((block) => block.block_id === 'stage_block');
 
+  assert.equal(eventTypeBlock.block_id, 'event_type_block');
+  assert.deepEqual(eventTypeBlock.element.options.map((option) => option.text.text), [
+    '1st Interview',
+    '2nd Interview',
+    'Final Interview',
+    'Job Offer',
+    'Custom Invite',
+  ]);
   assert.ok(stageBlock);
   assert.equal(stageBlock.label.text, 'Stage');
   assert.equal(stageBlock.element.action_id, 'stage_select');
@@ -466,6 +485,10 @@ test('intake modal includes a resume file upload field', () => {
         body: 'Body',
       },
     ],
+    draft: {
+      eventType: 'custom-invite',
+      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
+    },
   });
 
   const resumeBlock = view.blocks.find((block) => block.block_id === 'resume_block');
@@ -489,6 +512,8 @@ test('intake modal hides HM fields before a later-stage interview is selected', 
       },
     ],
     draft: {
+      eventType: 'custom-invite',
+      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       applicantOption: { text: { type: 'plain_text', text: 'Alex Reyes - alex@example.com' }, value: 'applicant-demo-1' },
       applicantEmail: 'alex@example.com',
       recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
@@ -527,6 +552,8 @@ test('intake modal shows required manual candidate fields only in manual mode', 
   const view = intakeModal({
     templates: [],
     draft: {
+      eventType: 'custom-invite',
+      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       manualCandidateMode: true,
       manualApplicantName: 'Maria Santos',
       manualApplicantRole: 'Executive Assistant',
@@ -554,6 +581,8 @@ test('intake modal requires HM fields and resume upload for later-stage intervie
   const view = intakeModal({
     templates: [],
     draft: {
+      eventType: 'custom-invite',
+      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       stageKey: 'final-interview',
       stageOption: { text: { type: 'plain_text', text: 'Final Interview' }, value: 'final-interview' },
       hiringManagerId: 'hm-ana',
@@ -580,6 +609,8 @@ test('intake modal refreshes recruiter and HM email fields after selection', () 
   const view = intakeModal({
     templates: [],
     draft: {
+      eventType: 'custom-invite',
+      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       stageKey: 'final-interview',
       recruiterId: 'rec-jam',
       recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
@@ -600,6 +631,113 @@ test('intake modal refreshes recruiter and HM email fields after selection', () 
   assert.equal(hmEmailBlock.element.action_id, 'hm_email_hm-ana');
   assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
 });
+
+test('standard intake modal uses role-mapped order and multi recruiter/HM selectors', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd Interview' }, value: '2nd-interview' },
+      stageKey: '2nd-interview',
+      roleId: 'job-1',
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+      recruiterOptions: [
+        { text: { type: 'plain_text', text: 'Mara Santos - mara@example.com' }, value: 'rec-mara' },
+      ],
+      hiringManagerOptions: [
+        { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+      ],
+      zoomLink: 'https://zoom.us/j/mara',
+    },
+  })
+
+  const inputBlockIds = view.blocks.filter((block) => block.type === 'input').map((block) => block.block_id)
+  assert.deepEqual(inputBlockIds.slice(0, 5), [
+    'event_type_block',
+    'role_block',
+    'recruiter_block',
+    'hm_block',
+    'candidate_search_block',
+  ])
+  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_block').element.type, 'multi_external_select')
+  assert.equal(view.blocks.find((block) => block.block_id === 'hm_block').element.type, 'multi_external_select')
+  assert.equal(view.blocks.find((block) => block.block_id === 'zoom_block').element.initial_value, 'https://zoom.us/j/mara')
+  assert.equal(inputBlockIds.includes('stage_block'), false)
+  assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
+})
+
+test('builds standard intake draft from mapped role recruiters HMs and Zoom', () => {
+  setApplicants(SAMPLE_APPLICANTS)
+  setTalentRecruiters([
+    {
+      id: 'rec-mara',
+      name: 'Mara Santos',
+      email: 'mara@example.com',
+      role: 'recruiter',
+      zoomLink: 'https://zoom.us/j/mara',
+    },
+    {
+      id: 'rec-jam',
+      name: 'Jamal Al Badi',
+      email: 'jamal@example.com',
+      role: 'recruiter',
+      zoomLink: 'https://zoom.us/j/jam',
+    },
+  ])
+  setHiringManagers([
+    {
+      id: 'hm-ana',
+      name: 'Ana Cruz',
+      email: 'ana@example.com',
+      role: 'hiring_manager',
+    },
+    {
+      id: 'hm-lee',
+      name: 'Lee Morgan',
+      email: 'lee@example.com',
+      role: 'hiring_manager',
+    },
+  ])
+  setRoleAssignments([
+    {
+      roleId: 'job-1',
+      roleKey: 'job-1',
+      roleTitle: 'Customer Support Specialist',
+      recruiter: { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/mara' },
+      hiringManager: { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+    },
+    {
+      roleId: 'job-1',
+      roleKey: 'job-1',
+      roleTitle: 'Customer Support Specialist',
+      recruiter: { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/jam' },
+      hiringManager: { id: 'hm-lee', name: 'Lee Morgan', email: 'lee@example.com', role: 'hiring_manager' },
+    },
+  ])
+
+  const draft = buildIntakeDraft(
+    {
+      event_type_block: { event_type_select: { selected_option: { value: '2nd-interview' } } },
+      role_block: { role_select: { selected_option: { value: 'job-1' } } },
+      recruiter_block: { recruiter_select: { selected_options: [{ value: 'rec-mara' }, { value: 'rec-jam' }] } },
+      hm_block: { hm_select: { selected_options: [{ value: 'hm-ana' }, { value: 'hm-lee' }] } },
+      applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
+      zoom_block: { zoom_link: { value: 'https://zoom.us/j/manual' } },
+    },
+    [],
+  )
+
+  assert.equal(draft.eventType, '2nd-interview')
+  assert.equal(draft.stageKey, '2nd-interview')
+  assert.equal(draft.templateId, '2nd-or-Final-invite')
+  assert.equal(draft.roleId, 'job-1')
+  assert.deepEqual(draft.recruiterIds, ['rec-mara', 'rec-jam'])
+  assert.deepEqual(draft.hiringManagerIds, ['hm-ana', 'hm-lee'])
+  assert.equal(draft.recruiter.email, 'mara@example.com')
+  assert.equal(draft.hiringManager.email, 'ana@example.com')
+  assert.equal(draft.zoomLink, 'https://zoom.us/j/manual')
+  assert.deepEqual(draft.extraAttendees.map((attendee) => attendee.email), ['jamal@example.com', 'lee@example.com'])
+})
 
 test('builds intake draft emails from selected people and overrides', () => {
   setApplicants(SAMPLE_APPLICANTS);
@@ -707,6 +845,7 @@ test('builds intake draft from a manually entered candidate name', () => {
 
   const draft = buildIntakeDraft(
     {
+      event_type_block: { event_type_select: { selected_option: { value: 'custom-invite' } } },
       manual_candidate_mode_block: {
         manual_candidate_toggle: {
           selected_options: [{ value: 'manual' }],
@@ -977,7 +1116,8 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.position_title, 'Operations Manager');
   assert.equal(variables.interview_duration_minutes, '55');
   assert.equal(variables.interview_duration_text, '55-minute');
-  assert.equal(variables.resume_link, 'https://example.com/resume.pdf');
+  assert.equal(variables.resume_link, '<a href="https://example.com/resume.pdf">[Resume]Support Specialist - Alex</a>');
+  assert.equal(variables.resume_link_plain, '[Resume]Support Specialist - Alex: https://example.com/resume.pdf');
   assert.match(variables.guest_list_text, /Alex Reyes: alex@example\.com/);
   assert.match(variables.guest_list_text, /Jamal Al Badi: jamal@example\.com/);
   assert.match(variables.guest_list_text, /Ana Cruz: ana@example\.com/);
@@ -1003,7 +1143,8 @@ test('2nd/final candidate email includes resume link and all meeting guests', as
     },
   });
 
-  assert.match(email.body, /Please find the applicant's resume here: https:\/\/example\.com\/resume\.pdf/);
+  assert.match(email.body, /Please find the applicant's resume here: <a href="https:\/\/example\.com\/resume\.pdf">\[Resume\]Customer Support Specialist - Alex Reyes<\/a>/);
+  assert.match(email.plainBody, /Please find the applicant's resume here: \[Resume\]Customer Support Specialist - Alex Reyes: https:\/\/example\.com\/resume\.pdf/);
   assert.match(email.body, /Meeting guests:/);
   assert.match(email.body, /Alex Reyes: alex@example\.com/);
   assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);

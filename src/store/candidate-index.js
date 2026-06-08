@@ -38,9 +38,12 @@ export function normalizeJazzhrCandidates(records = []) {
     .sort(compareJazzhrCandidates)
 }
 
-export function searchJazzhrCandidateRecords(records = [], query = '', { limit = 20, baseQuery = '' } = {}) {
+export function searchJazzhrCandidateRecords(records = [], query = '', { limit = 20, baseQuery = '', roleId = '', roleTitle = '', recruiterIds = [] } = {}) {
   const normalizedQuery = normalizeSearchText(query)
   const normalizedBaseQuery = normalizeSearchText(baseQuery)
+  const normalizedRoleId = String(roleId || '').trim()
+  const normalizedRoleTitle = normalizeSearchText(roleTitle)
+  const normalizedRecruiterIds = new Set((recruiterIds || []).map(normalizeRecruiterId).filter(Boolean))
   const results = []
   const safeLimit = Math.max(0, Number(limit) || 0)
   if (safeLimit === 0) return results
@@ -52,6 +55,9 @@ export function searchJazzhrCandidateRecords(records = [], query = '', { limit =
     if (!record || candidateInactiveReason(record)) continue
 
     const haystack = candidateSearchText(record)
+    if (normalizedRoleId && String(record.jazzhrJobId || '').trim() !== normalizedRoleId) continue
+    if (!normalizedRoleId && normalizedRoleTitle && normalizeSearchText(record.jobTitle) !== normalizedRoleTitle) continue
+    if (normalizedRecruiterIds.size > 0 && !normalizedRecruiterIds.has(normalizeRecruiterId(record.recruiterId))) continue
     if (normalizedBaseQuery && !haystack.includes(normalizedBaseQuery)) continue
     if (normalizedQuery && !haystack.includes(normalizedQuery)) continue
 
@@ -143,6 +149,12 @@ function dateSortValue(value) {
 
 function statusKey(value) {
   return normalizeSearchText(value).replace(/[^a-z0-9]+/g, '')
+}
+
+function normalizeRecruiterId(value) {
+  const id = String(value || '').trim()
+  if (!id) return ''
+  return id.startsWith('rec-') ? id : `rec-${id}`
 }
 
 const INACTIVE_STATUS_TERMS = [

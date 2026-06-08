@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { logger } from '../logger.js';
-import { setHiringManagers, setTalentRecruiters } from '../data/cache.js';
+import { setHiringManagers, setRoleAssignments, setTalentRecruiters } from '../data/cache.js';
 import { fetchRecruiterPhoneRows, mergeRecruiterPhones, recruiterRowsToPeople } from './recruiter-phone-export.js';
+import { fetchRoleAssignmentRows, resolveRoleAssignments } from './role-assignment-export.js';
 
 export async function loadTalentDirectory(config, store) {
   let people
@@ -50,11 +51,18 @@ export async function loadTalentDirectory(config, store) {
   const enrichedBaseRecruiters = mergeRecruiterPhones(baseRecruiters, phoneRows)
   const talentRecruiters = mergeRecruiterLists(sheetRecruiters, enrichedBaseRecruiters)
   setTalentRecruiters(talentRecruiters)
+  const roleRows = await fetchRoleAssignmentRows({ config, logger })
+  const roleAssignments = resolveRoleAssignments(roleRows, {
+    recruiters: talentRecruiters,
+    hiringManagers: people,
+  })
+  setRoleAssignments(roleAssignments)
 
   logger.info('talent_directory_loaded', {
     count: people.length,
     recruiters: talentRecruiters.length,
     sheetRecruiters: sheetRecruiters.length,
+    roleAssignments: roleAssignments.length,
     source,
   });
   return people;

@@ -37,6 +37,33 @@ export function searchApplicants(query, applicants = getApplicants()) {
   );
 }
 
+export function filterApplicants(applicants = [], filters = {}) {
+  const roleId = String(filters.roleId || '').trim()
+  const roleTitle = normalizeSearchText(filters.roleTitle)
+  const recruiterIds = new Set((filters.recruiterIds || []).map(normalizeRecruiterId).filter(Boolean))
+
+  return (Array.isArray(applicants) ? applicants : []).filter((applicant) => {
+    if (roleId) {
+      const applicantRoleId = String(applicant?.jazzhrJobId || applicant?.jobId || applicant?.job_id || '').trim()
+      if (applicantRoleId !== roleId) return false
+    } else if (roleTitle) {
+      const applicantRoleTitle = normalizeSearchText(applicant?.jobTitle || applicant?.job_title)
+      if (applicantRoleTitle !== roleTitle) return false
+    }
+
+    if (recruiterIds.size > 0) {
+      const recruiterId = normalizeRecruiterId(applicant?.recruiterId || applicant?.recruiter_id)
+      if (!recruiterIds.has(recruiterId)) return false
+    }
+
+    return true
+  })
+}
+
+export function searchApplicantsWithFilters(query, applicants = getApplicants(), filters = {}) {
+  return searchApplicants(query, filterApplicants(applicants, filters))
+}
+
 export function searchPeople(query, people = getAllPeople()) {
   return searchRecords(query, people, (item) => [item.name, item.email, item.role, item.positionTitle].join(' '));
 }
@@ -78,9 +105,19 @@ function formatApplicantLabel(applicant, mode) {
   const email = applicant?.email || '';
   const job = applicant?.jobTitle || '';
   if (mode === 'picker') {
-    return [name, job, email].filter(Boolean).join(' - ');
+    return [name, email].filter(Boolean).join(' - ');
   }
   const emailPart = email ? ` (${email})` : '';
   const jobPart = job ? ` - ${job}` : '';
   return `${name}${emailPart}${jobPart}`;
+}
+
+function normalizeSearchText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function normalizeRecruiterId(value) {
+  const id = String(value || '').trim()
+  if (!id) return ''
+  return id.startsWith('rec-') ? id : `rec-${id}`
 }

@@ -103,7 +103,12 @@ export function isSchedulingTemplate(templateId) {
 
 export function renderTemplate(template, variables) {
   const htmlBody = replaceVariables(template.body, variables)
-  const plainBody = replaceVariables(stripHtmlBody(template.body), { ...variables, _signature: signaturePlainText() })
+  const plainVariables = {
+    ...variables,
+    resume_link: variables.resume_link_plain || variables.resume_link,
+    _signature: signaturePlainText(),
+  }
+  const plainBody = replaceVariables(stripHtmlBody(template.body), plainVariables)
   return {
     ...template,
     subject: replaceVariables(template.subject, variables),

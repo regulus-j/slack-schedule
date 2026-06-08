@@ -125,6 +125,12 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     return Number.isFinite(time) ? new Date(time).toISOString() : null
   }
 
+  function normalizeRecruiterId(value) {
+    const id = String(value || '').trim()
+    if (!id) return ''
+    return id.startsWith('rec-') ? id : `rec-${id}`
+  }
+
   return {
     async init() {
       await query('SELECT 1');
@@ -200,7 +206,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       return candidates.length;
     },
 
-    async searchJazzhrCandidates(searchQuery, { limit = 20, baseQuery = '' } = {}) {
+    async searchJazzhrCandidates(searchQuery, { limit = 20, baseQuery = '', roleId = '', roleTitle = '', recruiterIds = [] } = {}) {
       const filters = [];
       const params = [];
       for (const value of [baseQuery, searchQuery]) {
@@ -217,6 +223,18 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           OR jazzhr_job_id ILIKE $${params.length}
           OR candidate_key ILIKE $${params.length}
         )`);
+      }
+      if (roleId) {
+        params.push(String(roleId).trim());
+        filters.push(`jazzhr_job_id = $${params.length}`);
+      } else if (roleTitle) {
+        params.push(String(roleTitle).trim());
+        filters.push(`job_title ILIKE $${params.length}`);
+      }
+      const normalizedRecruiterIds = recruiterIds.map(normalizeRecruiterId).filter(Boolean)
+      if (normalizedRecruiterIds.length > 0) {
+        params.push(normalizedRecruiterIds);
+        filters.push(`recruiter_id = ANY($${params.length})`);
       }
       params.push(limit * 5);
       const result = await query(

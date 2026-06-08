@@ -74,9 +74,9 @@ export function normalizeAttendees(caseRecord, stageRules) {
       id: ext.id || `ext-${crypto.randomUUID()}`,
       name: ext.name || ext.email || '',
       email: ext.email || '',
-      role: 'external',
+      role: ext.role || 'external',
       required: ext.required || false,
-      included: true,
+      included: ext.included !== undefined ? Boolean(ext.included) : true,
       slackUserId: null,
       source: 'external'
     })

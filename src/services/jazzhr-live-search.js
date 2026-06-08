@@ -1,5 +1,7 @@
 import crypto from 'node:crypto'
 
+import { inactiveApplicantReason } from './jazzhr.js'
+
 const BASE = 'https://api.resumatorapi.com/v1'
 const DEFAULT_PAGE_SIZE = 20
 const DEFAULT_CONCURRENCY = 2
@@ -23,7 +25,7 @@ export function createJazzhrLiveSearchManager({
   const resolvedMaxPages = positiveInteger(maxPages, DEFAULT_MAX_PAGES)
   const resolvedTtlMs = positiveInteger(ttlMs, DEFAULT_TTL_MS)
 
-  function start({ query, userId = '' } = {}) {
+  function start({ query, userId = '', filters = {} } = {}) {
     expire()
     const id = crypto.randomUUID()
     const normalizedQuery = normalizeSearchText(query)
@@ -38,6 +40,7 @@ export function createJazzhrLiveSearchManager({
       jazzhrPageScanned: 0,
       results: [],
       resultIds: new Set(),
+      filters: normalizeFilters(filters),
       complete: false,
       error: '',
       searching: false,
@@ -223,13 +226,17 @@ export async function fetchApplicantListPage({
 
 function addMatches(session, pageResult) {
   pageResult.items.forEach((item, index) => {
-    const candidate = mapLiveApplicant(item, index)
-    if (!candidate) return
-    if (!normalizeSearchText(candidate.fullName).includes(session.normalizedQuery)) return
-    const dedupeId = normalizeCandidateId(candidate.id)
-    if (session.resultIds.has(dedupeId)) return
-    session.resultIds.add(dedupeId)
-    session.results.push(candidate)
+    for (const record of applicantRoleRecords(item)) {
+      if (inactiveApplicantReason(record)) continue
+      const candidate = mapLiveApplicant(record, index)
+      if (!candidate) continue
+      if (!candidateMatchesFilters(candidate, session.filters)) continue
+      if (!normalizeSearchText(candidate.fullName).includes(session.normalizedQuery)) continue
+      const dedupeId = normalizeCandidateId(candidate.id)
+      if (session.resultIds.has(dedupeId)) continue
+      session.resultIds.add(dedupeId)
+      session.results.push(candidate)
+    }
   })
 }
 
@@ -243,8 +250,10 @@ function mapLiveApplicant(item, sourceOrder = 0) {
   if (!fullName) return null
 
   return {
-    id: `applicant-${jazzhrApplicationId}`,
+    id: `applicant-${[jazzhrApplicationId, firstValue(item, ['job_id', 'jobId'])].filter(Boolean).join('::')}`,
+    candidateKey: [jazzhrApplicationId, firstValue(item, ['job_id', 'jobId'])].filter(Boolean).join('::'),
     jazzhrApplicationId,
+    jazzhrJobId: firstValue(item, ['job_id', 'jobId']),
     fullName,
     firstName,
     lastName,
@@ -284,7 +293,40 @@ function snapshot(session) {
     error: session.error,
     searching: session.searching,
     results: session.results.slice(),
+    filters: session.filters,
   }
+}
+
+function applicantRoleRecords(item) {
+  const jobs = Array.isArray(item?.jobs) ? item.jobs.filter(Boolean) : []
+  if (jobs.length === 0) return [item]
+  return jobs.map((job) => ({
+    ...item,
+    jobs: job,
+    job_id: job.job_id || job.id || '',
+    job_title: job.job_title || job.title || item.job_title || '',
+    applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || '',
+    workflow_step_id: job.workflow_step_id || item.workflow_step_id || '',
+    apply_date: job.apply_date || job.applyDate || item.apply_date || item.applyDate,
+    date_applied: job.date_applied || job.dateApplied || item.date_applied || item.dateApplied,
+    disposition: job.disposition || job.disposition_name || item.disposition || '',
+    disposition_status: job.disposition_status || job.dispositionStatus || item.disposition_status || '',
+  }))
+}
+
+function normalizeFilters(filters = {}) {
+  return {
+    roleId: String(filters.roleId || '').trim(),
+    roleTitle: normalizeSearchText(filters.roleTitle),
+    recruiterIds: (filters.recruiterIds || []).map(normalizeRecruiterId).filter(Boolean),
+  }
+}
+
+function candidateMatchesFilters(candidate, filters = {}) {
+  if (filters.roleId && String(candidate.jazzhrJobId || '').trim() !== filters.roleId) return false
+  if (!filters.roleId && filters.roleTitle && normalizeSearchText(candidate.jobTitle) !== filters.roleTitle) return false
+  if (filters.recruiterIds?.length > 0 && !filters.recruiterIds.includes(normalizeRecruiterId(candidate.recruiterId))) return false
+  return true
 }
 
 function hasResultPage(session, pageIndex) {
