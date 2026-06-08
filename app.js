@@ -6,9 +6,12 @@ import { registerSlackHandlers } from './src/slack/handlers.js';
 import { logger } from './src/logger.js';
 import { loadTalentDirectory } from './src/services/talent-directory.js';
 import { hydrateJazzhrCacheFromStore, refreshJazzhrCache } from './src/services/jazzhr.js';
+import { ensureSlackDirectory } from './src/services/slack-directory.js';
+import { startEventLoopLagMonitor } from './src/event-loop-monitor.js';
 
 const config = loadConfig();
 validateStartupConfig(config);
+startEventLoopLagMonitor({ logger });
 
 const store = await createStore(config);
 await store.init();
@@ -36,6 +39,10 @@ logger.info('recruiter_phone_export_configured', {
 
 await app.start();
 logger.info('slack_app_started', { socketMode: true });
+
+ensureSlackDirectory({ client: app.client, config, logger }).catch((error) => {
+  logger.warn('slack_directory_startup_preload_failed', { error: error.message });
+});
 
 if (config.jazzhr.refreshOnStartup || jazzhrHydration.records === 0) {
   refreshJazzhrCache({ config, logger, store, throwOnError: false });

@@ -7,7 +7,7 @@ export function normalizeJazzhrCandidate(record, index = 0) {
 
   if (!jazzhrApplicationId || !fullName) return null
 
-  return {
+  const candidate = {
     id: `applicant-${candidateKey}`,
     candidateKey,
     jazzhrApplicationId,
@@ -24,6 +24,10 @@ export function normalizeJazzhrCandidate(record, index = 0) {
     appliedAt: String(record?.appliedAt || record?.applyDate || '').trim(),
     sourceOrder: Number.isFinite(Number(record?.sourceOrder)) ? Number(record.sourceOrder) : index,
   }
+  return {
+    ...candidate,
+    searchText: buildCandidateSearchText(candidate),
+  }
 }
 
 export function normalizeJazzhrCandidates(records = []) {
@@ -37,15 +41,25 @@ export function normalizeJazzhrCandidates(records = []) {
 export function searchJazzhrCandidateRecords(records = [], query = '', { limit = 20, baseQuery = '' } = {}) {
   const normalizedQuery = normalizeSearchText(query)
   const normalizedBaseQuery = normalizeSearchText(baseQuery)
-  return normalizeJazzhrCandidates(records)
-    .filter((record) => {
-      if (candidateInactiveReason(record)) return false
-      const haystack = candidateSearchText(record)
-      if (normalizedBaseQuery && !haystack.includes(normalizedBaseQuery)) return false
-      if (normalizedQuery && !haystack.includes(normalizedQuery)) return false
-      return true
-    })
-    .slice(0, limit)
+  const results = []
+  const safeLimit = Math.max(0, Number(limit) || 0)
+  if (safeLimit === 0) return results
+
+  for (const rawRecord of Array.isArray(records) ? records : []) {
+    const record = isNormalizedJazzhrCandidate(rawRecord)
+      ? rawRecord
+      : normalizeJazzhrCandidate(rawRecord)
+    if (!record || candidateInactiveReason(record)) continue
+
+    const haystack = candidateSearchText(record)
+    if (normalizedBaseQuery && !haystack.includes(normalizedBaseQuery)) continue
+    if (normalizedQuery && !haystack.includes(normalizedQuery)) continue
+
+    results.push(record)
+    if (results.length >= safeLimit) break
+  }
+
+  return results
 }
 
 export function candidateInactiveReason(record) {
@@ -81,6 +95,11 @@ export function compareJazzhrCandidates(left, right) {
 }
 
 function candidateSearchText(record) {
+  if (record?.searchText) return record.searchText
+  return buildCandidateSearchText(record)
+}
+
+function buildCandidateSearchText(record) {
   return normalizeSearchText([
     record.fullName,
     record.firstName,
@@ -91,6 +110,16 @@ function candidateSearchText(record) {
     record.jazzhrJobId,
     record.candidateKey,
   ].filter(Boolean).join(' '))
+}
+
+function isNormalizedJazzhrCandidate(record) {
+  return Boolean(
+    record &&
+    record.id &&
+    record.candidateKey &&
+    record.jazzhrApplicationId &&
+    record.fullName,
+  )
 }
 
 function candidateIdentity(record) {
