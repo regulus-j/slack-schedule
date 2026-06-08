@@ -125,6 +125,8 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const hiringManagerEmailActionId = dynamicBlockId('hm_email', draft.hiringManagerId)
   const hmRequired = stageRequiresHiringManager(draft.stageKey)
   const resumeRequired = stageRequiresResumeLink(draft.stageKey)
+  const showStandardHiringManagers = standardEvent && eventType !== '1st-interview'
+  const standardHiringManagerBlockId = dynamicBlockId('hm_block', draft.roleId)
   const hiringManagerBlocks = hmRequired
     ? [
         input('Hiring Manager name', 'hm_block', {
@@ -163,13 +165,15 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Select recruiter'),
           ...(draft.recruiterOptions?.length ? { initial_options: draft.recruiterOptions } : {}),
         }, false, true),
-        input('Hiring managers', 'hm_block', {
-          type: 'multi_external_select',
-          action_id: 'hm_select',
-          min_query_length: 0,
-          placeholder: plain('Select hiring manager'),
-          ...(draft.hiringManagerOptions?.length ? { initial_options: draft.hiringManagerOptions } : {}),
-        }, !hmRequired, true),
+        ...(showStandardHiringManagers ? [
+          input('Hiring managers', standardHiringManagerBlockId, {
+            type: 'multi_external_select',
+            action_id: 'hm_select',
+            min_query_length: 0,
+            placeholder: plain('Select hiring manager'),
+            ...(draft.hiringManagerOptions?.length ? { initial_options: draft.hiringManagerOptions } : {}),
+          }, !hmRequired, true),
+        ] : []),
       ]
     : []
 
@@ -188,6 +192,14 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ...(draft.eventTypeOption ? { initial_option: draft.eventTypeOption } : {}),
       }, false, true),
       ...standardRoleBlocks,
+      ...(customInvite ? [
+        input('What is this invite for?', 'custom_purpose_block', {
+          type: 'plain_text_input',
+          action_id: 'custom_purpose',
+          placeholder: plain('Example: client intro, assessment, paid trial'),
+          ...(draft.customInvitePurpose ? { initial_value: draft.customInvitePurpose } : {}),
+        }, false),
+      ] : []),
       ...(customInvite ? [actions([manualCandidateModeCheckbox(draft)], 'manual_candidate_mode_block')] : []),
       ...(!(standardEvent || customInvite) ? [] : !manualCandidateMode ? [
         input(
@@ -268,13 +280,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       ]),
       ...applicantDetailBlocks(draft),
       ...(customInvite ? [
-      input('Stage', 'stage_block', {
-        type: 'static_select',
-        action_id: 'stage_select',
-        placeholder: plain('Choose stage'),
-        options: intakeStageOptions(),
-        ...(draft.stageOption ? { initial_option: draft.stageOption } : {}),
-      }, false, true),
       input('Recruiter name', 'recruiter_block', recruiterSelect, false, true),
       input(
         'Recruiter email',

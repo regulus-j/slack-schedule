@@ -415,17 +415,18 @@ test('check availability modal keeps target window fields', () => {
   assert.ok(blockIds.includes('schedule_window_end_block'));
 });
 
-test('intake modal starts with event type and custom invite uses stage selection', () => {
+test('intake modal starts with event type and custom invite asks for purpose', () => {
   const view = intakeModal({
     templates: [],
     draft: {
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
+      customInvitePurpose: 'Client intro',
     },
   });
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
   const eventTypeBlock = inputBlocks[0];
-  const stageBlock = inputBlocks.find((block) => block.block_id === 'stage_block');
+  const purposeBlock = inputBlocks.find((block) => block.block_id === 'custom_purpose_block');
 
   assert.equal(eventTypeBlock.block_id, 'event_type_block');
   assert.deepEqual(eventTypeBlock.element.options.map((option) => option.text.text), [
@@ -435,16 +436,11 @@ test('intake modal starts with event type and custom invite uses stage selection
     'Job Offer',
     'Custom Invite',
   ]);
-  assert.ok(stageBlock);
-  assert.equal(stageBlock.label.text, 'Stage');
-  assert.equal(stageBlock.element.action_id, 'stage_select');
-  assert.equal(stageBlock.dispatch_action, true);
-  assert.deepEqual(stageBlock.element.options.map((option) => option.text.text), [
-    '1st Interview',
-    '2nd Interview',
-    'Final Interview',
-    'Job Offer Discussion',
-  ]);
+  assert.ok(purposeBlock);
+  assert.equal(purposeBlock.label.text, 'What is this invite for?');
+  assert.equal(purposeBlock.element.action_id, 'custom_purpose');
+  assert.equal(purposeBlock.element.initial_value, 'Client intro');
+  assert.equal(inputBlocks.some((block) => block.block_id === 'stage_block'), false);
   assert.equal(inputBlocks.some((block) => block.block_id === 'template_block'), false);
 });
 
@@ -656,14 +652,77 @@ test('standard intake modal uses role-mapped order and multi recruiter/HM select
     'event_type_block',
     'role_block',
     'recruiter_block',
-    'hm_block',
+    'hm_block_job-1',
     'candidate_search_block',
   ])
   assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_block').element.type, 'multi_external_select')
-  assert.equal(view.blocks.find((block) => block.block_id === 'hm_block').element.type, 'multi_external_select')
+  assert.equal(view.blocks.find((block) => block.block_id === 'hm_block_job-1').element.type, 'multi_external_select')
   assert.equal(view.blocks.find((block) => block.block_id === 'zoom_block').element.initial_value, 'https://zoom.us/j/mara')
   assert.equal(inputBlockIds.includes('stage_block'), false)
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
+})
+
+test('standard hiring manager selector is reset when the selected role changes', () => {
+  const firstRoleView = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd Interview' }, value: '2nd-interview' },
+      stageKey: '2nd-interview',
+      roleId: 'job-1',
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+      hiringManagerOptions: [
+        { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+      ],
+    },
+  })
+  const secondRoleView = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd Interview' }, value: '2nd-interview' },
+      stageKey: '2nd-interview',
+      roleId: 'job-2',
+      roleOption: { text: { type: 'plain_text', text: 'Sales Specialist' }, value: 'job-2' },
+      hiringManagerOptions: [],
+    },
+  })
+
+  const firstHmBlock = firstRoleView.blocks.find((block) => block.block_id.startsWith('hm_block'))
+  const secondHmBlock = secondRoleView.blocks.find((block) => block.block_id.startsWith('hm_block'))
+
+  assert.equal(firstHmBlock.block_id, 'hm_block_job-1')
+  assert.equal(firstHmBlock.element.initial_options.length, 1)
+  assert.equal(secondHmBlock.block_id, 'hm_block_job-2')
+  assert.equal('initial_options' in secondHmBlock.element, false)
+})
+
+test('standard first interview intake omits hiring manager selector', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '1st-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '1st Interview' }, value: '1st-interview' },
+      stageKey: '1st-interview',
+      roleId: 'job-1',
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+      recruiterOptions: [
+        { text: { type: 'plain_text', text: 'Mara Santos - mara@example.com' }, value: 'rec-mara' },
+      ],
+      hiringManagerOptions: [
+        { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+      ],
+    },
+  })
+
+  const inputBlockIds = view.blocks.filter((block) => block.type === 'input').map((block) => block.block_id)
+  assert.deepEqual(inputBlockIds.slice(0, 4), [
+    'event_type_block',
+    'role_block',
+    'recruiter_block',
+    'candidate_search_block',
+  ])
+  assert.equal(inputBlockIds.includes('hm_block'), false)
 })
 
 test('builds standard intake draft from mapped role recruiters HMs and Zoom', () => {
