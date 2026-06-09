@@ -41,6 +41,8 @@ export function filterApplicants(applicants = [], filters = {}) {
   const roleId = String(filters.roleId || '').trim()
   const roleTitle = normalizeSearchText(filters.roleTitle)
   const recruiterIds = new Set((filters.recruiterIds || []).map(normalizeRecruiterId).filter(Boolean))
+  const recruiterEmails = new Set((filters.recruiterEmails || []).map(normalizeSearchText).filter(Boolean))
+  const recruiterNames = new Set((filters.recruiterNames || []).map(normalizeSearchText).filter(Boolean))
 
   return (Array.isArray(applicants) ? applicants : []).filter((applicant) => {
     if (roleId) {
@@ -53,7 +55,15 @@ export function filterApplicants(applicants = [], filters = {}) {
 
     if (recruiterIds.size > 0) {
       const recruiterId = normalizeRecruiterId(applicant?.recruiterId || applicant?.recruiter_id)
-      if (!recruiterIds.has(recruiterId)) return false
+      const recruiterEmail = normalizeSearchText(applicant?.recruiterEmail || applicant?.recruiter_email)
+      const recruiterName = normalizeSearchText(applicant?.recruiterName || applicant?.recruiter_name)
+      const hasRecruiter = Boolean(recruiterId || recruiterEmail || recruiterName)
+      if (
+        hasRecruiter &&
+        !recruiterIds.has(recruiterId) &&
+        !recruiterEmails.has(recruiterEmail) &&
+        !recruiterNames.has(recruiterName)
+      ) return false
     }
 
     return true

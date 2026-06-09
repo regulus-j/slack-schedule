@@ -5,6 +5,7 @@ let talentRecruiters = [];
 let slackUsers = [];
 let slackRecruiters = [];
 let roleAssignments = [];
+let jazzhrJobs = [];
 let openRoles = [];
 const applicantDetails = new Map();
 
@@ -40,6 +41,10 @@ export function getOpenRoles() {
   return openRoles;
 }
 
+export function getJazzhrJobs() {
+  return jazzhrJobs;
+}
+
 export function getAllPeople() {
   return [...slackUsers, ...talentRecruiters, ...recruiters, ...hiringManagers];
 }
@@ -70,6 +75,29 @@ export function setSlackRecruiters(data) {
 
 export function setRoleAssignments(data) {
   roleAssignments = Array.isArray(data) ? data : [];
+  rebuildOpenRoles()
+}
+
+export function setJazzhrJobs(data) {
+  jazzhrJobs = Array.isArray(data) ? data : []
+  rebuildOpenRoles()
+}
+
+function rebuildOpenRoles() {
+  if (jazzhrJobs.length > 0) {
+    openRoles = jazzhrJobs
+      .filter((job) => isOpenJazzhrJob(job))
+      .map((job) => ({
+        id: job.id,
+        roleId: job.id,
+        roleKey: job.id,
+        title: job.title || job.id,
+        status: job.status || 'Open',
+        hiringLeadId: job.hiringLeadId || '',
+      }))
+    return
+  }
+
   const byId = new Map()
   for (const assignment of roleAssignments) {
     const id = assignment.roleId || assignment.roleKey
@@ -83,6 +111,11 @@ export function setRoleAssignments(data) {
     })
   }
   openRoles = [...byId.values()]
+}
+
+function isOpenJazzhrJob(job) {
+  const status = String(job?.status || '').trim().toLowerCase()
+  return status === 'open' || status === 'active' || status === 'published'
 }
 
 export function getApplicantDetail(id) {

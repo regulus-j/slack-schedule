@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  applicantEligibilityReason,
   fetchAllApplicants,
   filterActiveApplicants,
   hydrateJazzhrCacheFromStore,
   inactiveApplicantReason,
+  refreshJazzhrOpenJobs,
   searchCachedApplicants,
+  syncJazzhrJobCandidates,
 } from '../src/services/jazzhr.js';
+import { getOpenRoles } from '../src/data/cache.js';
 
 function applicant(overrides = {}) {
   return {
@@ -37,6 +41,34 @@ test('inactiveApplicantReason keeps active and custom stages', () => {
 test('inactiveApplicantReason keeps records with missing status fields', () => {
   assert.equal(inactiveApplicantReason(applicant()), '');
 });
+
+test('applicant eligibility accepts configured active stages and spelling variants', () => {
+  const stages = [
+    'New',
+    'Pre-Screening',
+    'Resume Screening',
+    'Screen',
+    'Status Update',
+    'Pre 1st Interview',
+    '1st Interview',
+    '6. Completed 1st Interview',
+    'Assesment',
+    'Submitted to Hiring Manager',
+    'Pre 2nd Interview',
+    '2nd Interview',
+    'Final Interview',
+    'Short Listed',
+    'On Hold OR For Consideration',
+    'Job Offer',
+  ]
+
+  for (const stage of stages) {
+    assert.equal(applicantEligibilityReason({ stage }), '', stage)
+  }
+  assert.equal(applicantEligibilityReason({ stage: 'Good for Future hire' }), 'disposition:good for future hire')
+  assert.equal(applicantEligibilityReason({ stage: 'Unknown Review' }), 'unknown-stage:unknown review')
+  assert.equal(applicantEligibilityReason({ stage: 'Completed 1st Interview', workflowCategory: 'Not Hired' }), 'workflow-category:not hired')
+})
 
 test('inactiveApplicantReason excludes configured JazzHR not-hired dispositions', () => {
   const dispositions = [
@@ -137,6 +169,153 @@ test('filterActiveApplicants keeps active roles when the same prospect has inact
   assert.equal(result.applicants[0].jazzhrApplicationId, 'prospect_20251114130635_6UJNT7JFAPBYTR7L');
   assert.equal(result.applicants[0].jazzhrJobId, 'job_20251027231757_ROB6GQOIESO4H5IC');
 });
+
+test('application eligibility is isolated by exact prospect and job id for Niel', () => {
+  const result = filterActiveApplicants([
+    applicant({
+      id: 'prospect-niel-old',
+      first_name: 'Niel Justine',
+      last_name: 'Cabataña',
+      jobs: {
+        job_id: 'job-filled',
+        job_title: 'Junior Valuation Analyst',
+        applicant_progress: 'Good for Future hire',
+        workflow_category: 'Not Hired',
+      },
+    }),
+    applicant({
+      id: 'prospect-niel-open',
+      first_name: 'Niel Justine',
+      last_name: 'Cabataña',
+      email: 'niel@example.com',
+      jobs: {
+        job_id: 'job-open',
+        job_title: 'Junior Valuation Analyst',
+        applicant_progress: 'Completed 1st Interview',
+        workflow_step_id: '10476588',
+      },
+    }),
+  ])
+
+  assert.equal(result.excluded, 1)
+  assert.equal(result.applicants.length, 1)
+  assert.equal(result.applicants[0].candidateKey, 'prospect-niel-open::job-open')
+  assert.equal(result.applicants[0].email, 'niel@example.com')
+  assert.equal(result.applicants[0].stage, 'Completed 1st Interview')
+})
+
+test('open role refresh uses JazzHR open jobs with exact ids', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(String(url)).pathname
+    if (pathname.endsWith('/jobs')) {
+      return {
+        ok: true,
+        async json() {
+          return [
+            { id: 'job-open', title: 'Open Role', status: 'Open', hiring_lead: 'user-1' },
+            { id: 'job-filled', title: 'Filled Role', status: 'Filled' },
+          ]
+        },
+      }
+    }
+    return {
+      ok: true,
+      async json() {
+        return [{ id: 'user-1', first_name: 'Mara', last_name: 'Santos', email: 'mara@example.com' }]
+      },
+    }
+  }
+
+  try {
+    const result = await refreshJazzhrOpenJobs({
+      config: { jazzhr: { apiKey: 'api-key' } },
+      logger: testLogger(),
+    })
+    assert.equal(result.records, 1)
+    assert.deepEqual(getOpenRoles().map((role) => ({
+      id: role.id,
+      title: role.title,
+      hiringLeadId: role.hiringLeadId,
+    })), [{ id: 'job-open', title: 'Open Role', hiringLeadId: 'user-1' }])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('role-scoped sync hydrates exact job applicants and upserts without replacing cache', async () => {
+  const originalFetch = globalThis.fetch
+  const upserts = []
+  const replacements = []
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(String(url)).pathname
+    if (pathname.endsWith('/jobs/job-open')) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            id: 'job-open',
+            title: 'Junior Valuation Analyst',
+            status: 'Open',
+            job_applicants: [
+              { prospect_id: 'prospect-active', apply_date: '2026-06-01' },
+              { prospect_id: 'prospect-old', apply_date: '2026-05-01' },
+            ],
+          }
+        },
+      }
+    }
+    const id = pathname.split('/').at(-1)
+    const active = id === 'prospect-active'
+    return {
+      ok: true,
+      async json() {
+        return {
+          id,
+          first_name: active ? 'Niel Justine' : 'Old',
+          last_name: active ? 'Cabataña' : 'Candidate',
+          email: active ? 'niel@example.com' : 'old@example.com',
+          jobs: {
+            job_id: 'job-open',
+            job_title: 'Junior Valuation Analyst',
+            applicant_progress: active ? 'Completed 1st Interview' : 'Good for Future hire',
+            workflow_step_id: active ? '10476588' : '10487328',
+          },
+        }
+      },
+    }
+  }
+
+  try {
+    const result = await syncJazzhrJobCandidates({
+      config: { jazzhr: { apiKey: 'api-key', applicantFetchConcurrency: 2 } },
+      logger: testLogger(),
+      store: {
+        async upsertJazzhrCandidates(records) {
+          upserts.push(...records)
+          return records.length
+        },
+        async replaceJazzhrJobCandidates(jobId, records) {
+          replacements.push({ jobId, records })
+          return records.length
+        },
+      },
+      jobId: 'job-open',
+    })
+
+    assert.equal(result.synced, true)
+    assert.deepEqual(result.candidates.map((candidate) => candidate.candidateKey), [
+      'prospect-active::job-open',
+    ])
+    assert.equal(result.candidates[0].email, 'niel@example.com')
+    assert.equal(result.complete, true)
+    assert.equal(upserts.length, 0)
+    assert.equal(replacements.length, 1)
+    assert.equal(replacements[0].jobId, 'job-open')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
 
 test('hydrateJazzhrCacheFromStore loads persisted candidates into the in-memory cache', async () => {
   const result = await hydrateJazzhrCacheFromStore({

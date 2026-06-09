@@ -191,6 +191,53 @@ test('live search filters candidates to selected role and recruiter', async () =
   assert.deepEqual(result.results.map((item) => item.fullName), ['Alex One'])
 })
 
+test('live search supports object-form jobs and does not drop missing recruiter metadata', async () => {
+  const fetchFn = async () => response(200, [
+    applicant('alex-missing', 'Alex', 'Missing', {
+      jobs: {
+        job_id: 'job-1',
+        job_title: 'Support',
+        applicant_progress: 'Screen',
+      },
+    }),
+    applicant('alex-match', 'Alex', 'Match', {
+      jobs: {
+        job_id: 'job-1',
+        job_title: 'Support',
+        applicant_progress: 'Screen',
+        recruiter_email: 'mara@example.com',
+      },
+    }),
+    applicant('alex-other', 'Alex', 'Other', {
+      jobs: {
+        job_id: 'job-1',
+        job_title: 'Support',
+        applicant_progress: 'Screen',
+        recruiter_email: 'other@example.com',
+      },
+    }),
+  ])
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'alex',
+    filters: {
+      roleId: 'job-1',
+      recruiterIds: ['rec-sheet-mara'],
+      recruiterEmails: ['mara@example.com'],
+    },
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.deepEqual(result.results.map((item) => item.fullName), ['Alex Missing', 'Alex Match'])
+})
+
 test('live search excludes rejected candidates without excluding screening', async () => {
   const fetchFn = async () => response(200, [
     applicant('alex-1', 'Alex', 'Screening', { job_id: 'job-1', applicant_progress: 'Resume Screening' }),

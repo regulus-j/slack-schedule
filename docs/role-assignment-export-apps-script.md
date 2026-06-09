@@ -38,25 +38,41 @@ function xlsxToJson_(fileId, sheetName, gid) {
 
   const values = sheet.getDataRange().getDisplayValues();
   const headers = values.shift() || [];
+  const headerCounts = {};
 
   const rows = values
     .filter(row => row.some(cell => String(cell || '').trim()))
     .map(row => {
       const obj = {};
       headers.forEach((header, i) => {
-        const key = String(header || '').trim();
-        if (key) obj[key] = row[i];
+        const base = String(header || '').trim() || `Column ${columnName_(i + 1)}`;
+        headerCounts[base] = (headerCounts[base] || 0) + 1;
+        const key = headerCounts[base] === 1 ? base : `${base} ${headerCounts[base]}`;
+        obj[key] = row[i];
       });
+      Object.keys(headerCounts).forEach(key => delete headerCounts[key]);
       return obj;
     });
 
   return {
+    ok: true,
     sourceFileId: fileId,
     sheet: sheet.getName(),
     sheetId: sheet.getSheetId(),
     count: rows.length,
     rows
   };
+}
+
+function columnName_(number) {
+  let value = number;
+  let name = '';
+  while (value > 0) {
+    value--;
+    name = String.fromCharCode(65 + (value % 26)) + name;
+    value = Math.floor(value / 26);
+  }
+  return name;
 }
 
 function resolveSheet_(ss, sheetName, gid) {
@@ -82,3 +98,5 @@ For the current `Open Roles and Recruiter Assignment` tab, the exported row keys
 - `4`: role title or section label such as `Open Roles`.
 - `Recruiters  to manage`: date/status/comment field; values like `cancelled` or `On hold...` are treated as inactive role markers, not recruiter names.
 - `For Automation`: second/final interviewer names, often comma-separated.
+
+The current tab does not expose a recruiter-name column in its first-row headers. The app therefore uses an explicitly mapped recruiter when one is exported, otherwise it resolves the selected open JazzHR job's `hiring_lead` and enriches that person from the recruiter contact/Zoom export.

@@ -126,7 +126,11 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const hmRequired = stageRequiresHiringManager(draft.stageKey)
   const resumeRequired = stageRequiresResumeLink(draft.stageKey)
   const showStandardHiringManagers = standardEvent && eventType !== '1st-interview'
-  const standardHiringManagerBlockId = dynamicBlockId('hm_block', draft.roleId)
+  const standardRecruiterBlockId = dynamicBlockId('recruiter_block', draft.recruiterId || draft.roleId)
+  const standardHiringManagerBlockId = dynamicBlockId('hm_block', draft.hiringManagerId || draft.roleId)
+  const applicantBlockId = dynamicBlockId('applicant_block', draft.applicantId || draft.roleId)
+  const zoomBlockId = dynamicBlockId('zoom_block', draft.zoomLink)
+  const zoomLinkOptions = recruiterZoomOptions(draft.selectedRecruiters)
   const hiringManagerBlocks = hmRequired
     ? [
         input('Hiring Manager name', 'hm_block', {
@@ -158,21 +162,47 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Search open role'),
           ...(draft.roleOption ? { initial_option: draft.roleOption } : {}),
         }, false, true),
-        input('Recruiters', 'recruiter_block', {
-          type: 'multi_external_select',
+        input('Primary recruiter', standardRecruiterBlockId, {
+          type: 'external_select',
           action_id: 'recruiter_select',
           min_query_length: 0,
           placeholder: plain('Select recruiter'),
-          ...(draft.recruiterOptions?.length ? { initial_options: draft.recruiterOptions } : {}),
+          ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
         }, false, true),
-        ...(showStandardHiringManagers ? [
-          input('Hiring managers', standardHiringManagerBlockId, {
+        actions(
+          [optionalPeopleCheckbox('Add additional recruiters', 'additional_recruiters_toggle', draft.showAdditionalRecruiters)],
+          'additional_recruiters_toggle_block',
+        ),
+        ...(draft.showAdditionalRecruiters ? [
+          input('Additional recruiters', 'additional_recruiters_block', {
             type: 'multi_external_select',
+            action_id: 'additional_recruiter_select',
+            min_query_length: 0,
+            placeholder: plain('Select additional recruiters'),
+            ...(draft.additionalRecruiterOptions?.length ? { initial_options: draft.additionalRecruiterOptions } : {}),
+          }, true, true),
+        ] : []),
+        ...(showStandardHiringManagers ? [
+          input('Primary hiring manager', standardHiringManagerBlockId, {
+            type: 'external_select',
             action_id: 'hm_select',
             min_query_length: 0,
             placeholder: plain('Select hiring manager'),
-            ...(draft.hiringManagerOptions?.length ? { initial_options: draft.hiringManagerOptions } : {}),
+            ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
           }, !hmRequired, true),
+          actions(
+            [optionalPeopleCheckbox('Add additional hiring managers', 'additional_hms_toggle', draft.showAdditionalHiringManagers)],
+            'additional_hms_toggle_block',
+          ),
+          ...(draft.showAdditionalHiringManagers ? [
+            input('Additional hiring managers', 'additional_hms_block', {
+              type: 'multi_external_select',
+              action_id: 'additional_hm_select',
+              min_query_length: 0,
+              placeholder: plain('Select additional hiring managers'),
+              ...(draft.additionalHiringManagerOptions?.length ? { initial_options: draft.additionalHiringManagerOptions } : {}),
+            }, true, true),
+          ] : []),
         ] : []),
       ]
     : []
@@ -220,7 +250,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ...(draft.candidateSearchQuery ? [section(candidateSearchSummary(draft))] : []),
         {
           type: 'input',
-          block_id: 'applicant_block',
+          block_id: applicantBlockId,
           optional: false,
           dispatch_action: true,
           label: plain('Candidate results'),
@@ -295,7 +325,16 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       ...hiringManagerBlocks,
       ] : []),
       ...((standardEvent || customInvite) ? [
-      input('Zoom link', 'zoom_block', {
+      ...(standardEvent && zoomLinkOptions.length > 0 ? [
+        input('Recruiter Zoom link', 'zoom_choice_block', {
+          type: 'static_select',
+          action_id: 'zoom_link_select',
+          placeholder: plain('Choose recruiter Zoom link'),
+          options: zoomLinkOptions,
+          ...(draft.zoomLinkOption ? { initial_option: draft.zoomLinkOption } : {}),
+        }, true),
+      ] : []),
+      input('Zoom link', zoomBlockId, {
         type: 'plain_text_input',
         action_id: 'zoom_link',
         placeholder: plain('Paste final Zoom link'),
@@ -1252,6 +1291,32 @@ function intakeStageOptions() {
     text: plain(stage.label),
     value: stage.key
   }))
+}
+
+function optionalPeopleCheckbox(label, actionId, selected) {
+  const option = { text: plain(label), value: 'enabled' }
+  return {
+    type: 'checkboxes',
+    action_id: actionId,
+    options: [option],
+    ...(selected ? { initial_options: [option] } : {}),
+  }
+}
+
+function recruiterZoomOptions(recruiters = []) {
+  const seen = new Set()
+  const options = []
+  for (const recruiter of recruiters || []) {
+    const link = String(recruiter?.zoomLink || '').trim()
+    if (!link || seen.has(link)) continue
+    seen.add(link)
+    options.push({
+      text: plain(recruiter.name || link),
+      value: link,
+      ...(recruiter.email ? { description: plain(recruiter.email) } : {}),
+    })
+  }
+  return options.slice(0, 100)
 }
 
 function intakeEventTypeOptions() {

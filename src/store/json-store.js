@@ -60,6 +60,27 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       return state.jazzhrCandidates.length;
     },
 
+    async upsertJazzhrCandidates(records) {
+      const merged = new Map(state.jazzhrCandidates.map((candidate) => [candidate.candidateKey, candidate]))
+      for (const candidate of normalizeJazzhrCandidates(records)) {
+        merged.set(candidate.candidateKey, candidate)
+      }
+      state.jazzhrCandidates = normalizeJazzhrCandidates([...merged.values()])
+      await persist()
+      return records.length
+    },
+
+    async replaceJazzhrJobCandidates(jobId, records) {
+      const normalizedJobId = String(jobId || '').trim()
+      const candidates = normalizeJazzhrCandidates(records)
+      state.jazzhrCandidates = normalizeJazzhrCandidates([
+        ...state.jazzhrCandidates.filter((candidate) => candidate.jazzhrJobId !== normalizedJobId),
+        ...candidates,
+      ])
+      await persist()
+      return candidates.length
+    },
+
     async searchJazzhrCandidates(query, options = {}) {
       return searchJazzhrCandidateRecords(state.jazzhrCandidates, query, options);
     },

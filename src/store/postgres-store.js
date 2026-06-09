@@ -113,7 +113,13 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       phone: row.phone,
       jobTitle: row.job_title,
       stage: row.stage,
+      workflowStepId: row.workflow_step_id,
+      workflowStep: row.workflow_step,
+      workflowCategory: row.workflow_category,
+      jobStatus: row.job_status,
       recruiterId: row.recruiter_id,
+      recruiterEmail: row.recruiter_email,
+      recruiterName: row.recruiter_name,
       source: row.source,
       appliedAt: row.applied_at?.toISOString?.() || row.applied_at || '',
       sourceOrder: row.source_order,
@@ -164,12 +170,18 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
             phone,
             job_title,
             stage,
+            workflow_step_id,
+            workflow_step,
+            workflow_category,
+            job_status,
             recruiter_id,
+            recruiter_email,
+            recruiter_name,
             source,
             applied_at,
             source_order
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
           ON CONFLICT (candidate_key) DO UPDATE SET
             full_name = EXCLUDED.full_name,
             jazzhr_application_id = EXCLUDED.jazzhr_application_id,
@@ -180,7 +192,13 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
             phone = EXCLUDED.phone,
             job_title = EXCLUDED.job_title,
             stage = EXCLUDED.stage,
+            workflow_step_id = EXCLUDED.workflow_step_id,
+            workflow_step = EXCLUDED.workflow_step,
+            workflow_category = EXCLUDED.workflow_category,
+            job_status = EXCLUDED.job_status,
             recruiter_id = EXCLUDED.recruiter_id,
+            recruiter_email = EXCLUDED.recruiter_email,
+            recruiter_name = EXCLUDED.recruiter_name,
             source = EXCLUDED.source,
             applied_at = EXCLUDED.applied_at,
             source_order = EXCLUDED.source_order,
@@ -196,7 +214,13 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
             candidate.phone,
             candidate.jobTitle,
             candidate.stage,
+            candidate.workflowStepId,
+            candidate.workflowStep,
+            candidate.workflowCategory,
+            candidate.jobStatus,
             candidate.recruiterId,
+            candidate.recruiterEmail,
+            candidate.recruiterName,
             candidate.source,
             dateOrNull(candidate.appliedAt),
             candidate.sourceOrder,
@@ -206,7 +230,108 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       return candidates.length;
     },
 
-    async searchJazzhrCandidates(searchQuery, { limit = 20, baseQuery = '', roleId = '', roleTitle = '', recruiterIds = [] } = {}) {
+    async upsertJazzhrCandidates(records) {
+      const candidates = normalizeJazzhrCandidates(records)
+      for (const candidate of candidates) {
+        await query(
+          `INSERT INTO jazzhr_candidates (
+            candidate_key,
+            jazzhr_application_id,
+            jazzhr_job_id,
+            full_name,
+            first_name,
+            last_name,
+            email,
+            phone,
+            job_title,
+            stage,
+            workflow_step_id,
+            workflow_step,
+            workflow_category,
+            job_status,
+            recruiter_id,
+            recruiter_email,
+            recruiter_name,
+            source,
+            applied_at,
+            source_order
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          ON CONFLICT (candidate_key) DO UPDATE SET
+            jazzhr_application_id = EXCLUDED.jazzhr_application_id,
+            jazzhr_job_id = EXCLUDED.jazzhr_job_id,
+            full_name = EXCLUDED.full_name,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            email = EXCLUDED.email,
+            phone = EXCLUDED.phone,
+            job_title = EXCLUDED.job_title,
+            stage = EXCLUDED.stage,
+            workflow_step_id = EXCLUDED.workflow_step_id,
+            workflow_step = EXCLUDED.workflow_step,
+            workflow_category = EXCLUDED.workflow_category,
+            job_status = EXCLUDED.job_status,
+            recruiter_id = EXCLUDED.recruiter_id,
+            recruiter_email = EXCLUDED.recruiter_email,
+            recruiter_name = EXCLUDED.recruiter_name,
+            source = EXCLUDED.source,
+            applied_at = EXCLUDED.applied_at,
+            source_order = EXCLUDED.source_order,
+            updated_at = now()`,
+          [
+            candidate.candidateKey,
+            candidate.jazzhrApplicationId,
+            candidate.jazzhrJobId,
+            candidate.fullName,
+            candidate.firstName,
+            candidate.lastName,
+            candidate.email,
+            candidate.phone,
+            candidate.jobTitle,
+            candidate.stage,
+            candidate.workflowStepId,
+            candidate.workflowStep,
+            candidate.workflowCategory,
+            candidate.jobStatus,
+            candidate.recruiterId,
+            candidate.recruiterEmail,
+            candidate.recruiterName,
+            candidate.source,
+            dateOrNull(candidate.appliedAt),
+            candidate.sourceOrder,
+          ],
+        )
+      }
+      return candidates.length
+    },
+
+    async replaceJazzhrJobCandidates(jobId, records) {
+      const normalizedJobId = String(jobId || '').trim()
+      const candidates = normalizeJazzhrCandidates(records)
+      await this.upsertJazzhrCandidates(candidates)
+      const candidateKeys = candidates.map((candidate) => candidate.candidateKey)
+      if (candidateKeys.length > 0) {
+        await query(
+          `DELETE FROM jazzhr_candidates
+           WHERE jazzhr_job_id = $1
+             AND NOT (candidate_key = ANY($2))`,
+          [normalizedJobId, candidateKeys],
+        )
+      } else {
+        await query('DELETE FROM jazzhr_candidates WHERE jazzhr_job_id = $1', [normalizedJobId])
+      }
+      return candidates.length
+    },
+
+    async searchJazzhrCandidates(searchQuery, {
+      limit = 20,
+      baseQuery = '',
+      roleId = '',
+      roleTitle = '',
+      recruiterIds = [],
+      recruiterEmails = [],
+      recruiterNames = [],
+    } = {}) {
       const filters = [];
       const params = [];
       for (const value of [baseQuery, searchQuery]) {
@@ -234,7 +359,17 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       const normalizedRecruiterIds = recruiterIds.map(normalizeRecruiterId).filter(Boolean)
       if (normalizedRecruiterIds.length > 0) {
         params.push(normalizedRecruiterIds);
-        filters.push(`recruiter_id = ANY($${params.length})`);
+        const recruiterIdParam = params.length
+        params.push(recruiterEmails.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))
+        const recruiterEmailParam = params.length
+        params.push(recruiterNames.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))
+        const recruiterNameParam = params.length
+        filters.push(`(
+          (recruiter_id = '' AND recruiter_email = '' AND recruiter_name = '')
+          OR recruiter_id = ANY($${recruiterIdParam})
+          OR lower(recruiter_email) = ANY($${recruiterEmailParam})
+          OR lower(recruiter_name) = ANY($${recruiterNameParam})
+        )`);
       }
       params.push(limit * 5);
       const result = await query(

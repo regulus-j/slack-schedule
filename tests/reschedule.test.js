@@ -16,13 +16,16 @@ import {
   buildCancellationEmail,
   buildIntakeDraft,
   recoverLiveCandidateSearchSession,
+  resolveZoomLinkForRecruiters,
   buildScheduledCandidateEmail,
   buildTemplateVariables,
   ccRecipientsFromAttendees,
   isScheduleWorkflowTrigger,
+  mappedHiringManagersForRole,
+  mappedRecruitersForRole,
 } from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
-import { setApplicants, setRecruiters, setHiringManagers, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
+import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
 const baseCase = {
@@ -628,7 +631,7 @@ test('intake modal refreshes recruiter and HM email fields after selection', () 
   assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
 });
 
-test('standard intake modal uses role-mapped order and multi recruiter/HM selectors', () => {
+test('standard intake modal uses compact primary and optional additional people selectors', () => {
   const view = intakeModal({
     templates: [],
     draft: {
@@ -637,27 +640,35 @@ test('standard intake modal uses role-mapped order and multi recruiter/HM select
       stageKey: '2nd-interview',
       roleId: 'job-1',
       roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
-      recruiterOptions: [
-        { text: { type: 'plain_text', text: 'Mara Santos - mara@example.com' }, value: 'rec-mara' },
+      recruiterId: 'rec-mara',
+      hiringManagerId: 'hm-ana',
+      recruiterOption: { text: { type: 'plain_text', text: 'Mara Santos' }, value: 'rec-mara' },
+      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz' }, value: 'hm-ana' },
+      additionalRecruiterOptions: [
+        { text: { type: 'plain_text', text: 'Jamal Al Badi' }, value: 'rec-jam' },
       ],
-      hiringManagerOptions: [
-        { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
+      additionalHiringManagerOptions: [
+        { text: { type: 'plain_text', text: 'Lee Morgan' }, value: 'hm-lee' },
+      ],
+      showAdditionalRecruiters: true,
+      showAdditionalHiringManagers: true,
+      selectedRecruiters: [
+        { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', zoomLink: 'https://zoom.us/j/mara' },
+        { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jam@example.com', zoomLink: 'https://zoom.us/j/jam' },
       ],
       zoomLink: 'https://zoom.us/j/mara',
+      zoomLinkOption: { text: { type: 'plain_text', text: 'Mara Santos' }, value: 'https://zoom.us/j/mara' },
     },
   })
 
   const inputBlockIds = view.blocks.filter((block) => block.type === 'input').map((block) => block.block_id)
-  assert.deepEqual(inputBlockIds.slice(0, 5), [
-    'event_type_block',
-    'role_block',
-    'recruiter_block',
-    'hm_block_job-1',
-    'candidate_search_block',
-  ])
-  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_block').element.type, 'multi_external_select')
-  assert.equal(view.blocks.find((block) => block.block_id === 'hm_block_job-1').element.type, 'multi_external_select')
-  assert.equal(view.blocks.find((block) => block.block_id === 'zoom_block').element.initial_value, 'https://zoom.us/j/mara')
+  assert.deepEqual(inputBlockIds.slice(0, 2), ['event_type_block', 'role_block'])
+  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_block_rec-mara').element.type, 'external_select')
+  assert.equal(view.blocks.find((block) => block.block_id === 'additional_recruiters_block').element.type, 'multi_external_select')
+  assert.equal(view.blocks.find((block) => block.block_id === 'hm_block_hm-ana').element.type, 'external_select')
+  assert.equal(view.blocks.find((block) => block.block_id === 'additional_hms_block').element.type, 'multi_external_select')
+  assert.equal(view.blocks.find((block) => block.block_id === 'zoom_choice_block').element.options.length, 2)
+  assert.equal(view.blocks.find((block) => block.block_id?.startsWith('zoom_block')).element.initial_value, 'https://zoom.us/j/mara')
   assert.equal(inputBlockIds.includes('stage_block'), false)
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
 })
@@ -671,9 +682,8 @@ test('standard hiring manager selector is reset when the selected role changes',
       stageKey: '2nd-interview',
       roleId: 'job-1',
       roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
-      hiringManagerOptions: [
-        { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
-      ],
+      hiringManagerId: 'hm-ana',
+      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz' }, value: 'hm-ana' },
     },
   })
   const secondRoleView = intakeModal({
@@ -688,13 +698,13 @@ test('standard hiring manager selector is reset when the selected role changes',
     },
   })
 
-  const firstHmBlock = firstRoleView.blocks.find((block) => block.block_id.startsWith('hm_block'))
-  const secondHmBlock = secondRoleView.blocks.find((block) => block.block_id.startsWith('hm_block'))
+  const firstHmBlock = firstRoleView.blocks.find((block) => block.block_id?.startsWith('hm_block'))
+  const secondHmBlock = secondRoleView.blocks.find((block) => block.block_id?.startsWith('hm_block'))
 
-  assert.equal(firstHmBlock.block_id, 'hm_block_job-1')
-  assert.equal(firstHmBlock.element.initial_options.length, 1)
+  assert.equal(firstHmBlock.block_id, 'hm_block_hm-ana')
+  assert.equal(firstHmBlock.element.initial_option.value, 'hm-ana')
   assert.equal(secondHmBlock.block_id, 'hm_block_job-2')
-  assert.equal('initial_options' in secondHmBlock.element, false)
+  assert.equal('initial_option' in secondHmBlock.element, false)
 })
 
 test('standard first interview intake omits hiring manager selector', () => {
@@ -706,9 +716,8 @@ test('standard first interview intake omits hiring manager selector', () => {
       stageKey: '1st-interview',
       roleId: 'job-1',
       roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
-      recruiterOptions: [
-        { text: { type: 'plain_text', text: 'Mara Santos - mara@example.com' }, value: 'rec-mara' },
-      ],
+      recruiterId: 'rec-mara',
+      recruiterOption: { text: { type: 'plain_text', text: 'Mara Santos' }, value: 'rec-mara' },
       hiringManagerOptions: [
         { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
       ],
@@ -719,10 +728,72 @@ test('standard first interview intake omits hiring manager selector', () => {
   assert.deepEqual(inputBlockIds.slice(0, 4), [
     'event_type_block',
     'role_block',
-    'recruiter_block',
+    'recruiter_block_rec-mara',
     'candidate_search_block',
   ])
   assert.equal(inputBlockIds.includes('hm_block'), false)
+})
+
+test('recruiter Zoom resolution auto-fills one unique link and requires a choice for different links', () => {
+  assert.equal(resolveZoomLinkForRecruiters([
+    { zoomLink: 'https://zoom.us/j/mara' },
+    { zoomLink: 'https://zoom.us/j/mara' },
+  ]), 'https://zoom.us/j/mara')
+  assert.equal(resolveZoomLinkForRecruiters([
+    { zoomLink: 'https://zoom.us/j/mara' },
+    { zoomLink: 'https://zoom.us/j/jam' },
+  ]), '')
+  assert.equal(resolveZoomLinkForRecruiters([{ zoomLink: '' }]), '')
+})
+
+test('role mapping uses exact JazzHR job and enriches its hiring lead from recruiter contact data', () => {
+  setRoleAssignments([
+    {
+      roleId: '',
+      roleKey: 'junior-valuation-analyst',
+      roleTitle: 'Junior Valuation Analyst',
+      recruiter: null,
+      hiringManager: {
+        id: 'hm-veanne',
+        name: 'Veanne Reyes',
+        email: 'veanne@example.com',
+        role: 'hiring_manager',
+      },
+    },
+  ])
+  setJazzhrJobs([
+    {
+      id: 'job-open',
+      title: 'Junior Valuation Analyst',
+      status: 'Open',
+      hiringLeadId: 'user-allen',
+    },
+  ])
+  setRecruiters([
+    {
+      id: 'rec-user-allen',
+      name: 'Allen Guevarra',
+      email: 'allen@opglobal.example',
+      role: 'recruiter',
+    },
+  ])
+  setTalentRecruiters([
+    {
+      id: 'sheet-allen',
+      name: 'Allen Guevarra',
+      email: 'allen@freedom.example',
+      role: 'recruiter',
+      zoomLink: 'https://zoom.us/j/allen',
+    },
+  ])
+
+  assert.deepEqual(mappedRecruitersForRole('job-open').map((person) => ({
+    id: person.id,
+    zoomLink: person.zoomLink,
+  })), [{ id: 'sheet-allen', zoomLink: 'https://zoom.us/j/allen' }])
+  assert.deepEqual(mappedHiringManagersForRole('job-open').map((person) => person.name), ['Veanne Reyes'])
+
+  setJazzhrJobs([])
 })
 
 test('builds standard intake draft from mapped role recruiters HMs and Zoom', () => {
@@ -778,8 +849,10 @@ test('builds standard intake draft from mapped role recruiters HMs and Zoom', ()
     {
       event_type_block: { event_type_select: { selected_option: { value: '2nd-interview' } } },
       role_block: { role_select: { selected_option: { value: 'job-1' } } },
-      recruiter_block: { recruiter_select: { selected_options: [{ value: 'rec-mara' }, { value: 'rec-jam' }] } },
-      hm_block: { hm_select: { selected_options: [{ value: 'hm-ana' }, { value: 'hm-lee' }] } },
+      recruiter_block: { recruiter_select: { selected_option: { value: 'rec-mara' } } },
+      additional_recruiters_block: { additional_recruiter_select: { selected_options: [{ value: 'rec-jam' }] } },
+      hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
+      additional_hms_block: { additional_hm_select: { selected_options: [{ value: 'hm-lee' }] } },
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
       zoom_block: { zoom_link: { value: 'https://zoom.us/j/manual' } },
     },
@@ -965,7 +1038,8 @@ test('builds intake draft recruiter from the selected applicant', () => {
   assert.equal(draft.recruiter.name, 'Mara Santos');
   assert.equal(draft.recruiterEmail, 'mara@example.com');
   assert.equal(draft.recruiterOption.value, 'rec-123');
-  assert.equal(draft.recruiterOption.text.text, 'Mara Santos - mara@example.com');
+  assert.equal(draft.recruiterOption.text.text, 'Mara Santos');
+  assert.equal(draft.recruiterOption.description.text, 'mara@example.com');
   assert.equal(draft.manualCandidateMode, false);
   assert.equal(draft.manualApplicantName, '');
   assert.equal(draft.applicant.jobTitle, 'Support Specialist');

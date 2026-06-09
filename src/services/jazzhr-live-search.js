@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 
-import { inactiveApplicantReason } from './jazzhr.js'
+import { applicantEligibilityReason } from './jazzhr.js'
 
 const BASE = 'https://api.resumatorapi.com/v1'
 const DEFAULT_PAGE_SIZE = 20
@@ -227,7 +227,7 @@ export async function fetchApplicantListPage({
 function addMatches(session, pageResult) {
   pageResult.items.forEach((item, index) => {
     for (const record of applicantRoleRecords(item)) {
-      if (inactiveApplicantReason(record)) continue
+      if (applicantEligibilityReason(record, { allowUnknown: true })) continue
       const candidate = mapLiveApplicant(record, index)
       if (!candidate) continue
       if (!candidateMatchesFilters(candidate, session.filters)) continue
@@ -262,6 +262,8 @@ function mapLiveApplicant(item, sourceOrder = 0) {
     jobTitle: firstValue(item, ['job_title', 'jobTitle', 'job']),
     stage: firstValue(item, ['applicant_progress', 'applicantProgress', 'stage', 'status']),
     recruiterId: normalizeRecruiterId(item?.recruiter_id),
+    recruiterEmail: firstValue(item, ['recruiter_email', 'recruiterEmail']),
+    recruiterName: firstValue(item, ['recruiter_name', 'recruiterName']),
     source: 'jazzhr',
     appliedAt: firstValue(item, [
       'applied_date',
@@ -298,7 +300,11 @@ function snapshot(session) {
 }
 
 function applicantRoleRecords(item) {
-  const jobs = Array.isArray(item?.jobs) ? item.jobs.filter(Boolean) : []
+  const jobs = Array.isArray(item?.jobs)
+    ? item.jobs.filter(Boolean)
+    : item?.jobs && typeof item.jobs === 'object'
+      ? [item.jobs]
+      : []
   if (jobs.length === 0) return [item]
   return jobs.map((job) => ({
     ...item,
@@ -307,6 +313,13 @@ function applicantRoleRecords(item) {
     job_title: job.job_title || job.title || item.job_title || '',
     applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || '',
     workflow_step_id: job.workflow_step_id || item.workflow_step_id || '',
+    workflow_step: job.workflow_step || job.workflowStep || item.workflow_step || '',
+    workflow_category: job.workflow_category || job.workflowCategory ||
+      job.workflow_step_category || job.category ||
+      item.workflow_category || item.workflow_step_category || '',
+    recruiter_id: job.recruiter_id || item.recruiter_id || '',
+    recruiter_email: job.recruiter_email || job.recruiterEmail || item.recruiter_email || '',
+    recruiter_name: job.recruiter_name || job.recruiterName || item.recruiter_name || '',
     apply_date: job.apply_date || job.applyDate || item.apply_date || item.applyDate,
     date_applied: job.date_applied || job.dateApplied || item.date_applied || item.dateApplied,
     disposition: job.disposition || job.disposition_name || item.disposition || '',
@@ -319,13 +332,26 @@ function normalizeFilters(filters = {}) {
     roleId: String(filters.roleId || '').trim(),
     roleTitle: normalizeSearchText(filters.roleTitle),
     recruiterIds: (filters.recruiterIds || []).map(normalizeRecruiterId).filter(Boolean),
+    recruiterEmails: (filters.recruiterEmails || []).map(normalizeSearchText).filter(Boolean),
+    recruiterNames: (filters.recruiterNames || []).map(normalizeSearchText).filter(Boolean),
   }
 }
 
 function candidateMatchesFilters(candidate, filters = {}) {
   if (filters.roleId && String(candidate.jazzhrJobId || '').trim() !== filters.roleId) return false
   if (!filters.roleId && filters.roleTitle && normalizeSearchText(candidate.jobTitle) !== filters.roleTitle) return false
-  if (filters.recruiterIds?.length > 0 && !filters.recruiterIds.includes(normalizeRecruiterId(candidate.recruiterId))) return false
+  if (filters.recruiterIds?.length > 0) {
+    const recruiterId = normalizeRecruiterId(candidate.recruiterId)
+    const recruiterEmail = normalizeSearchText(candidate.recruiterEmail)
+    const recruiterName = normalizeSearchText(candidate.recruiterName)
+    const hasRecruiter = Boolean(recruiterId || recruiterEmail || recruiterName)
+    if (
+      hasRecruiter &&
+      !filters.recruiterIds.includes(recruiterId) &&
+      !filters.recruiterEmails.includes(recruiterEmail) &&
+      !filters.recruiterNames.includes(recruiterName)
+    ) return false
+  }
   return true
 }
 

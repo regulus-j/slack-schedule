@@ -19,7 +19,13 @@ export function normalizeJazzhrCandidate(record, index = 0) {
     phone: String(record?.phone || '').trim(),
     jobTitle: String(record?.jobTitle || '').trim(),
     stage: String(record?.stage || '').trim(),
+    workflowStepId: String(record?.workflowStepId || '').trim(),
+    workflowStep: String(record?.workflowStep || '').trim(),
+    workflowCategory: String(record?.workflowCategory || '').trim(),
+    jobStatus: String(record?.jobStatus || '').trim(),
     recruiterId: String(record?.recruiterId || '').trim(),
+    recruiterEmail: String(record?.recruiterEmail || '').trim(),
+    recruiterName: String(record?.recruiterName || '').trim(),
     source: record?.source || 'jazzhr',
     appliedAt: String(record?.appliedAt || record?.applyDate || '').trim(),
     sourceOrder: Number.isFinite(Number(record?.sourceOrder)) ? Number(record.sourceOrder) : index,
@@ -38,12 +44,22 @@ export function normalizeJazzhrCandidates(records = []) {
     .sort(compareJazzhrCandidates)
 }
 
-export function searchJazzhrCandidateRecords(records = [], query = '', { limit = 20, baseQuery = '', roleId = '', roleTitle = '', recruiterIds = [] } = {}) {
+export function searchJazzhrCandidateRecords(records = [], query = '', {
+  limit = 20,
+  baseQuery = '',
+  roleId = '',
+  roleTitle = '',
+  recruiterIds = [],
+  recruiterEmails = [],
+  recruiterNames = [],
+} = {}) {
   const normalizedQuery = normalizeSearchText(query)
   const normalizedBaseQuery = normalizeSearchText(baseQuery)
   const normalizedRoleId = String(roleId || '').trim()
   const normalizedRoleTitle = normalizeSearchText(roleTitle)
   const normalizedRecruiterIds = new Set((recruiterIds || []).map(normalizeRecruiterId).filter(Boolean))
+  const normalizedRecruiterEmails = new Set((recruiterEmails || []).map(normalizeSearchText).filter(Boolean))
+  const normalizedRecruiterNames = new Set((recruiterNames || []).map(normalizeSearchText).filter(Boolean))
   const results = []
   const safeLimit = Math.max(0, Number(limit) || 0)
   if (safeLimit === 0) return results
@@ -57,7 +73,13 @@ export function searchJazzhrCandidateRecords(records = [], query = '', { limit =
     const haystack = candidateSearchText(record)
     if (normalizedRoleId && String(record.jazzhrJobId || '').trim() !== normalizedRoleId) continue
     if (!normalizedRoleId && normalizedRoleTitle && normalizeSearchText(record.jobTitle) !== normalizedRoleTitle) continue
-    if (normalizedRecruiterIds.size > 0 && !normalizedRecruiterIds.has(normalizeRecruiterId(record.recruiterId))) continue
+    if (
+      normalizedRecruiterIds.size > 0 &&
+      hasRecruiterIdentity(record) &&
+      !normalizedRecruiterIds.has(normalizeRecruiterId(record.recruiterId)) &&
+      !normalizedRecruiterEmails.has(normalizeSearchText(record.recruiterEmail)) &&
+      !normalizedRecruiterNames.has(normalizeSearchText(record.recruiterName))
+    ) continue
     if (normalizedBaseQuery && !haystack.includes(normalizedBaseQuery)) continue
     if (normalizedQuery && !haystack.includes(normalizedQuery)) continue
 
@@ -69,6 +91,10 @@ export function searchJazzhrCandidateRecords(records = [], query = '', { limit =
 }
 
 export function candidateInactiveReason(record) {
+  const workflowCategory = normalizeSearchText(record?.workflowCategory || record?.workflow_step_category)
+  if (['not hired', 'hired', 'inactive', 'rejected'].includes(workflowCategory)) {
+    return `workflow-category:${workflowCategory}`
+  }
   const statusValues = [
     record?.stage,
     record?.status,
@@ -112,10 +138,20 @@ function buildCandidateSearchText(record) {
     record.lastName,
     record.email,
     record.jobTitle,
+    record.recruiterEmail,
+    record.recruiterName,
     record.jazzhrApplicationId,
     record.jazzhrJobId,
     record.candidateKey,
   ].filter(Boolean).join(' '))
+}
+
+function hasRecruiterIdentity(record) {
+  return Boolean(
+    String(record?.recruiterId || '').trim() ||
+    String(record?.recruiterEmail || '').trim() ||
+    String(record?.recruiterName || '').trim()
+  )
 }
 
 function isNormalizedJazzhrCandidate(record) {

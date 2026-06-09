@@ -5,7 +5,7 @@ import { createStore } from './src/store/index.js';
 import { registerSlackHandlers } from './src/slack/handlers.js';
 import { logger } from './src/logger.js';
 import { loadTalentDirectory } from './src/services/talent-directory.js';
-import { hydrateJazzhrCacheFromStore, refreshJazzhrCache } from './src/services/jazzhr.js';
+import { hydrateJazzhrCacheFromStore, refreshJazzhrCache, refreshJazzhrOpenJobs } from './src/services/jazzhr.js';
 import { ensureSlackDirectory } from './src/services/slack-directory.js';
 import { startEventLoopLagMonitor } from './src/event-loop-monitor.js';
 
@@ -17,6 +17,7 @@ const store = await createStore(config);
 await store.init();
 
 await loadTalentDirectory(config, store);
+await refreshJazzhrOpenJobs({ config, logger });
 
 const jazzhrHydration = await hydrateJazzhrCacheFromStore({ store, logger });
 

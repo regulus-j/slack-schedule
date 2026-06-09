@@ -82,6 +82,42 @@ test('candidate index preserves separate role applications for one prospect', ()
   assert.deepEqual(records.map((record) => record.jazzhrApplicationId), ['prospect-1', 'prospect-1'])
 })
 
+test('candidate recruiter filtering keeps missing metadata but excludes explicit mismatches', () => {
+  const records = normalizeJazzhrCandidates([
+    {
+      jazzhrApplicationId: 'missing',
+      jazzhrJobId: 'job-1',
+      fullName: 'Missing Recruiter',
+      stage: 'Screen',
+    },
+    {
+      jazzhrApplicationId: 'match',
+      jazzhrJobId: 'job-1',
+      fullName: 'Matching Recruiter',
+      stage: 'Screen',
+      recruiterEmail: 'mara@example.com',
+    },
+    {
+      jazzhrApplicationId: 'mismatch',
+      jazzhrJobId: 'job-1',
+      fullName: 'Other Recruiter',
+      stage: 'Screen',
+      recruiterEmail: 'other@example.com',
+    },
+  ])
+
+  const results = searchJazzhrCandidateRecords(records, '', {
+    roleId: 'job-1',
+    recruiterIds: ['rec-sheet-mara'],
+    recruiterEmails: ['mara@example.com'],
+  })
+
+  assert.deepEqual(results.map((record) => record.fullName), [
+    'Missing Recruiter',
+    'Matching Recruiter',
+  ])
+})
+
 test('json store persists and searches JazzHR candidate index', async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'candidate-index-'))
   try {
@@ -96,6 +132,29 @@ test('json store persists and searches JazzHR candidate index', async () => {
     const results = await store.searchJazzhrCandidates('alex')
     const listed = await store.listJazzhrCandidates()
     const selected = await store.getJazzhrCandidate('2::job-2')
+    await store.upsertJazzhrCandidates([
+      {
+        jazzhrApplicationId: '3',
+        jazzhrJobId: 'job-3',
+        fullName: 'Niel Cabataña',
+        email: 'niel@example.com',
+        stage: 'Completed 1st Interview',
+        workflowStepId: '10476588',
+        workflowCategory: 'Active',
+        jobStatus: 'Open',
+      },
+    ])
+    const upserted = await store.getJazzhrCandidate('3::job-3')
+    await store.replaceJazzhrJobCandidates('job-2', [
+      {
+        jazzhrApplicationId: '4',
+        jazzhrJobId: 'job-2',
+        fullName: 'Current Job Two Candidate',
+        stage: 'Screen',
+      },
+    ])
+    const replacedRoleCandidates = await store.searchJazzhrCandidates('', { roleId: 'job-2' })
+    const preservedOtherRole = await store.getJazzhrCandidate('3::job-3')
 
     assert.deepEqual(results.map((record) => record.id), [
       'applicant-2::job-2',
@@ -109,6 +168,10 @@ test('json store persists and searches JazzHR candidate index', async () => {
     ])
     assert.equal(selected.fullName, 'Alex Santos')
     assert.equal(selected.jobTitle, 'Second Role')
+    assert.equal(upserted.email, 'niel@example.com')
+    assert.equal(upserted.workflowStepId, '10476588')
+    assert.deepEqual(replacedRoleCandidates.map((record) => record.candidateKey), ['4::job-2'])
+    assert.equal(preservedOtherRole.fullName, 'Niel Cabataña')
   } finally {
     await rm(runtimeDir, { recursive: true, force: true })
   }

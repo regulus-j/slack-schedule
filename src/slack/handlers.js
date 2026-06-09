@@ -23,7 +23,12 @@ import {
 } from '../data/search.js'
 import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, signedEmailBodiesFromPlainText, stripSignatureHtml } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
-import { fetchApplicantDetail, inactiveApplicantReason, refreshJazzhrCache } from '../services/jazzhr.js'
+import {
+  applicantEligibilityReason,
+  fetchApplicantDetail,
+  refreshJazzhrCache,
+  syncJazzhrJobCandidates,
+} from '../services/jazzhr.js'
 import { createJazzhrLiveSearchManager } from '../services/jazzhr-live-search.js'
 import { loadTalentDirectory } from '../services/talent-directory.js'
 import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
@@ -418,7 +423,10 @@ export function registerSlackHandlers(app, context) {
         roleTitle: '',
         recruiterIds: [],
         hiringManagerIds: [],
+        showAdditionalRecruiters: false,
+        showAdditionalHiringManagers: false,
         zoomLink: '',
+        zoomLinkAuto: false,
         candidateSearchQuery: '',
         candidateSearchSessionId: '',
         candidateSearchPage: 0,
@@ -436,6 +444,13 @@ export function registerSlackHandlers(app, context) {
     await ack()
     const roleId = selectedOptionValue(body)
     const role = roleById(roleId)
+    await syncJazzhrJobCandidates({
+      config,
+      logger,
+      store,
+      jobId: role?.roleId || roleId,
+      concurrency: config.jazzhr.applicantFetchConcurrency,
+    })
     const recruiters = mappedRecruitersForRole(roleId)
     const recruiterIds = recruiters.length === 1 ? [recruiters[0].id] : []
     await refreshIntakeModal({
@@ -447,7 +462,10 @@ export function registerSlackHandlers(app, context) {
         roleTitle: role?.title || '',
         recruiterIds,
         hiringManagerIds: [],
+        showAdditionalRecruiters: false,
+        showAdditionalHiringManagers: false,
         zoomLink: resolveZoomLinkForRecruiters(recruiters.filter((person) => recruiterIds.includes(person.id))),
+        zoomLinkAuto: recruiterIds.length === 1,
         applicant: '',
         candidateSearchQuery: '',
         candidateSearchSessionId: '',
@@ -490,11 +508,14 @@ export function registerSlackHandlers(app, context) {
     if (applicant?.jazzhrApplicationId) {
       try {
         const detail = await Promise.race([
-          fetchApplicantDetail(config.jazzhr.apiKey, applicant.jazzhrApplicationId, logger),
+          fetchApplicantDetail(config.jazzhr.apiKey, applicant.jazzhrApplicationId, logger, {
+            jobId: applicant.jazzhrJobId || metadata.roleId || '',
+          }),
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
         ]);
         if (detail) {
-          const inactiveReason = inactiveApplicantReason(detail)
+          applicant = mergeApplicantDetail(applicant, detail);
+          const inactiveReason = applicantEligibilityReason(applicant)
           if (inactiveReason) {
             logger.info('inactive_applicant_selection_blocked', {
               applicantId: selectedId,
@@ -504,11 +525,10 @@ export function registerSlackHandlers(app, context) {
             await client.chat.postEphemeral({
               channel: resolvePostingChannel(config, getChannelId(body.view) || body.user.id),
               user: body.user.id,
-              text: `This candidate is not available for scheduling because their JazzHR stage is "${detail.stage || inactiveReason}".`,
+              text: `This application is not available for scheduling because its JazzHR stage is "${applicant.stage || inactiveReason}".`,
             })
             return
           }
-          applicant = mergeApplicantDetail(applicant, detail);
           setApplicantDetail(selectedId, detail);
         }
       } catch (err) {
@@ -529,10 +549,15 @@ export function registerSlackHandlers(app, context) {
       selectedId,
       selectedApplicant: applicant,
       showDetails: true,
-      draftOverrides: applicantRecruiterIds.length > 0 ? {
-        recruiterIds: applicantRecruiterIds,
-        zoomLink: resolveZoomLinkForRecruiters([asRecruiter(applicantRecruiter)]),
-      } : {},
+      draftOverrides: {
+        ...(applicantRecruiterIds.length > 0 ? {
+          recruiterIds: applicantRecruiterIds,
+          zoomLink: resolveZoomLinkForRecruiters([asRecruiter(applicantRecruiter)]),
+          zoomLinkAuto: true,
+        } : {}),
+        candidateSearchError: '',
+        candidateSearchSearching: false,
+      },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
     });
@@ -577,7 +602,12 @@ export function registerSlackHandlers(app, context) {
   app.action('recruiter_select', async ({ ack, body, client }) => {
     await ack();
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
-    const selectedIds = selectedOptionValues(body)
+    const selectedIds = metadata.roleId
+      ? normalizeIdList([
+          ...getSelectedOptionValues(body.view?.state?.values, 'recruiter_select'),
+          ...getSelectedOptionValues(body.view?.state?.values, 'additional_recruiter_select'),
+        ])
+      : selectedOptionValues(body)
     const selectedId = selectedIds[0] || ''
     const recruiters = metadata.roleId ? mappedRecruitersForRole(metadata.roleId) : getTalentRecruiters()
     const selectedRecruiters = selectedIds.map((id) => findPersonInList(id, recruiters) || findMappedPersonById(id)).filter(Boolean).map(asRecruiter)
@@ -598,7 +628,7 @@ export function registerSlackHandlers(app, context) {
         : asRecruiter(personFromSelectedOption(body))),
       draftOverrides: metadata.roleId ? {
         recruiterIds: selectedIds,
-        zoomLink: resolveZoomLinkForRecruiters(selectedRecruiters),
+        ...nextRecruiterZoomState(body, metadata, selectedRecruiters),
         candidateSearchQuery: '',
         candidateSearchSessionId: '',
         candidateSearchPage: 0,
@@ -615,7 +645,12 @@ export function registerSlackHandlers(app, context) {
   app.action('hm_select', async ({ ack, body, client }) => {
     await ack();
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
-    const selectedIds = selectedOptionValues(body)
+    const selectedIds = metadata.roleId
+      ? normalizeIdList([
+          ...getSelectedOptionValues(body.view?.state?.values, 'hm_select'),
+          ...getSelectedOptionValues(body.view?.state?.values, 'additional_hm_select'),
+        ])
+      : selectedOptionValues(body)
     const selectedId = selectedIds[0] || ''
     const selectedUser = metadata.roleId
       ? (mappedHiringManagersForRole(metadata.roleId).find((person) => person.id === selectedId) || findMappedPersonById(selectedId))
@@ -632,6 +667,104 @@ export function registerSlackHandlers(app, context) {
       defaultTimeZone,
     });
   });
+
+  app.action('additional_recruiters_toggle', async ({ ack, body, client }) => {
+    await ack()
+    const enabled = selectedCheckboxValue(body, 'enabled')
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        showAdditionalRecruiters: enabled,
+        ...(!enabled ? { recruiterIds: getSelectedOptionValues(body.view?.state?.values, 'recruiter_select') } : {}),
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
+  app.action('additional_recruiter_select', async ({ ack, body, client }) => {
+    await ack()
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const selectedIds = normalizeIdList([
+      ...getSelectedOptionValues(body.view?.state?.values, 'recruiter_select'),
+      ...selectedOptionValues(body),
+    ])
+    const selectedRecruiters = selectedIds
+      .map((id) => findPersonInList(id, mappedRecruitersForRole(metadata.roleId)) || findMappedPersonById(id))
+      .filter(Boolean)
+      .map(asRecruiter)
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        recruiterIds: selectedIds,
+        showAdditionalRecruiters: true,
+        ...nextRecruiterZoomState(body, metadata, selectedRecruiters),
+        candidateSearchQuery: '',
+        candidateSearchSessionId: '',
+        candidateSearchPage: 0,
+        candidateSearchResultCount: 0,
+        candidateSearchComplete: false,
+        candidateSearchSearching: false,
+        candidateSearchError: '',
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
+  app.action('additional_hms_toggle', async ({ ack, body, client }) => {
+    await ack()
+    const enabled = selectedCheckboxValue(body, 'enabled')
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        showAdditionalHiringManagers: enabled,
+        ...(!enabled ? { hiringManagerIds: getSelectedOptionValues(body.view?.state?.values, 'hm_select') } : {}),
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
+  app.action('additional_hm_select', async ({ ack, body, client }) => {
+    await ack()
+    const selectedIds = normalizeIdList([
+      ...getSelectedOptionValues(body.view?.state?.values, 'hm_select'),
+      ...selectedOptionValues(body),
+    ])
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        hiringManagerIds: selectedIds,
+        showAdditionalHiringManagers: true,
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
+  app.action('zoom_link_select', async ({ ack, body, client }) => {
+    await ack()
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        zoomLink: selectedOptionValue(body),
+        zoomLinkAuto: false,
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
 
   app.action('open_google_oauth', async ({ ack, body, client }) => {
     await ack()
@@ -716,7 +849,9 @@ export function registerSlackHandlers(app, context) {
   app.options('recruiter_select', async ({ options, ack }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
     const recruiters = metadata?.roleId ? mappedRecruitersForRole(metadata.roleId) : getTalentRecruiters()
-    const slackOptions = personOptions(options.value, recruiters)
+    const slackOptions = metadata?.roleId
+      ? compactPersonOptions(options.value, recruiters)
+      : personOptions(options.value, recruiters)
     logger.info('recruiter_options_requested', {
       query: options.value,
       recruiterCount: recruiters.length,
@@ -726,15 +861,25 @@ export function registerSlackHandlers(app, context) {
     await ack({ options: slackOptions });
   });
 
+  app.options('additional_recruiter_select', async ({ options, ack }) => {
+    const metadata = parsePrivateMetadata(options.view?.private_metadata)
+    await ack({ options: compactPersonOptions(options.value, mappedRecruitersForRole(metadata?.roleId)) })
+  })
+
   app.options('hm_select', async ({ options, ack, client }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
     if (metadata?.roleId) {
-      await ack({ options: personOptions(options.value, mappedHiringManagersForRole(metadata.roleId)) })
+      await ack({ options: compactPersonOptions(options.value, mappedHiringManagersForRole(metadata.roleId)) })
       return
     }
     const { users } = await ensureSlackDirectory({ client, config, logger })
     await ack({ options: personOptions(options.value, users) });
   });
+
+  app.options('additional_hm_select', async ({ options, ack }) => {
+    const metadata = parsePrivateMetadata(options.view?.private_metadata)
+    await ack({ options: compactPersonOptions(options.value, mappedHiringManagersForRole(metadata?.roleId)) })
+  })
 
   app.options('guest_select', async ({ options, ack, client }) => {
     const { users } = await ensureSlackDirectory({ client, config, logger })
@@ -777,7 +922,7 @@ export function registerSlackHandlers(app, context) {
       errors.role_block = 'Choose an open JazzHR role.';
     }
     if (standardEventType && intakeDraft.recruiterIds.length === 0) {
-      errors.recruiter_block = 'Choose at least one recruiter.';
+      errors[findInputBlockId(values, 'recruiter_select', 'recruiter_block')] = 'Choose at least one recruiter.';
     }
     if (intakeDraft.eventType === 'custom-invite' && !intakeDraft.customInvitePurpose) {
       errors.custom_purpose_block = 'Enter what this invite is for.';
@@ -793,7 +938,7 @@ export function registerSlackHandlers(app, context) {
         errors.applicant_email_block = 'Enter applicant email.';
       }
     } else if (!intakeDraft.applicant) {
-      errors.applicant_block = 'Choose a candidate.';
+      errors[findInputBlockId(values, 'applicant_select', 'applicant_block')] = 'Choose a candidate.';
     }
 
     if (intakeDraft.applicantEmail && !isValidEmail(intakeDraft.applicantEmail)) {
@@ -819,7 +964,7 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          zoom_block: 'Enter the final Zoom link.',
+          [findInputBlockId(values, 'zoom_link', 'zoom_block')]: 'Enter the final Zoom link.',
         },
       });
       return;
@@ -2085,7 +2230,14 @@ function buildPrivateMetadata(view, overrides = {}) {
   const roleTitle = 'roleTitle' in overrides ? overrides.roleTitle : parsed.roleTitle || ''
   const recruiterIds = 'recruiterIds' in overrides ? overrides.recruiterIds : parsed.recruiterIds || []
   const hiringManagerIds = 'hiringManagerIds' in overrides ? overrides.hiringManagerIds : parsed.hiringManagerIds || []
+  const showAdditionalRecruiters = 'showAdditionalRecruiters' in overrides
+    ? Boolean(overrides.showAdditionalRecruiters)
+    : Boolean(parsed.showAdditionalRecruiters)
+  const showAdditionalHiringManagers = 'showAdditionalHiringManagers' in overrides
+    ? Boolean(overrides.showAdditionalHiringManagers)
+    : Boolean(parsed.showAdditionalHiringManagers)
   const zoomLink = 'zoomLink' in overrides ? overrides.zoomLink : parsed.zoomLink || ''
+  const zoomLinkAuto = 'zoomLinkAuto' in overrides ? Boolean(overrides.zoomLinkAuto) : Boolean(parsed.zoomLinkAuto)
   const customInvitePurpose = 'customInvitePurpose' in overrides
     ? overrides.customInvitePurpose
     : parsed.customInvitePurpose || ''
@@ -2098,7 +2250,10 @@ function buildPrivateMetadata(view, overrides = {}) {
     roleTitle,
     recruiterIds,
     hiringManagerIds,
+    showAdditionalRecruiters,
+    showAdditionalHiringManagers,
     zoomLink,
+    zoomLinkAuto,
     customInvitePurpose,
     candidateSearchQuery,
     candidateSearchSessionId,
@@ -2151,7 +2306,18 @@ async function refreshIntakeModal({
     overrides.candidateSearchSearching = metadata.candidateSearchSearching || false
     overrides.candidateSearchError = metadata.candidateSearchError || ''
   }
-  for (const key of ['eventType', 'roleId', 'roleTitle', 'recruiterIds', 'hiringManagerIds', 'zoomLink', 'customInvitePurpose']) {
+  for (const key of [
+    'eventType',
+    'roleId',
+    'roleTitle',
+    'recruiterIds',
+    'hiringManagerIds',
+    'showAdditionalRecruiters',
+    'showAdditionalHiringManagers',
+    'zoomLink',
+    'zoomLinkAuto',
+    'customInvitePurpose',
+  ]) {
     if (!(key in overrides) && key in metadata) overrides[key] = metadata[key]
   }
   if (candidateSearchQuery !== undefined) {
@@ -2225,7 +2391,10 @@ async function refreshIntakeModal({
     roleTitle: draft.roleTitle,
     recruiterIds: draft.recruiterIds,
     hiringManagerIds: draft.hiringManagerIds,
+    showAdditionalRecruiters: draft.showAdditionalRecruiters,
+    showAdditionalHiringManagers: draft.showAdditionalHiringManagers,
     zoomLink: draft.zoomLink,
+    zoomLinkAuto: draft.zoomLinkAuto,
   });
 
   return client.views.update({
@@ -2782,7 +2951,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const customInvitePurpose = customInvite
     ? (overrides.customInvitePurpose !== undefined ? overrides.customInvitePurpose : getInputValue(values, 'custom_purpose'))
     : ''
-  const applicantId = overrides.applicant ?? (values.applicant_block?.applicant_select?.selected_option?.value || '');
+  const applicantId = overrides.applicant ?? (getSelectedOptionValues(values, 'applicant_select')[0] || '');
   const manualCandidateMode = customInvite && (overrides.manualCandidateMode !== undefined
     ? Boolean(overrides.manualCandidateMode)
     : (isCheckboxSelected(values, 'manual_candidate_toggle', 'manual') ||
@@ -2816,13 +2985,19 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
         applicantEmailOverride,
       );
   const requiresHiringManager = stageRequiresHiringManager(stageKey)
-  const rawStandardRecruiterIds = normalizeIdList(overrides.recruiterIds ?? getSelectedOptionValues(values, 'recruiter_select'))
+  const rawStandardRecruiterIds = normalizeIdList(overrides.recruiterIds ?? [
+    ...getSelectedOptionValues(values, 'recruiter_select'),
+    ...getSelectedOptionValues(values, 'additional_recruiter_select'),
+  ])
   const recruiterIds = standardEventType
     ? normalizeIdList(rawStandardRecruiterIds.length > 0 ? rawStandardRecruiterIds : [applicant?.recruiterId])
     : normalizeIdList([overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '')])
   const standardHiringManagersAllowed = standardEventType && eventType !== '1st-interview'
   const hiringManagerIds = standardHiringManagersAllowed
-    ? normalizeIdList(overrides.hiringManagerIds ?? getSelectedOptionValues(values, 'hm_select'))
+    ? normalizeIdList(overrides.hiringManagerIds ?? [
+        ...getSelectedOptionValues(values, 'hm_select'),
+        ...getSelectedOptionValues(values, 'additional_hm_select'),
+      ])
     : normalizeIdList(requiresHiringManager ? [overrides.hiringManager ?? (values.hm_block?.hm_select?.selected_option?.value || applicant?.hiringManagerId || '')] : [])
   const selectedRecruiterId = recruiterIds[0] || '';
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
@@ -2852,6 +3027,14 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const eventTypeOption = eventType ? toSlackOption(eventTypeLabel(eventType), eventType) : undefined
   const roleOption = role ? toSlackOption(role.title, role.id) : undefined
   const zoomLink = overrides.zoomLink !== undefined ? overrides.zoomLink : getInputValue(values, 'zoom_link')
+  const zoomLinkAuto = Boolean(overrides.zoomLinkAuto)
+  const zoomLinkRecruiter = selectedRecruiters.find((person) => person.zoomLink === zoomLink)
+  const showAdditionalRecruiters = overrides.showAdditionalRecruiters !== undefined
+    ? Boolean(overrides.showAdditionalRecruiters)
+    : hasInputElement(values, 'additional_recruiter_select')
+  const showAdditionalHiringManagers = overrides.showAdditionalHiringManagers !== undefined
+    ? Boolean(overrides.showAdditionalHiringManagers)
+    : hasInputElement(values, 'additional_hm_select')
 
   return {
     eventType,
@@ -2872,10 +3055,14 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     recruiter,
     hiringManager,
     applicantOption: applicant ? toSlackOption(applicantPickerLabel(applicant), applicant.id) : undefined,
-    recruiterOption: recruiter ? toSlackOption(personPickerLabel(recruiter), recruiter.id) : undefined,
-    hiringManagerOption: hiringManager ? toSlackOption(personPickerLabel(hiringManager), hiringManager.id) : undefined,
-    recruiterOptions: selectedRecruiters.map((person) => toSlackOption(personPickerLabel(person), person.id)),
-    hiringManagerOptions: selectedHiringManagers.map((person) => toSlackOption(personPickerLabel(person), person.id)),
+    recruiterOption: recruiter ? compactPersonOption(recruiter) : undefined,
+    hiringManagerOption: hiringManager ? compactPersonOption(hiringManager) : undefined,
+    recruiterOptions: selectedRecruiters.map(compactPersonOption),
+    hiringManagerOptions: selectedHiringManagers.map(compactPersonOption),
+    additionalRecruiterOptions: selectedRecruiters.slice(1).map(compactPersonOption),
+    additionalHiringManagerOptions: selectedHiringManagers.slice(1).map(compactPersonOption),
+    showAdditionalRecruiters,
+    showAdditionalHiringManagers,
     selectedRecruiters,
     selectedHiringManagers,
     templateOption: template ? toSlackOption(template.label, template.id) : undefined,
@@ -2898,6 +3085,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     notes: getInputValue(values, 'notes'),
     resumeLink: extractResumeFileReference(values),
     zoomLink,
+    zoomLinkAuto,
+    zoomLinkOption: zoomLinkRecruiter ? zoomLinkOption(zoomLinkRecruiter) : undefined,
     extraAttendees: buildExtraIntakeAttendees(selectedRecruiters, selectedHiringManagers, { includePrimaryHiringManager: !requiresHiringManager }),
     interviewWindowStartDate: '',
     interviewWindowEndDate: '',
@@ -3023,6 +3212,46 @@ function candidateToSlackOption(candidate) {
   return toSlackOption(applicantPickerLabel(candidate), candidate.id)
 }
 
+function compactPersonOptions(query, people = []) {
+  const normalized = String(query || '').trim().toLowerCase()
+  return (people || [])
+    .filter((person) => !normalized || [person.name, person.email].join(' ').toLowerCase().includes(normalized))
+    .slice(0, 100)
+    .map(compactPersonOption)
+}
+
+function compactPersonOption(person) {
+  return {
+    text: {
+      type: 'plain_text',
+      text: String(person?.name || person?.email || 'Unknown').slice(0, 75),
+    },
+    value: person.id,
+    ...(person?.email ? {
+      description: {
+        type: 'plain_text',
+        text: String(person.email).slice(0, 75),
+      },
+    } : {}),
+  }
+}
+
+function zoomLinkOption(recruiter) {
+  return {
+    text: {
+      type: 'plain_text',
+      text: String(recruiter?.name || recruiter?.zoomLink || 'Zoom link').slice(0, 75),
+    },
+    value: recruiter.zoomLink,
+    ...(recruiter?.email ? {
+      description: {
+        type: 'plain_text',
+        text: String(recruiter.email).slice(0, 75),
+      },
+    } : {}),
+  }
+}
+
 function applicantFromCandidateIndex(candidate) {
   if (!candidate) return null
   const [firstName, ...rest] = String(candidate.fullName || '').split(' ')
@@ -3038,8 +3267,14 @@ function applicantFromCandidateIndex(candidate) {
     phone: candidate.phone || '',
     jobTitle: candidate.jobTitle || '',
     stage: candidate.stage || '',
+    workflowStepId: candidate.workflowStepId || '',
+    workflowStep: candidate.workflowStep || '',
+    workflowCategory: candidate.workflowCategory || '',
+    jobStatus: candidate.jobStatus || '',
     hiringManagerId: '',
     recruiterId: candidate.recruiterId || '',
+    recruiterEmail: candidate.recruiterEmail || '',
+    recruiterName: candidate.recruiterName || '',
     source: 'jazzhr',
     appliedAt: candidate.appliedAt || '',
     sourceOrder: candidate.sourceOrder || 0,
@@ -3054,6 +3289,12 @@ function mergeApplicantDetail(applicant, detail) {
     phone: detail.phone || applicant.phone || '',
     jobTitle: detail.jobTitle || applicant.jobTitle || '',
     stage: detail.stage || applicant.stage || '',
+    workflowStepId: detail.workflowStepId || applicant.workflowStepId || '',
+    workflowStep: detail.workflowStep || applicant.workflowStep || '',
+    workflowCategory: detail.workflowCategory || applicant.workflowCategory || '',
+    recruiterId: detail.recruiterId || applicant.recruiterId || '',
+    recruiterEmail: detail.recruiterEmail || applicant.recruiterEmail || '',
+    recruiterName: detail.recruiterName || applicant.recruiterName || '',
     source: detail.source || applicant.source || 'jazzhr',
     applyDate: detail.applyDate || applicant.applyDate || applicant.appliedAt || '',
   }
@@ -3163,19 +3404,34 @@ function roleById(id) {
 function roleAssignmentsForRole(roleId) {
   const role = roleById(roleId)
   if (!role) return []
-  return getRoleAssignments().filter((assignment) =>
-    assignment.roleId === role.roleId ||
-    assignment.roleKey === role.roleKey ||
-    assignment.roleKey === role.id
-  )
+  const normalizedTitle = normalizeRoleTitle(role.title)
+  return getRoleAssignments().filter((assignment) => {
+    if (assignment.roleId) return assignment.roleId === role.roleId
+    return normalizeRoleTitle(assignment.roleTitle) === normalizedTitle
+  })
 }
 
-function mappedRecruitersForRole(roleId) {
+export function mappedRecruitersForRole(roleId) {
   const mapped = uniquePeople(roleAssignmentsForRole(roleId).map((assignment) => assignment.recruiter).filter(Boolean).map(asRecruiter))
-  return mapped.length > 0 ? mapped : getTalentRecruiters()
+  if (mapped.length > 0) return mapped
+
+  const role = roleById(roleId)
+  const jazzhrLead = getRecruiters().find((person) =>
+    person.id === `rec-${role?.hiringLeadId}` ||
+    person.id === role?.hiringLeadId
+  )
+  if (jazzhrLead) {
+    const enriched = getTalentRecruiters().find((person) =>
+      normalizeEmail(person.email) === normalizeEmail(jazzhrLead.email) ||
+      normalizeRoleTitle(person.name) === normalizeRoleTitle(jazzhrLead.name)
+    )
+    return [asRecruiter(enriched || jazzhrLead)]
+  }
+
+  return getRoleAssignments().length > 0 ? [] : getTalentRecruiters()
 }
 
-function mappedHiringManagersForRole(roleId) {
+export function mappedHiringManagersForRole(roleId) {
   return uniquePeople(roleAssignmentsForRole(roleId).map((assignment) => assignment.hiringManager).filter(Boolean).map(asHiringManager))
 }
 
@@ -3201,16 +3457,41 @@ function roleOptions(query = '') {
 
 function roleCandidateFilters(draftOrMetadata = {}) {
   const role = roleById(draftOrMetadata.roleId)
+  const selectedRecruiters = (draftOrMetadata.recruiterIds || [])
+    .map(findMappedPersonById)
+    .filter(Boolean)
   return {
     roleId: role?.roleId || '',
-    roleTitle: draftOrMetadata.roleTitle || role?.title || '',
+    roleTitle: '',
     recruiterIds: draftOrMetadata.recruiterIds || [],
+    recruiterEmails: selectedRecruiters.map((person) => person.email).filter(Boolean),
+    recruiterNames: selectedRecruiters.map((person) => person.name).filter(Boolean),
   }
 }
 
-function resolveZoomLinkForRecruiters(recruiters = []) {
+function normalizeRoleTitle(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+export function resolveZoomLinkForRecruiters(recruiters = []) {
   const uniqueLinks = [...new Set((recruiters || []).map((recruiter) => String(recruiter?.zoomLink || '').trim()).filter(Boolean))]
   return uniqueLinks.length === 1 ? uniqueLinks[0] : ''
+}
+
+function nextRecruiterZoomState(body, metadata, recruiters) {
+  const currentValue = getInputValue(body.view?.state?.values, 'zoom_link')
+  const previousValue = String(metadata?.zoomLink || '').trim()
+  const uniqueLinks = [...new Set((recruiters || []).map((person) => String(person?.zoomLink || '').trim()).filter(Boolean))]
+  if (currentValue && currentValue !== previousValue) {
+    return { zoomLink: currentValue, zoomLinkAuto: false }
+  }
+  if (currentValue && !metadata?.zoomLinkAuto) {
+    return { zoomLink: currentValue, zoomLinkAuto: false }
+  }
+  return {
+    zoomLink: uniqueLinks.length === 1 ? uniqueLinks[0] : '',
+    zoomLinkAuto: uniqueLinks.length === 1,
+  }
 }
 
 function buildExtraIntakeAttendees(recruiters = [], hiringManagers = [], { includePrimaryHiringManager = false } = {}) {
