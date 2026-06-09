@@ -989,7 +989,11 @@ export function registerSlackHandlers(app, context) {
   app.view('schedule_intake_submit', async ({ ack, body, view, client }) => {
     const values = view.state.values;
     const templates = await loadSchedulingTemplates();
-    const intakeDraft = buildIntakeDraft(values, templates, parsePrivateMetadata(view.private_metadata) || {});
+    const metadata = parsePrivateMetadata(view.private_metadata) || {}
+    const intakeDraft = buildIntakeDraft(values, templates, {
+      remoteUpdateStatus: metadata.remoteUpdateStatus || '',
+      remoteUpdateMessage: metadata.remoteUpdateMessage || '',
+    });
     const applicantId = intakeDraft.applicantId;
     const templateId = intakeDraft.templateId;
     const stageKey = intakeDraft.stageKey;
