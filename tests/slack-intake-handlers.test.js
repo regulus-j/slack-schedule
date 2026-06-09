@@ -139,12 +139,14 @@ test('cached candidate selection hydrates exact JazzHR application details and c
   }
 
   assert.equal(acked, true)
-  assert.equal(updates.length, 1)
-  const updatedView = updates[0].view
-  const emailBlock = updatedView.blocks.find((block) => block.block_id === 'applicant_email_block')
+  assert.equal(updates.length, 2)
+  assert.match(JSON.stringify(updates[0].view.blocks), /Updating form/)
+  const updatedView = updates[1].view
+  const emailBlock = updatedView.blocks.find((block) => block.block_id?.startsWith('applicant_email_block'))
   assert.equal(emailBlock.element.initial_value, 'niel@example.com')
   assert.match(JSON.stringify(updatedView.blocks), /0400000000/)
   assert.equal(JSON.parse(updatedView.private_metadata).candidateSearchError, '')
+  assert.equal(JSON.parse(updatedView.private_metadata).remoteUpdateStatus, '')
 })
 
 function silentLogger() {

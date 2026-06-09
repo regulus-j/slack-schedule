@@ -131,6 +131,13 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const applicantBlockId = dynamicBlockId('applicant_block', draft.applicantId || draft.roleId)
   const zoomBlockId = dynamicBlockId('zoom_block', draft.zoomLink)
   const zoomLinkOptions = recruiterZoomOptions(draft.selectedRecruiters)
+  const remoteUpdateBlocks = draft.remoteUpdateStatus
+    ? [
+        section(draft.remoteUpdateStatus === 'loading'
+          ? `:hourglass_flowing_sand: *Updating form*\n${draft.remoteUpdateMessage || 'Loading remote data. This can take a few seconds.'}`
+          : `:warning: *Automatic update failed*\n${draft.remoteUpdateMessage || 'Remote data could not be loaded. Review and edit the fields below.'}`),
+      ]
+    : []
   const hiringManagerBlocks = hmRequired
     ? [
         input('Hiring Manager name', 'hm_block', {
@@ -162,6 +169,12 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Search open role'),
           ...(draft.roleOption ? { initial_option: draft.roleOption } : {}),
         }, false, true),
+        input('Role title', dynamicBlockId('role_title_block', draft.roleId), {
+          type: 'plain_text_input',
+          action_id: 'role_title_override',
+          placeholder: plain('Edit the role title if needed'),
+          ...(draft.roleTitle ? { initial_value: draft.roleTitle } : {}),
+        }),
         input('Primary recruiter', standardRecruiterBlockId, {
           type: 'external_select',
           action_id: 'recruiter_select',
@@ -169,6 +182,18 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Select recruiter'),
           ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
         }, false, true),
+        input('Recruiter name', dynamicBlockId('recruiter_name_block', draft.recruiterId || draft.roleId), {
+          type: 'plain_text_input',
+          action_id: 'recruiter_name_override',
+          placeholder: plain('Edit the recruiter name if needed'),
+          ...(draft.recruiterName ? { initial_value: draft.recruiterName } : {}),
+        }),
+        input('Recruiter email', dynamicBlockId('recruiter_email_block', draft.recruiterId || draft.roleId), {
+          type: 'plain_text_input',
+          action_id: 'recruiter_email_override',
+          placeholder: plain('Edit the recruiter email if needed'),
+          ...(draft.recruiterEmail ? { initial_value: draft.recruiterEmail } : {}),
+        }),
         actions(
           [optionalPeopleCheckbox('Add additional recruiters', 'additional_recruiters_toggle', draft.showAdditionalRecruiters)],
           'additional_recruiters_toggle_block',
@@ -190,6 +215,18 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             placeholder: plain('Select hiring manager'),
             ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
           }, !hmRequired, true),
+          input('Hiring manager name', dynamicBlockId('hm_name_block', draft.hiringManagerId || draft.roleId), {
+            type: 'plain_text_input',
+            action_id: 'hm_name_override',
+            placeholder: plain('Edit the hiring manager name if needed'),
+            ...(draft.hiringManagerName ? { initial_value: draft.hiringManagerName } : {}),
+          }, !hmRequired),
+          input('Hiring manager email', dynamicBlockId('hm_email_block', draft.hiringManagerId || draft.roleId), {
+            type: 'plain_text_input',
+            action_id: 'hm_email_override',
+            placeholder: plain('Edit the hiring manager email if needed'),
+            ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
+          }, !hmRequired),
           actions(
             [optionalPeopleCheckbox('Add additional hiring managers', 'additional_hms_toggle', draft.showAdditionalHiringManagers)],
             'additional_hms_toggle_block',
@@ -221,6 +258,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         options: intakeEventTypeOptions(),
         ...(draft.eventTypeOption ? { initial_option: draft.eventTypeOption } : {}),
       }, false, true),
+      ...remoteUpdateBlocks,
       ...standardRoleBlocks,
       ...(customInvite ? [
         input('What is this invite for?', 'custom_purpose_block', {
@@ -263,13 +301,35 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           },
         },
         input(
+          'Candidate name',
+          dynamicBlockId('applicant_name_block', draft.applicantId),
+          {
+            type: 'plain_text_input',
+            action_id: 'applicant_name_override',
+            placeholder: plain('Edit the candidate name if needed'),
+            ...(draft.applicantName ? { initial_value: draft.applicantName } : {}),
+          },
+          true,
+        ),
+        input(
           'Applicant email',
-          'applicant_email_block',
+          dynamicBlockId('applicant_email_block', draft.applicantId),
           {
             type: 'plain_text_input',
             action_id: 'applicant_email',
             placeholder: plain('Override the applicant email'),
             ...(draft.applicantEmail ? { initial_value: draft.applicantEmail } : {}),
+          },
+          true,
+        ),
+        input(
+          'Applicant phone',
+          dynamicBlockId('applicant_phone_block', draft.applicantId),
+          {
+            type: 'plain_text_input',
+            action_id: 'applicant_phone_override',
+            placeholder: plain('Edit the applicant phone if needed'),
+            ...(draft.applicantPhone ? { initial_value: draft.applicantPhone } : {}),
           },
           true,
         ),

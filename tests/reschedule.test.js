@@ -725,13 +725,48 @@ test('standard first interview intake omits hiring manager selector', () => {
   })
 
   const inputBlockIds = view.blocks.filter((block) => block.type === 'input').map((block) => block.block_id)
-  assert.deepEqual(inputBlockIds.slice(0, 4), [
+  assert.deepEqual(inputBlockIds.slice(0, 7), [
     'event_type_block',
     'role_block',
+    'role_title_block_job-1',
     'recruiter_block_rec-mara',
+    'recruiter_name_block_rec-mara',
+    'recruiter_email_block_rec-mara',
     'candidate_search_block',
   ])
   assert.equal(inputBlockIds.includes('hm_block'), false)
+})
+
+test('intake modal shows remote loading state and editable autofill fields', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd Interview' }, value: '2nd-interview' },
+      stageKey: '2nd-interview',
+      roleId: 'job-1',
+      roleTitle: 'Support Specialist',
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+      recruiterId: 'rec-mara',
+      recruiterName: 'Mara Santos',
+      recruiterEmail: 'mara@example.com',
+      recruiterOption: { text: { type: 'plain_text', text: 'Mara Santos' }, value: 'rec-mara' },
+      hiringManagerId: 'hm-ana',
+      hiringManagerName: 'Ana Cruz',
+      hiringManagerEmail: 'ana@example.com',
+      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz' }, value: 'hm-ana' },
+      remoteUpdateStatus: 'loading',
+      remoteUpdateMessage: 'Loading candidates from JazzHR.',
+    },
+  })
+
+  assert.match(JSON.stringify(view.blocks), /Updating form/)
+  assert.match(JSON.stringify(view.blocks), /Loading candidates from JazzHR/)
+  assert.equal(view.blocks.find((block) => block.block_id === 'role_title_block_job-1').element.initial_value, 'Support Specialist')
+  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_name_block_rec-mara').element.initial_value, 'Mara Santos')
+  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_email_block_rec-mara').element.initial_value, 'mara@example.com')
+  assert.equal(view.blocks.find((block) => block.block_id === 'hm_name_block_hm-ana').element.initial_value, 'Ana Cruz')
+  assert.equal(view.blocks.find((block) => block.block_id === 'hm_email_block_hm-ana').element.initial_value, 'ana@example.com')
 })
 
 test('recruiter Zoom resolution auto-fills one unique link and requires a choice for different links', () => {
@@ -849,11 +884,19 @@ test('builds standard intake draft from mapped role recruiters HMs and Zoom', ()
     {
       event_type_block: { event_type_select: { selected_option: { value: '2nd-interview' } } },
       role_block: { role_select: { selected_option: { value: 'job-1' } } },
+      role_title_block: { role_title_override: { value: 'Customer Success Specialist' } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'rec-mara' } } },
+      recruiter_name_block: { recruiter_name_override: { value: 'Mara S.' } },
+      recruiter_email_block: { recruiter_email_override: { value: 'mara.override@example.com' } },
       additional_recruiters_block: { additional_recruiter_select: { selected_options: [{ value: 'rec-jam' }] } },
       hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
+      hm_name_block: { hm_name_override: { value: 'Ana C.' } },
+      hm_email_block: { hm_email_override: { value: 'ana.override@example.com' } },
       additional_hms_block: { additional_hm_select: { selected_options: [{ value: 'hm-lee' }] } },
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
+      applicant_name_block: { applicant_name_override: { value: 'Edited Candidate' } },
+      applicant_email_block: { applicant_email: { value: 'edited.candidate@example.com' } },
+      applicant_phone_block: { applicant_phone_override: { value: '+61 400 000 000' } },
       zoom_block: { zoom_link: { value: 'https://zoom.us/j/manual' } },
     },
     [],
@@ -863,10 +906,18 @@ test('builds standard intake draft from mapped role recruiters HMs and Zoom', ()
   assert.equal(draft.stageKey, '2nd-interview')
   assert.equal(draft.templateId, '2nd-or-Final-invite')
   assert.equal(draft.roleId, 'job-1')
+  assert.equal(draft.roleTitle, 'Customer Success Specialist')
   assert.deepEqual(draft.recruiterIds, ['rec-mara', 'rec-jam'])
   assert.deepEqual(draft.hiringManagerIds, ['hm-ana', 'hm-lee'])
-  assert.equal(draft.recruiter.email, 'mara@example.com')
-  assert.equal(draft.hiringManager.email, 'ana@example.com')
+  assert.equal(draft.recruiter.name, 'Mara S.')
+  assert.equal(draft.recruiter.email, 'mara.override@example.com')
+  assert.equal(draft.hiringManager.name, 'Ana C.')
+  assert.equal(draft.hiringManager.email, 'ana.override@example.com')
+  assert.equal(draft.applicant.firstName, 'Edited')
+  assert.equal(draft.applicant.lastName, 'Candidate')
+  assert.equal(draft.applicant.email, 'edited.candidate@example.com')
+  assert.equal(draft.applicant.phone, '+61 400 000 000')
+  assert.equal(draft.applicant.jobTitle, 'Customer Success Specialist')
   assert.equal(draft.zoomLink, 'https://zoom.us/j/manual')
   assert.deepEqual(draft.extraAttendees.map((attendee) => attendee.email), ['jamal@example.com', 'lee@example.com'])
 })
