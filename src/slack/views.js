@@ -3,7 +3,7 @@ import { TIMEZONE_COUNTRY_MAP } from '../data/timezones.js'
 import { isScheduledCase, normalizeCaseSchedule, visibleCaseActions } from '../workflow/reschedule.js'
 import { DEFAULT_STAGE_RULES, STAGE_OPTIONS, normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
 import { normalizeAttendees } from '../workflow/attendees.js'
-import { isCustomInviteCase, normalizeCustomInviteMetadata } from '../workflow/custom-invite.js'
+import { buildCustomInviteEmail, isCustomInviteCase, normalizeCustomInviteMetadata } from '../workflow/custom-invite.js'
 import { resumeSlackLink } from '../resume-display.js'
 import {
   BUSINESS_DAY_END,
@@ -794,6 +794,41 @@ export function customInviteRequestStatusModal({
   }
 }
 
+export function customInviteSentEmailsModal(caseRecord) {
+  const customInvite = normalizeCustomInviteMetadata(caseRecord)
+  const emailBlocks = customInvite.recipients.slice(0, 95).map((recipient) => {
+    const delivery = customInvite.deliveryStatus[recipient.email] || {}
+    const email = {
+      ...buildCustomInviteEmail(caseRecord, recipient),
+      ...(delivery.email || {}),
+    }
+    const recipientLabel = recipient.name
+      ? `${recipient.name} (${recipient.email})`
+      : recipient.email
+    return section([
+      `*${escapeSlackText(recipientLabel)}*`,
+      `Delivery: *${customInviteDeliveryLabel(delivery.status)}*`,
+      `*Subject:* ${escapeSlackText(email.subject || customInvite.subject)}`,
+      '*Email:*',
+      `\`\`\`${truncateSlackPreservingWhitespace(escapeSlackCodeBlock(email.plainBody || customInvite.body), 2400)}\`\`\``,
+    ].join('\n'))
+  })
+
+  return {
+    type: 'modal',
+    callback_id: 'custom_invite_sent_emails',
+    title: plain('Sent Invitations'),
+    close: plain('Close'),
+    blocks: [
+      section(`*${escapeSlackText(customInvite.title)}*\nPersonalized invitation emails for ${customInvite.recipients.length} recipient${customInvite.recipients.length === 1 ? '' : 's'}.`),
+      ...emailBlocks,
+      ...(customInvite.recipients.length > emailBlocks.length
+        ? [section(`${customInvite.recipients.length - emailBlocks.length} additional emails are not shown because of Slack's modal limit.`)]
+        : []),
+    ],
+  }
+}
+
 export function schedulingPhaseTwo(caseRecord, schedulingResult, recentAudits = []) {
   const timeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
   const referenceDate = resolveReferenceDate(caseRecord)
@@ -1173,10 +1208,18 @@ function caseListBlocks(cases, emptyText) {
 function caseSummary(caseRecord) {
   if (isCustomInviteCase(caseRecord)) {
     const customInvite = normalizeCustomInviteMetadata(caseRecord)
+    const recipientLines = customInvite.recipients.map((recipient) => {
+      const label = recipient.name
+        ? `${recipient.name} (${recipient.email})`
+        : recipient.email
+      const status = customInvite.deliveryStatus[recipient.email]?.status
+      return `• ${escapeSlackText(label)}${status ? ` - ${customInviteDeliveryLabel(status)}` : ''}`
+    })
     return [
       `*${caseTitle(caseRecord)}*`,
       `Status: *${displayStatus(caseRecord.status)}*`,
-      `Recipients: ${customInvite.recipients.length}`,
+      `Recipients (${customInvite.recipients.length}):`,
+      ...recipientLines,
       ...(customInvite.meetingLink ? [`Meeting link: ${customInvite.meetingLink}`] : []),
       ...scheduleSummary(caseRecord),
     ].join('\n')
@@ -1225,6 +1268,12 @@ export function actionButtonsForCase(caseRecord, compact = false) {
       compact ? 'Retry invitations' : 'Retry unsent invitations',
       'retry_custom_invites',
       'primary',
+      caseRecord.id,
+    ),
+    view_custom_invite_emails: button(
+      compact ? 'View emails' : 'View sent emails',
+      'view_custom_invite_emails',
+      undefined,
       caseRecord.id,
     ),
   }
@@ -1332,6 +1381,32 @@ function input(label, blockId, element, optional = false, dispatchAction = false
     label: plain(label),
     element,
   };
+}
+
+function customInviteDeliveryLabel(status) {
+  const labels = {
+    sent: 'Sent',
+    mocked: 'Mocked',
+    sending: 'Sending',
+    failed: 'Failed',
+  }
+  return labels[status] || 'Not sent'
+}
+
+function escapeSlackText(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function escapeSlackCodeBlock(value) {
+  return String(value || '').replace(/```/g, "'''")
+}
+
+function truncateSlackPreservingWhitespace(value, max) {
+  const text = String(value || '')
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text
 }
 
 function dynamicBlockId(base, value) {

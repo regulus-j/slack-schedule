@@ -86,6 +86,7 @@ import {
   calendarEventUrl,
   checkingAvailabilityModal,
   customInviteRequestStatusModal,
+  customInviteSentEmailsModal,
   candidateMessageModal,
   caseMessageBlocks,
   externalAttendeeModal,
@@ -2494,6 +2495,24 @@ export function registerSlackHandlers(app, context) {
     }
   })
 
+  app.action('view_custom_invite_emails', async ({ ack, body, client }) => {
+    await ack()
+    if (!await verifyChannel({ config, body, client })) return
+    const caseRecord = await requireCase(store, body.actions?.[0]?.value)
+    if (!isCustomInviteCase(caseRecord) || !isScheduledCase(caseRecord)) {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: 'Invitation emails are available after this event is scheduled.',
+      })
+      return
+    }
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: customInviteSentEmailsModal(caseRecord),
+    })
+  })
+
   app.action('view_calendar_details', async ({ ack, body, client }) => {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
@@ -3137,6 +3156,11 @@ async function deliverCustomInviteEmailsUnlocked({ config, logger, store, caseRe
           [recipient.email]: {
             status,
             messageId: sendResult.messageId || '',
+            email: {
+              to: email.to,
+              subject: email.subject,
+              plainBody: email.plainBody,
+            },
             updatedAt: new Date().toISOString(),
           },
         },

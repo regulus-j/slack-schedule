@@ -3,7 +3,14 @@ import assert from 'node:assert/strict'
 
 import { deliverCustomInviteEmails } from '../src/slack/handlers.js'
 import { registerSlackHandlers } from '../src/slack/handlers.js'
-import { customInviteRequestStatusModal, finalizeModal, intakeModal } from '../src/slack/views.js'
+import {
+  actionButtonsForCase,
+  caseMessageBlocks,
+  customInviteRequestStatusModal,
+  customInviteSentEmailsModal,
+  finalizeModal,
+  intakeModal,
+} from '../src/slack/views.js'
 import { buildCalendarEventDraft } from '../src/time.js'
 import {
   buildCustomInviteEmail,
@@ -215,6 +222,45 @@ test('custom invite request status modal shows loading and completion states', (
   assert.equal(complete.close.text, 'Close')
 })
 
+test('scheduled custom invite shows recipients and personalized sent emails', () => {
+  const caseRecord = makeCustomCase({
+    status: 'Scheduled',
+    calendarEventId: 'event-1',
+    currentSchedule: {
+      date: '2026-07-01',
+      time: '09:00',
+      zoomLink: '',
+    },
+    customInvite: {
+      ...makeCustomCase().customInvite,
+      deliveryStatus: {
+        'alex@example.com': {
+          status: 'sent',
+          email: {
+            to: 'alex@example.com',
+            subject: 'Saved subject for Alex',
+            plainBody: 'Hello Alex,\n\nSaved sent email.',
+          },
+        },
+        'guest@example.com': { status: 'failed' },
+      },
+    },
+  })
+
+  const caseText = JSON.stringify(caseMessageBlocks(caseRecord))
+  assert.match(caseText, /Alex \(alex@example\.com\).*Sent/)
+  assert.match(caseText, /guest@example\.com.*Failed/)
+
+  const labels = actionButtonsForCase(caseRecord).map((item) => item.text.text)
+  assert.ok(labels.includes('View sent emails'))
+
+  const modalText = JSON.stringify(customInviteSentEmailsModal(caseRecord))
+  assert.match(modalText, /Saved subject for Alex/)
+  assert.match(modalText, /Saved sent email/)
+  assert.match(modalText, /Hello,/)
+  assert.match(modalText, /Delivery: \*Failed\*/)
+})
+
 test('generic calendar event contains every normalized recipient', () => {
   const event = buildCalendarEventDraft({
     eventTitle: 'Client introduction',
@@ -330,6 +376,8 @@ test('custom invite delivery skips recipients already sent on retry', async () =
   assert.deepEqual(retry.map((result) => result.status), ['skipped', 'skipped'])
   assert.equal(record.customInvite.deliveryStatus['alex@example.com'].status, 'mocked')
   assert.equal(record.customInvite.deliveryStatus['guest@example.com'].status, 'mocked')
+  assert.equal(record.customInvite.deliveryStatus['alex@example.com'].email.to, 'alex@example.com')
+  assert.match(record.customInvite.deliveryStatus['alex@example.com'].email.plainBody, /^Hello Alex,/)
 })
 
 function makeCustomCase(overrides = {}) {

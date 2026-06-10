@@ -40,6 +40,7 @@ export function visibleCaseActions(caseRecord) {
   if (isCustomInviteCase(caseRecord)) {
     if (isScheduledCase(caseRecord)) {
       return [
+        'view_custom_invite_emails',
         ...(hasPendingCustomInviteDeliveries(caseRecord) ? ['retry_custom_invites'] : []),
         ...(caseRecord.calendarEventId ? ['view_calendar_details'] : []),
       ]
