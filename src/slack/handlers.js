@@ -435,6 +435,8 @@ export function registerSlackHandlers(app, context) {
         roleTitle: '',
         recruiterIds: [],
         hiringManagerIds: [],
+        recruiterSearchQuery: '',
+        hiringManagerSearchQuery: '',
         showAdditionalRecruiters: false,
         showAdditionalHiringManagers: false,
         zoomLink: '',
@@ -461,7 +463,7 @@ export function registerSlackHandlers(app, context) {
     const roleMatch = resolveRoleAssignmentsForRole(roleId)
     const recruiters = mappedRecruitersForRole(roleId)
     const recruiterIds = eventType === 'job-offer'
-      ? recruiters.map((person) => person.id)
+      ? recruiters.map((person) => person.id).slice(0, 10)
       : (recruiters.length === 1 ? [recruiters[0].id] : [])
     logger.info('role_assignment_match_resolved', {
       roleId: role?.roleId || roleId,
@@ -486,6 +488,8 @@ export function registerSlackHandlers(app, context) {
         hiringManagerIds: [],
         hiringManagerName: '',
         hiringManagerEmail: '',
+        recruiterSearchQuery: '',
+        hiringManagerSearchQuery: '',
         showAdditionalRecruiters: false,
         showAdditionalHiringManagers: false,
         zoomLink: resolveZoomLinkForRecruiters(recruiters.filter((person) => recruiterIds.includes(person.id))),
@@ -757,6 +761,57 @@ export function registerSlackHandlers(app, context) {
       defaultTimeZone,
     });
   });
+
+  app.action('recruiter_checkboxes', async ({ ack, body, client }) => {
+    await ack()
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const available = mappedRecruitersForRole(metadata.roleId)
+    const selectedIds = metadata.eventType === 'job-offer'
+      ? available.map((person) => person.id).slice(0, 10)
+      : orderedCheckboxSelection(metadata.recruiterIds, selectedOptionValues(body)).slice(0, 10)
+    const selectedRecruiters = selectedIds
+      .map((id) => findPersonInList(id, available) || findMappedPersonById(id))
+      .filter(Boolean)
+      .map(asRecruiter)
+    const previousPrimaryId = metadata.recruiterIds?.[0] || ''
+    const primary = selectedRecruiters[0] || null
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        recruiterIds: selectedIds,
+        ...(previousPrimaryId !== (selectedIds[0] || '') ? {
+          recruiterName: primary?.name || '',
+          recruiterEmail: primary?.email || '',
+        } : {}),
+        ...nextRecruiterZoomState(body, metadata, selectedRecruiters),
+        candidateSearchQuery: '',
+        candidateSearchSessionId: '',
+        candidateSearchPage: 0,
+        candidateSearchResultCount: 0,
+        candidateSearchComplete: false,
+        candidateSearchSearching: false,
+        candidateSearchError: '',
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
+  app.action('recruiter_people_search', async ({ ack, body, client }) => {
+    await ack()
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        recruiterSearchQuery: body.actions?.[0]?.value || '',
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
 
   app.action('hm_select', async ({ ack, body, client }) => {
     await ack();
@@ -1113,8 +1168,11 @@ export function registerSlackHandlers(app, context) {
     if (standardEventType && !intakeDraft.roleId) {
       errors.role_block = 'Choose an open JazzHR role.';
     }
-    if (standardEventType && intakeDraft.recruiterIds.length === 0) {
-      errors[findInputBlockId(values, 'recruiter_select', 'recruiter_block')] = 'Choose at least one recruiter.';
+    if (standardEventType && intakeDraft.roleId && intakeDraft.recruiterIds.length === 0) {
+      errors[findInputBlockId(values, 'recruiter_checkboxes', 'recruiters_block')] = 'Choose at least one recruiter.';
+    }
+    if (standardEventType && intakeDraft.recruiterIds.length > 10) {
+      errors[findInputBlockId(values, 'recruiter_checkboxes', 'recruiters_block')] = 'Choose no more than 10 recruiters.';
     }
     if (intakeDraft.eventType === 'custom-invite' && !intakeDraft.customInvitePurpose) {
       errors.custom_purpose_block = 'Enter what this invite is for.';
@@ -1139,8 +1197,11 @@ export function registerSlackHandlers(app, context) {
     if (intakeDraft.recruiterEmail && !isValidEmail(intakeDraft.recruiterEmail)) {
       errors[findInputBlockId(values, standardEventType ? 'recruiter_email_override' : 'recruiter_email', 'recruiter_email_block')] = 'Enter a valid recruiter email.';
     }
-    if (requiresHiringManager && !intakeDraft.hiringManagerId) {
-      errors[findInputBlockId(values, 'hm_select', 'hm_block')] = 'Choose a hiring manager.';
+    if (requiresHiringManager && intakeDraft.roleId && !intakeDraft.hiringManagerId) {
+      errors[findInputBlockId(values, 'hiring_manager_checkboxes', 'hiring_managers_block')] = 'Choose a hiring manager.';
+    }
+    if (requiresHiringManager && intakeDraft.hiringManagerIds.length > 10) {
+      errors[findInputBlockId(values, 'hiring_manager_checkboxes', 'hiring_managers_block')] = 'Choose no more than 10 hiring managers.';
     }
     if (requiresHiringManager && !intakeDraft.hiringManagerEmail) {
       errors[findInputBlockId(values, standardEventType ? 'hm_email_override' : 'hm_email', 'hm_email_block')] = 'Enter hiring manager email.';
@@ -2444,6 +2505,48 @@ export function registerSlackHandlers(app, context) {
     })
   });
 
+  app.action('hiring_manager_checkboxes', async ({ ack, body, client }) => {
+    await ack()
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const available = selectableHiringManagersForRole(metadata.roleId)
+    const selectedIds = orderedCheckboxSelection(
+      metadata.hiringManagerIds,
+      selectedOptionValues(body),
+    ).slice(0, 10)
+    const previousPrimaryId = metadata.hiringManagerIds?.[0] || ''
+    const primary = selectedIds.length > 0
+      ? (findPersonInList(selectedIds[0], available) || findMappedPersonById(selectedIds[0]))
+      : null
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        hiringManagerIds: selectedIds,
+        ...(previousPrimaryId !== (selectedIds[0] || '') ? {
+          hiringManagerName: primary?.name || '',
+          hiringManagerEmail: primary?.email || '',
+        } : {}),
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
+  app.action('hiring_manager_people_search', async ({ ack, body, client }) => {
+    await ack()
+    await refreshIntakeModal({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        hiringManagerSearchQuery: body.actions?.[0]?.value || '',
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
   app.action('retry_custom_invites', async ({ ack, body, client }) => {
     await ack()
     const caseId = body.actions?.[0]?.value
@@ -2696,6 +2799,12 @@ function buildPrivateMetadata(view, overrides = {}) {
   const roleTitle = 'roleTitle' in overrides ? overrides.roleTitle : parsed.roleTitle || ''
   const recruiterIds = 'recruiterIds' in overrides ? overrides.recruiterIds : parsed.recruiterIds || []
   const hiringManagerIds = 'hiringManagerIds' in overrides ? overrides.hiringManagerIds : parsed.hiringManagerIds || []
+  const recruiterSearchQuery = 'recruiterSearchQuery' in overrides
+    ? overrides.recruiterSearchQuery
+    : parsed.recruiterSearchQuery || ''
+  const hiringManagerSearchQuery = 'hiringManagerSearchQuery' in overrides
+    ? overrides.hiringManagerSearchQuery
+    : parsed.hiringManagerSearchQuery || ''
   const showAdditionalRecruiters = 'showAdditionalRecruiters' in overrides
     ? Boolean(overrides.showAdditionalRecruiters)
     : Boolean(parsed.showAdditionalRecruiters)
@@ -2722,6 +2831,8 @@ function buildPrivateMetadata(view, overrides = {}) {
     roleTitle,
     recruiterIds,
     hiringManagerIds,
+    recruiterSearchQuery,
+    hiringManagerSearchQuery,
     showAdditionalRecruiters,
     showAdditionalHiringManagers,
     zoomLink,
@@ -2786,6 +2897,8 @@ async function refreshIntakeModal({
     'roleTitle',
     'recruiterIds',
     'hiringManagerIds',
+    'recruiterSearchQuery',
+    'hiringManagerSearchQuery',
     'showAdditionalRecruiters',
     'showAdditionalHiringManagers',
     'zoomLink',
@@ -2867,6 +2980,8 @@ async function refreshIntakeModal({
     roleTitle: draft.roleTitle,
     recruiterIds: draft.recruiterIds,
     hiringManagerIds: draft.hiringManagerIds,
+    recruiterSearchQuery: draft.recruiterSearchQuery,
+    hiringManagerSearchQuery: draft.hiringManagerSearchQuery,
     showAdditionalRecruiters: draft.showAdditionalRecruiters,
     showAdditionalHiringManagers: draft.showAdditionalHiringManagers,
     zoomLink: draft.zoomLink,
@@ -3626,11 +3741,12 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       );
   const requiresHiringManager = stageRequiresHiringManager(stageKey)
   const rawStandardRecruiterIds = normalizeIdList(overrides.recruiterIds ?? [
+    ...getSelectedOptionValues(values, 'recruiter_checkboxes'),
     ...getSelectedOptionValues(values, 'recruiter_select'),
     ...getSelectedOptionValues(values, 'additional_recruiter_select'),
   ])
   const jobOfferRecruiterIds = eventType === 'job-offer'
-    ? mappedRecruitersForRole(roleId).map((person) => person.id)
+    ? mappedRecruitersForRole(roleId).map((person) => person.id).slice(0, 10)
     : []
   const recruiterIds = standardEventType
     ? normalizeIdList(
@@ -3643,6 +3759,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     (eventType === '2nd-interview' || eventType === 'final-interview')
   const hiringManagerIds = standardHiringManagersAllowed
     ? normalizeIdList(overrides.hiringManagerIds ?? [
+        ...getSelectedOptionValues(values, 'hiring_manager_checkboxes'),
         ...getSelectedOptionValues(values, 'hm_select'),
         ...getSelectedOptionValues(values, 'additional_hm_select'),
       ])
@@ -3678,6 +3795,12 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const selectedHiringManagers = standardHiringManagersAllowed ? hiringManagerIds.map(findMappedPersonById).filter(Boolean).map(asHiringManager) : (hiringManager ? [hiringManager] : [])
   const suggestedHiringManagers = standardHiringManagersAllowed
     ? mappedHiringManagersForRole(roleId)
+    : []
+  const availableRecruiters = standardEventType
+    ? mappedRecruitersForRole(roleId)
+    : getTalentRecruiters()
+  const availableHiringManagers = standardHiringManagersAllowed
+    ? selectableHiringManagersForRole(roleId)
     : []
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
@@ -3724,7 +3847,11 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     showAdditionalHiringManagers,
     selectedRecruiters,
     selectedHiringManagers,
+    availableRecruiters,
+    availableHiringManagers,
     suggestedHiringManagers,
+    recruiterSearchQuery: overrides.recruiterSearchQuery || '',
+    hiringManagerSearchQuery: overrides.hiringManagerSearchQuery || '',
     templateOption: template ? toSlackOption(template.label, template.id) : undefined,
     stageOption,
     candidateSearchQuery,
@@ -3781,6 +3908,17 @@ function getSelectedOptionValues(values, actionId) {
 
 function normalizeIdList(values) {
   return [...new Set((Array.isArray(values) ? values : [values]).map((value) => String(value || '').trim()).filter(Boolean))]
+}
+
+export function orderedCheckboxSelection(previousIds = [], selectedIds = []) {
+  const previous = normalizeIdList(previousIds)
+  const selected = normalizeIdList(selectedIds)
+  const selectedSet = new Set(selected)
+  const previousSet = new Set(previous)
+  return [
+    ...previous.filter((id) => selectedSet.has(id)),
+    ...selected.filter((id) => !previousSet.has(id)),
+  ]
 }
 
 function isCheckboxSelected(values, actionId, value) {

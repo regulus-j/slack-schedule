@@ -134,12 +134,12 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const resumeRequired = stageRequiresResumeLink(draft.stageKey)
   const showStandardHiringManagers = standardEvent &&
     (eventType === '2nd-interview' || eventType === 'final-interview')
-  const showAdditionalRecruiters = standardEvent && eventType !== 'job-offer'
-  const standardRecruiterBlockId = dynamicBlockId('recruiter_block', draft.recruiterId || draft.roleId)
-  const standardHiringManagerBlockId = dynamicBlockId('hm_block', draft.hiringManagerId || draft.roleId)
   const applicantBlockId = dynamicBlockId('applicant_block', draft.applicantId || draft.roleId)
   const zoomBlockId = dynamicBlockId('zoom_block', draft.zoomLink)
   const zoomLinkOptions = recruiterZoomOptions(draft.selectedRecruiters)
+  const availableRecruiters = draft.availableRecruiters || draft.selectedRecruiters || []
+  const availableHiringManagers = draft.availableHiringManagers ||
+    uniquePeopleById([...(draft.selectedHiringManagers || []), ...(draft.suggestedHiringManagers || [])])
   const remoteUpdateBlocks = draft.remoteUpdateStatus
     ? [
         section(draft.remoteUpdateStatus === 'loading'
@@ -184,13 +184,17 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Edit the role title if needed'),
           ...(draft.roleTitle ? { initial_value: draft.roleTitle } : {}),
         }),
-        input('Primary recruiter', standardRecruiterBlockId, {
-          type: 'external_select',
-          action_id: 'recruiter_select',
-          min_query_length: 0,
-          placeholder: plain('Select recruiter'),
-          ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
-        }, false, true),
+        ...peopleCheckboxBlocks({
+          label: 'Recruiters',
+          blockId: 'recruiters_block',
+          actionId: 'recruiter_checkboxes',
+          searchBlockId: 'recruiter_search_block',
+          searchActionId: 'recruiter_people_search',
+          searchQuery: draft.recruiterSearchQuery,
+          people: availableRecruiters,
+          selectedIds: draft.recruiterIds,
+          required: true,
+        }),
         input('Recruiter name', dynamicBlockId('recruiter_name_block', draft.recruiterId || draft.roleId), {
           type: 'plain_text_input',
           action_id: 'recruiter_name_override',
@@ -203,25 +207,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Edit the recruiter email if needed'),
           ...(draft.recruiterEmail ? { initial_value: draft.recruiterEmail } : {}),
         }),
-        ...(eventType === 'job-offer' && draft.selectedRecruiters?.length
-          ? [section([
-              '*Recruiters included in this job offer*',
-              ...draft.selectedRecruiters.map((person) => `• ${personLabel(person)}`),
-            ].join('\n'))]
-          : []),
-        ...(showAdditionalRecruiters ? [actions(
-          [optionalPeopleCheckbox('Add additional recruiters', 'additional_recruiters_toggle', draft.showAdditionalRecruiters)],
-          'additional_recruiters_toggle_block',
-        )] : []),
-        ...(showAdditionalRecruiters && draft.showAdditionalRecruiters ? [
-          input('Additional recruiters', 'additional_recruiters_block', {
-            type: 'multi_external_select',
-            action_id: 'additional_recruiter_select',
-            min_query_length: 0,
-            placeholder: plain('Select additional recruiters'),
-            ...(draft.additionalRecruiterOptions?.length ? { initial_options: draft.additionalRecruiterOptions } : {}),
-          }, true, true),
-        ] : []),
         ...(showStandardHiringManagers ? [
           section(draft.suggestedHiringManagers?.length
             ? [
@@ -230,13 +215,17 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
                 '_Select at least one manager below. Suggestions are not invited automatically._',
               ].join('\n')
             : '*Suggested hiring managers for this role*\nNo confident Open Roles match was found. Select a manager manually.'),
-          input('Primary hiring manager', standardHiringManagerBlockId, {
-            type: 'external_select',
-            action_id: 'hm_select',
-            min_query_length: 0,
-            placeholder: plain('Select hiring manager'),
-            ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
-          }, !hmRequired, true),
+          ...peopleCheckboxBlocks({
+            label: 'Hiring managers',
+            blockId: 'hiring_managers_block',
+            actionId: 'hiring_manager_checkboxes',
+            searchBlockId: 'hiring_manager_search_block',
+            searchActionId: 'hiring_manager_people_search',
+            searchQuery: draft.hiringManagerSearchQuery,
+            people: availableHiringManagers,
+            selectedIds: draft.hiringManagerIds,
+            required: hmRequired,
+          }),
           input('Hiring manager name', dynamicBlockId('hm_name_block', draft.hiringManagerId || draft.roleId), {
             type: 'plain_text_input',
             action_id: 'hm_name_override',
@@ -249,19 +238,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             placeholder: plain('Edit the hiring manager email if needed'),
             ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
           }, !hmRequired),
-          actions(
-            [optionalPeopleCheckbox('Add additional hiring managers', 'additional_hms_toggle', draft.showAdditionalHiringManagers)],
-            'additional_hms_toggle_block',
-          ),
-          ...(draft.showAdditionalHiringManagers ? [
-            input('Additional hiring managers', 'additional_hms_block', {
-              type: 'multi_external_select',
-              action_id: 'additional_hm_select',
-              min_query_length: 0,
-              placeholder: plain('Select additional hiring managers'),
-              ...(draft.additionalHiringManagerOptions?.length ? { initial_options: draft.additionalHiringManagerOptions } : {}),
-            }, true, true),
-          ] : []),
         ] : []),
       ]
     : []
@@ -1640,6 +1616,86 @@ function optionalPeopleCheckbox(label, actionId, selected) {
     options: [option],
     ...(selected ? { initial_options: [option] } : {}),
   }
+}
+
+export function peopleCheckboxOptions(people = [], selectedIds = [], query = '') {
+  const byId = new Map((people || []).filter((person) => person?.id).map((person) => [person.id, person]))
+  const selected = (selectedIds || []).map((id) => byId.get(id)).filter(Boolean)
+  const selectedSet = new Set(selected.map((person) => person.id))
+  const normalizedQuery = String(query || '').trim().toLowerCase()
+  const remaining = (people || [])
+    .filter((person) =>
+      person?.id &&
+      !selectedSet.has(person.id) &&
+      (!normalizedQuery || [person.name, person.email].join(' ').toLowerCase().includes(normalizedQuery))
+    )
+    .sort((left, right) =>
+      String(left.name || left.email || '').localeCompare(String(right.name || right.email || ''))
+    )
+  return [...selected, ...remaining].slice(0, 10).map(compactPersonCheckboxOption)
+}
+
+function peopleCheckboxBlocks({
+  label,
+  blockId,
+  actionId,
+  searchBlockId,
+  searchActionId,
+  searchQuery = '',
+  people = [],
+  selectedIds = [],
+  required = false,
+}) {
+  const options = peopleCheckboxOptions(people, selectedIds, searchQuery)
+  const selectedSet = new Set(selectedIds || [])
+  const initialOptions = options.filter((option) => selectedSet.has(option.value))
+  const needsSearch = people.length > Math.max(10, selectedIds.length)
+  if (people.length === 0) {
+    return [
+      section(`*${label}*\nSelect a JazzHR role to load available ${label.toLowerCase()}.`),
+    ]
+  }
+  const searchBlock = input(`Search ${label.toLowerCase()}`, searchBlockId, {
+    type: 'plain_text_input',
+    action_id: searchActionId,
+    dispatch_action_config: { trigger_actions_on: ['on_character_entered'] },
+    placeholder: plain('Search by name or email'),
+    ...(searchQuery ? { initial_value: searchQuery } : {}),
+  }, true, true)
+  if (options.length === 0) {
+    return [
+      searchBlock,
+      section(`No ${label.toLowerCase()} match "${escapeSlackText(searchQuery)}". Try another name or email.`),
+    ]
+  }
+  return [
+    ...(needsSearch ? [searchBlock] : []),
+    input(label, blockId, {
+      type: 'checkboxes',
+      action_id: actionId,
+      options,
+      ...(initialOptions.length ? { initial_options: initialOptions } : {}),
+    }, !required, true, 'Selected people are shown first. You can select up to 10.'),
+  ]
+}
+
+function compactPersonCheckboxOption(person) {
+  return {
+    text: plain(person?.name || person?.email || 'Unknown'),
+    value: person.id,
+    ...(person?.email ? {
+      description: plain(person.email),
+    } : {}),
+  }
+}
+
+function uniquePeopleById(people) {
+  const seen = new Set()
+  return (people || []).filter((person) => {
+    if (!person?.id || seen.has(person.id)) return false
+    seen.add(person.id)
+    return true
+  })
 }
 
 function recruiterZoomOptions(recruiters = []) {

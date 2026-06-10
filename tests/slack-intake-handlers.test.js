@@ -146,6 +146,97 @@ test('cached candidate selection hydrates exact JazzHR application details and c
   assert.equal(JSON.parse(updatedView.private_metadata).remoteUpdateStatus, '')
 })
 
+test('recruiter checkboxes promote the next primary and preserve a manual Zoom link', async () => {
+  setApplicants([])
+  setHiringManagers([])
+  setTalentRecruiters([
+    { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/mara' },
+    { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/jam' },
+  ])
+  setRoleAssignments([
+    {
+      roleId: 'job-1',
+      roleTitle: 'Support Specialist',
+      recruiter: { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/mara' },
+    },
+    {
+      roleId: 'job-1',
+      roleTitle: 'Support Specialist',
+      recruiter: { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/jam' },
+    },
+  ])
+  setJazzhrJobs([{ id: 'job-1', roleId: 'job-1', title: 'Support Specialist', status: 'Open' }])
+
+  const actions = new Map()
+  const app = {
+    action(id, handler) {
+      actions.set(id, handler)
+    },
+    command() {},
+    event() {},
+    options() {},
+    view() {},
+    message() {},
+  }
+  registerSlackHandlers(app, {
+    config: {
+      jazzhr: { liveSearch: {} },
+      slack: {},
+      google: {},
+      scheduling: { timeZones: ['Australia/Sydney'] },
+    },
+    store: {},
+    logger: silentLogger(),
+  })
+
+  let updated
+  await actions.get('recruiter_checkboxes')({
+    ack: async () => {},
+    body: {
+      user: { id: 'U1' },
+      actions: [{
+        selected_options: [{ value: 'rec-jam' }],
+      }],
+      view: {
+        id: 'V1',
+        hash: 'H1',
+        private_metadata: JSON.stringify({
+          eventType: '1st-interview',
+          roleId: 'job-1',
+          roleTitle: 'Support Specialist',
+          recruiterIds: ['rec-mara', 'rec-jam'],
+          zoomLink: 'https://manual.example.com/meeting',
+          zoomLinkAuto: false,
+        }),
+        state: {
+          values: {
+            event_type_block: { event_type_select: { selected_option: { value: '1st-interview' } } },
+            role_block: { role_select: { selected_option: { value: 'job-1' } } },
+            recruiter_name_block: { recruiter_name_override: { value: 'Edited Mara' } },
+            recruiter_email_block: { recruiter_email_override: { value: 'edited.mara@example.com' } },
+            zoom_block: { zoom_link: { value: 'https://manual.example.com/meeting' } },
+          },
+        },
+      },
+    },
+    client: {
+      views: {
+        async update(payload) {
+          updated = payload.view
+          return { view: payload.view }
+        },
+      },
+    },
+  })
+
+  const metadata = JSON.parse(updated.private_metadata)
+  const nameBlock = updated.blocks.find((block) => block.block_id === 'recruiter_name_block_rec-jam')
+  assert.deepEqual(metadata.recruiterIds, ['rec-jam'])
+  assert.equal(metadata.zoomLink, 'https://manual.example.com/meeting')
+  assert.equal(nameBlock.element.initial_value, 'Jamal Al Badi')
+  setJazzhrJobs([])
+})
+
 function silentLogger() {
   return {
     info() {},

@@ -23,11 +23,12 @@ import {
   isScheduleWorkflowTrigger,
   mappedHiringManagersForRole,
   mappedRecruitersForRole,
+  orderedCheckboxSelection,
   registerSlackHandlers,
   resolveRoleAssignmentsForRole,
   selectableHiringManagersForRole,
 } from '../src/slack/handlers.js';
-import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -540,7 +541,7 @@ test('custom invite meeting link is optional and labeled generically', () => {
   assert.match(meetingLinkBlock.element.placeholder.text, /Zoom, Meet, Teams/)
 });
 
-test('standard intake modal uses compact primary and optional additional people selectors', () => {
+test('standard intake modal uses unified recruiter and hiring manager checkboxes', () => {
   const view = intakeModal({
     templates: [],
     draft: {
@@ -565,6 +566,16 @@ test('standard intake modal uses compact primary and optional additional people 
         { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', zoomLink: 'https://zoom.us/j/mara' },
         { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jam@example.com', zoomLink: 'https://zoom.us/j/jam' },
       ],
+      selectedHiringManagers: [
+        { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com' },
+        { id: 'hm-lee', name: 'Lee Morgan', email: 'lee@example.com' },
+      ],
+      suggestedHiringManagers: [
+        { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com' },
+        { id: 'hm-lee', name: 'Lee Morgan', email: 'lee@example.com' },
+      ],
+      recruiterIds: ['rec-mara', 'rec-jam'],
+      hiringManagerIds: ['hm-ana', 'hm-lee'],
       zoomLink: 'https://zoom.us/j/mara',
       zoomLinkOption: { text: { type: 'plain_text', text: 'Mara Santos' }, value: 'https://zoom.us/j/mara' },
     },
@@ -572,17 +583,80 @@ test('standard intake modal uses compact primary and optional additional people 
 
   const inputBlockIds = view.blocks.filter((block) => block.type === 'input').map((block) => block.block_id)
   assert.deepEqual(inputBlockIds.slice(0, 2), ['event_type_block', 'role_block'])
-  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_block_rec-mara').element.type, 'external_select')
-  assert.equal(view.blocks.find((block) => block.block_id === 'additional_recruiters_block').element.type, 'multi_external_select')
-  assert.equal(view.blocks.find((block) => block.block_id === 'hm_block_hm-ana').element.type, 'external_select')
-  assert.equal(view.blocks.find((block) => block.block_id === 'additional_hms_block').element.type, 'multi_external_select')
+  const recruiterBlock = view.blocks.find((block) => block.block_id === 'recruiters_block')
+  const managerBlock = view.blocks.find((block) => block.block_id === 'hiring_managers_block')
+  assert.equal(recruiterBlock.element.type, 'checkboxes')
+  assert.deepEqual(recruiterBlock.element.initial_options.map((option) => option.value), ['rec-mara', 'rec-jam'])
+  assert.equal(managerBlock.element.type, 'checkboxes')
+  assert.deepEqual(managerBlock.element.initial_options.map((option) => option.value), ['hm-ana', 'hm-lee'])
+  assert.equal(view.blocks.some((block) => block.block_id === 'additional_recruiters_block'), false)
+  assert.equal(view.blocks.some((block) => block.block_id === 'additional_hms_block'), false)
   assert.equal(view.blocks.find((block) => block.block_id === 'zoom_choice_block').element.options.length, 2)
   assert.equal(view.blocks.find((block) => block.block_id?.startsWith('zoom_block')).element.initial_value, 'https://zoom.us/j/mara')
   assert.equal(inputBlockIds.includes('stage_block'), false)
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
 })
 
-test('standard hiring manager selector is reset when the selected role changes', () => {
+test('checkbox options keep selections first and filter remaining people by search', () => {
+  const people = [
+    { id: 'p-a', name: 'Alex', email: 'alex@example.com' },
+    { id: 'p-b', name: 'Blair', email: 'blair@example.com' },
+    { id: 'p-c', name: 'Casey', email: 'casey@example.com' },
+  ]
+
+  assert.deepEqual(
+    peopleCheckboxOptions(people, ['p-c', 'p-a'], 'blair').map((option) => option.value),
+    ['p-c', 'p-a', 'p-b'],
+  )
+  assert.deepEqual(
+    orderedCheckboxSelection(['p-c', 'p-a'], ['p-a', 'p-b']),
+    ['p-a', 'p-b'],
+  )
+})
+
+test('checkbox lists expose search for large directories and cap visible options at ten', () => {
+  const people = Array.from({ length: 12 }, (_, index) => ({
+    id: `person-${index + 1}`,
+    name: `Person ${String(index + 1).padStart(2, '0')}`,
+    email: `person${index + 1}@example.com`,
+  }))
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '1st-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '1st Interview' }, value: '1st-interview' },
+      stageKey: '1st-interview',
+      roleId: 'job-1',
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+      recruiterIds: ['person-12', 'person-11'],
+      recruiterId: 'person-12',
+      selectedRecruiters: [people[11], people[10]],
+      availableRecruiters: people,
+      recruiterSearchQuery: 'person',
+    },
+  })
+
+  const search = view.blocks.find((block) => block.block_id === 'recruiter_search_block')
+  const checkboxes = view.blocks.find((block) => block.block_id === 'recruiters_block')
+  assert.equal(search.element.action_id, 'recruiter_people_search')
+  assert.equal(checkboxes.element.options.length, 10)
+  assert.deepEqual(checkboxes.element.options.slice(0, 2).map((option) => option.value), ['person-12', 'person-11'])
+
+  const noMatchView = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '1st-interview',
+      stageKey: '1st-interview',
+      roleId: 'job-1',
+      availableRecruiters: people,
+      recruiterSearchQuery: 'nobody matches',
+    },
+  })
+  assert.ok(noMatchView.blocks.find((block) => block.block_id === 'recruiter_search_block'))
+  assert.match(JSON.stringify(noMatchView.blocks), /No recruiters match/)
+})
+
+test('standard hiring manager checkboxes reset when the selected role changes', () => {
   const firstRoleView = intakeModal({
     templates: [],
     draft: {
@@ -592,7 +666,9 @@ test('standard hiring manager selector is reset when the selected role changes',
       roleId: 'job-1',
       roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
       hiringManagerId: 'hm-ana',
-      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz' }, value: 'hm-ana' },
+      hiringManagerIds: ['hm-ana'],
+      selectedHiringManagers: [{ id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com' }],
+      suggestedHiringManagers: [{ id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com' }],
     },
   })
   const secondRoleView = intakeModal({
@@ -603,17 +679,16 @@ test('standard hiring manager selector is reset when the selected role changes',
       stageKey: '2nd-interview',
       roleId: 'job-2',
       roleOption: { text: { type: 'plain_text', text: 'Sales Specialist' }, value: 'job-2' },
-      hiringManagerOptions: [],
+      suggestedHiringManagers: [{ id: 'hm-lee', name: 'Lee Morgan', email: 'lee@example.com' }],
+      hiringManagerIds: [],
     },
   })
 
-  const firstHmBlock = firstRoleView.blocks.find((block) => block.block_id?.startsWith('hm_block'))
-  const secondHmBlock = secondRoleView.blocks.find((block) => block.block_id?.startsWith('hm_block'))
+  const firstHmBlock = firstRoleView.blocks.find((block) => block.block_id === 'hiring_managers_block')
+  const secondHmBlock = secondRoleView.blocks.find((block) => block.block_id === 'hiring_managers_block')
 
-  assert.equal(firstHmBlock.block_id, 'hm_block_hm-ana')
-  assert.equal(firstHmBlock.element.initial_option.value, 'hm-ana')
-  assert.equal(secondHmBlock.block_id, 'hm_block_job-2')
-  assert.equal('initial_option' in secondHmBlock.element, false)
+  assert.deepEqual(firstHmBlock.element.initial_options.map((option) => option.value), ['hm-ana'])
+  assert.equal('initial_options' in secondHmBlock.element, false)
 })
 
 test('standard first interview intake omits hiring manager selector', () => {
@@ -626,7 +701,11 @@ test('standard first interview intake omits hiring manager selector', () => {
       roleId: 'job-1',
       roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
       recruiterId: 'rec-mara',
+      recruiterIds: ['rec-mara'],
       recruiterOption: { text: { type: 'plain_text', text: 'Mara Santos' }, value: 'rec-mara' },
+      selectedRecruiters: [
+        { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com' },
+      ],
       hiringManagerOptions: [
         { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
       ],
@@ -638,7 +717,7 @@ test('standard first interview intake omits hiring manager selector', () => {
     'event_type_block',
     'role_block',
     'role_title_block_job-1',
-    'recruiter_block_rec-mara',
+    'recruiters_block',
     'recruiter_name_block_rec-mara',
     'recruiter_email_block_rec-mara',
     'candidate_search_block',
@@ -808,14 +887,14 @@ test('second and final interviews show mapped manager suggestions without select
       },
     })
     const viewText = JSON.stringify(view.blocks)
-    const hmBlock = view.blocks.find((block) => block.block_id?.startsWith('hm_block'))
+    const hmBlock = view.blocks.find((block) => block.block_id === 'hiring_managers_block')
 
     assert.match(viewText, /Suggested hiring managers for this role/)
     assert.match(viewText, /Ana Cruz/)
     assert.match(viewText, /Lee Morgan/)
     assert.match(viewText, /not invited automatically/)
     assert.equal(hmBlock.optional, false)
-    assert.equal('initial_option' in hmBlock.element, false)
+    assert.equal('initial_options' in hmBlock.element, false)
   }
 })
 
@@ -979,7 +1058,11 @@ test('job offer hides managers and includes every resolved recruiter only', () =
   assert.equal(draft.hiringManager, null)
   assert.deepEqual(draft.hiringManagerIds, [])
   assert.deepEqual(draft.extraAttendees.map((attendee) => attendee.email), ['jamal@example.com'])
-  assert.match(viewText, /Recruiters included in this job offer/)
+  assert.match(viewText, /Recruiters/)
+  assert.deepEqual(
+    view.blocks.find((block) => block.block_id === 'recruiters_block').element.initial_options.map((option) => option.value),
+    ['rec-mara', 'rec-jam'],
+  )
   assert.doesNotMatch(viewText, /Suggested hiring managers|Stale Manager/)
   assert.equal(inputIds.some((id) => id?.startsWith('hm_')), false)
   assert.equal(inputIds.includes('additional_recruiters_block'), false)
