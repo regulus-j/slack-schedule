@@ -23,6 +23,9 @@ import {
   isScheduleWorkflowTrigger,
   mappedHiringManagersForRole,
   mappedRecruitersForRole,
+  registerSlackHandlers,
+  resolveRoleAssignmentsForRole,
+  selectableHiringManagersForRole,
 } from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
@@ -733,6 +736,253 @@ test('role mapping uses exact JazzHR job and enriches its hiring lead from recru
     zoomLink: person.zoomLink,
   })), [{ id: 'sheet-allen', zoomLink: 'https://zoom.us/j/allen' }])
   assert.deepEqual(mappedHiringManagersForRole('job-open').map((person) => person.name), ['Veanne Reyes'])
+
+  setJazzhrJobs([])
+})
+
+test('role mapping resolves a unique fuzzy Open Roles title', () => {
+  setRoleAssignments([
+    {
+      roleId: '',
+      roleTitle: 'Senior Loan Associate - Parabroker / Senior Credit Specialist',
+      hiringManager: {
+        id: 'hm-arvind',
+        name: 'Arvind Tamilarasan',
+        email: 'arvind@example.com',
+        role: 'hiring_manager',
+      },
+    },
+  ])
+  setJazzhrJobs([
+    {
+      id: 'job-loans',
+      roleId: 'job-loans',
+      title: 'Senior Loan Associate Parabroker Senior Credit Spec.',
+      status: 'Open',
+    },
+  ])
+
+  const result = resolveRoleAssignmentsForRole('job-loans')
+  assert.equal(result.matchType, 'fuzzy')
+  assert.equal(result.matchedTitle, 'Senior Loan Associate - Parabroker / Senior Credit Specialist')
+  assert.deepEqual(mappedHiringManagersForRole('job-loans').map((person) => person.name), ['Arvind Tamilarasan'])
+
+  setJazzhrJobs([])
+})
+
+test('unmatched roles keep the full manager directory available for manual selection', () => {
+  setHiringManagers([
+    { id: 'hm-manual', name: 'Manual Manager', email: 'manual@example.com', role: 'hiring_manager' },
+  ])
+  setRoleAssignments([
+    {
+      roleId: '',
+      roleTitle: 'Completely Different Role',
+      hiringManager: { id: 'hm-sheet', name: 'Sheet Manager', email: 'sheet@example.com', role: 'hiring_manager' },
+    },
+  ])
+  setJazzhrJobs([{ id: 'job-unmatched', roleId: 'job-unmatched', title: 'Video Producer', status: 'Open' }])
+
+  assert.deepEqual(mappedHiringManagersForRole('job-unmatched'), [])
+  assert.deepEqual(selectableHiringManagersForRole('job-unmatched').map((person) => person.name), ['Manual Manager'])
+  setJazzhrJobs([])
+})
+
+test('second and final interviews show mapped manager suggestions without selecting them', () => {
+  const suggestions = [
+    { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+    { id: 'hm-lee', name: 'Lee Morgan', email: 'lee@example.com', role: 'hiring_manager' },
+  ]
+
+  for (const eventType of ['2nd-interview', 'final-interview']) {
+    const view = intakeModal({
+      templates: [],
+      draft: {
+        eventType,
+        eventTypeOption: { text: { type: 'plain_text', text: eventType }, value: eventType },
+        stageKey: eventType,
+        roleId: 'job-1',
+        roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+        suggestedHiringManagers: suggestions,
+        selectedHiringManagers: [],
+      },
+    })
+    const viewText = JSON.stringify(view.blocks)
+    const hmBlock = view.blocks.find((block) => block.block_id?.startsWith('hm_block'))
+
+    assert.match(viewText, /Suggested hiring managers for this role/)
+    assert.match(viewText, /Ana Cruz/)
+    assert.match(viewText, /Lee Morgan/)
+    assert.match(viewText, /not invited automatically/)
+    assert.equal(hmBlock.optional, false)
+    assert.equal('initial_option' in hmBlock.element, false)
+  }
+})
+
+test('second interview submission rejects an unselected suggested manager', async () => {
+  setApplicants([
+    {
+      id: 'candidate-1',
+      firstName: 'Alex',
+      lastName: 'Reyes',
+      email: 'alex@example.com',
+      jobTitle: 'Support Specialist',
+    },
+  ])
+  setTalentRecruiters([
+    { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter' },
+  ])
+  setRoleAssignments([
+    {
+      roleId: 'job-1',
+      roleTitle: 'Support Specialist',
+      recruiter: { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter' },
+      hiringManager: { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+    },
+  ])
+  setJazzhrJobs([{ id: 'job-1', roleId: 'job-1', title: 'Support Specialist', status: 'Open' }])
+
+  const views = new Map()
+  const app = {
+    action() {},
+    command() {},
+    event() {},
+    message() {},
+    options() {},
+    view(id, handler) {
+      views.set(id, handler)
+    },
+  }
+  registerSlackHandlers(app, {
+    config: {
+      slack: {},
+      google: {},
+      jazzhr: { liveSearch: {} },
+      scheduling: { timeZones: ['Asia/Manila'] },
+    },
+    store: {},
+    logger: { info() {}, warn() {}, error() {} },
+  })
+
+  let ackPayload
+  await views.get('schedule_intake_submit')({
+    ack: async (payload) => {
+      ackPayload = payload
+    },
+    body: { user: { id: 'U1' }, view: { private_metadata: '{}' } },
+    view: {
+      private_metadata: '{}',
+      state: {
+        values: {
+          event_type_block: { event_type_select: { selected_option: { value: '2nd-interview' } } },
+          role_block: { role_select: { selected_option: { value: 'job-1' } } },
+          recruiter_block: { recruiter_select: { selected_option: { value: 'rec-mara' } } },
+          applicant_block: { applicant_select: { selected_option: { value: 'candidate-1' } } },
+          zoom_block: { zoom_link: { value: 'https://zoom.us/j/demo' } },
+          timezone_block: { timezone_select: { selected_option: { value: 'Asia/Manila' } } },
+          resume_block: { resume_file: { files: [{ id: 'F1', permalink: 'https://slack.example/resume' }] } },
+        },
+      },
+    },
+    client: {},
+  })
+
+  assert.equal(ackPayload.response_action, 'errors')
+  assert.match(Object.values(ackPayload.errors).join(' '), /Choose a hiring manager/)
+  setJazzhrJobs([])
+})
+
+test('role changes clear stale managers while preserving unrelated typed values', () => {
+  setJazzhrJobs([{ id: 'job-2', roleId: 'job-2', title: 'Sales Specialist', status: 'Open' }])
+  const draft = buildIntakeDraft(
+    {
+      event_type_block: { event_type_select: { selected_option: { value: 'final-interview' } } },
+      notes_block: { notes: { value: 'Keep this scheduling note.' } },
+      hm_block_old: { hm_select: { selected_option: { value: 'hm-old' } } },
+      hm_email_block_old: { hm_email_override: { value: 'old@example.com' } },
+    },
+    [],
+    {
+      roleId: 'job-2',
+      roleTitle: 'Sales Specialist',
+      hiringManagerIds: [],
+      hiringManagerName: '',
+      hiringManagerEmail: '',
+    },
+  )
+
+  assert.equal(draft.roleId, 'job-2')
+  assert.equal(draft.notes, 'Keep this scheduling note.')
+  assert.deepEqual(draft.hiringManagerIds, [])
+  assert.equal(draft.hiringManager, null)
+  setJazzhrJobs([])
+})
+
+test('job offer hides managers and includes every resolved recruiter only', () => {
+  setTalentRecruiters([
+    { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter' },
+    { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+  ])
+  setHiringManagers([
+    { id: 'hm-stale', name: 'Stale Manager', email: 'stale@example.com', role: 'hiring_manager' },
+  ])
+  setRoleAssignments([
+    {
+      roleId: 'job-offer-role',
+      roleTitle: 'Support Specialist',
+      recruiter: { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter' },
+      hiringManager: { id: 'hm-stale', name: 'Stale Manager', email: 'stale@example.com', role: 'hiring_manager' },
+    },
+    {
+      roleId: 'job-offer-role',
+      roleTitle: 'Support Specialist',
+      recruiter: { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jamal@example.com', role: 'recruiter' },
+      hiringManager: null,
+    },
+  ])
+  setJazzhrJobs([
+    {
+      id: 'job-offer-role',
+      roleId: 'job-offer-role',
+      title: 'Support Specialist',
+      status: 'Open',
+    },
+  ])
+
+  const draft = buildIntakeDraft({}, [], {
+    eventType: 'job-offer',
+    roleId: 'job-offer-role',
+    roleTitle: 'Support Specialist',
+    recruiterIds: ['rec-mara'],
+    hiringManagerIds: ['hm-stale'],
+    hiringManagerEmail: 'stale@example.com',
+    applicantRecord: {
+      id: 'candidate-1',
+      firstName: 'Alex',
+      lastName: 'Reyes',
+      email: 'alex@example.com',
+      jobTitle: 'Support Specialist',
+    },
+  })
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      ...draft,
+      eventTypeOption: { text: { type: 'plain_text', text: 'Job Offer' }, value: 'job-offer' },
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-offer-role' },
+    },
+  })
+  const inputIds = view.blocks.filter((block) => block.type === 'input').map((block) => block.block_id)
+  const viewText = JSON.stringify(view.blocks)
+
+  assert.deepEqual(draft.recruiterIds, ['rec-mara', 'rec-jam'])
+  assert.equal(draft.hiringManager, null)
+  assert.deepEqual(draft.hiringManagerIds, [])
+  assert.deepEqual(draft.extraAttendees.map((attendee) => attendee.email), ['jamal@example.com'])
+  assert.match(viewText, /Recruiters included in this job offer/)
+  assert.doesNotMatch(viewText, /Suggested hiring managers|Stale Manager/)
+  assert.equal(inputIds.some((id) => id?.startsWith('hm_')), false)
+  assert.equal(inputIds.includes('additional_recruiters_block'), false)
 
   setJazzhrJobs([])
 })

@@ -132,7 +132,9 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const hiringManagerEmailActionId = dynamicBlockId('hm_email', draft.hiringManagerId)
   const hmRequired = stageRequiresHiringManager(draft.stageKey)
   const resumeRequired = stageRequiresResumeLink(draft.stageKey)
-  const showStandardHiringManagers = standardEvent && eventType !== '1st-interview'
+  const showStandardHiringManagers = standardEvent &&
+    (eventType === '2nd-interview' || eventType === 'final-interview')
+  const showAdditionalRecruiters = standardEvent && eventType !== 'job-offer'
   const standardRecruiterBlockId = dynamicBlockId('recruiter_block', draft.recruiterId || draft.roleId)
   const standardHiringManagerBlockId = dynamicBlockId('hm_block', draft.hiringManagerId || draft.roleId)
   const applicantBlockId = dynamicBlockId('applicant_block', draft.applicantId || draft.roleId)
@@ -201,11 +203,17 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Edit the recruiter email if needed'),
           ...(draft.recruiterEmail ? { initial_value: draft.recruiterEmail } : {}),
         }),
-        actions(
+        ...(eventType === 'job-offer' && draft.selectedRecruiters?.length
+          ? [section([
+              '*Recruiters included in this job offer*',
+              ...draft.selectedRecruiters.map((person) => `• ${personLabel(person)}`),
+            ].join('\n'))]
+          : []),
+        ...(showAdditionalRecruiters ? [actions(
           [optionalPeopleCheckbox('Add additional recruiters', 'additional_recruiters_toggle', draft.showAdditionalRecruiters)],
           'additional_recruiters_toggle_block',
-        ),
-        ...(draft.showAdditionalRecruiters ? [
+        )] : []),
+        ...(showAdditionalRecruiters && draft.showAdditionalRecruiters ? [
           input('Additional recruiters', 'additional_recruiters_block', {
             type: 'multi_external_select',
             action_id: 'additional_recruiter_select',
@@ -215,6 +223,13 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           }, true, true),
         ] : []),
         ...(showStandardHiringManagers ? [
+          section(draft.suggestedHiringManagers?.length
+            ? [
+                '*Suggested hiring managers for this role*',
+                ...draft.suggestedHiringManagers.map((person) => `• ${personLabel(person)}`),
+                '_Select at least one manager below. Suggestions are not invited automatically._',
+              ].join('\n')
+            : '*Suggested hiring managers for this role*\nNo confident Open Roles match was found. Select a manager manually.'),
           input('Primary hiring manager', standardHiringManagerBlockId, {
             type: 'external_select',
             action_id: 'hm_select',

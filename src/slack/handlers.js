@@ -82,6 +82,7 @@ import {
   validateCustomInviteDraft,
 } from '../workflow/custom-invite.js'
 import { runSchedulingPipeline } from '../workflow/scheduler.js'
+import { matchRoleAssignments, normalizeRoleTitle } from '../workflow/role-assignment-matcher.js'
 import {
   calendarEventUrl,
   checkingAvailabilityModal,
@@ -455,8 +456,22 @@ export function registerSlackHandlers(app, context) {
     await ack()
     const roleId = selectedOptionValue(body)
     const role = roleById(roleId)
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const eventType = getSelectedOptionValues(body.view?.state?.values, 'event_type_select')[0] || metadata.eventType || ''
+    const roleMatch = resolveRoleAssignmentsForRole(roleId)
     const recruiters = mappedRecruitersForRole(roleId)
-    const recruiterIds = recruiters.length === 1 ? [recruiters[0].id] : []
+    const recruiterIds = eventType === 'job-offer'
+      ? recruiters.map((person) => person.id)
+      : (recruiters.length === 1 ? [recruiters[0].id] : [])
+    logger.info('role_assignment_match_resolved', {
+      roleId: role?.roleId || roleId,
+      roleTitle: role?.title || '',
+      matchType: roleMatch.matchType,
+      matchedTitle: roleMatch.matchedTitle,
+      confidence: roleMatch.confidence,
+      candidates: roleMatch.candidates,
+      assignmentCount: roleMatch.assignments.length,
+    })
     const loadingResult = await refreshIntakeModal({
       client,
       body,
@@ -466,8 +481,8 @@ export function registerSlackHandlers(app, context) {
         roleTitle: role?.title || '',
         roleTitleInput: role?.title || '',
         recruiterIds,
-        recruiterName: recruiters.length === 1 ? recruiters[0].name || '' : '',
-        recruiterEmail: recruiters.length === 1 ? recruiters[0].email || '' : '',
+        recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
+        recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
         hiringManagerIds: [],
         hiringManagerName: '',
         hiringManagerEmail: '',
@@ -504,8 +519,8 @@ export function registerSlackHandlers(app, context) {
         templates: await loadSchedulingTemplates(),
         draftOverrides: {
           roleTitleInput: role?.title || '',
-          recruiterName: recruiters.length === 1 ? recruiters[0].name || '' : '',
-          recruiterEmail: recruiters.length === 1 ? recruiters[0].email || '' : '',
+          recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
+          recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
           hiringManagerName: '',
           hiringManagerEmail: '',
           remoteUpdateStatus: '',
@@ -522,8 +537,8 @@ export function registerSlackHandlers(app, context) {
         templates: await loadSchedulingTemplates(),
         draftOverrides: {
           roleTitleInput: role?.title || '',
-          recruiterName: recruiters.length === 1 ? recruiters[0].name || '' : '',
-          recruiterEmail: recruiters.length === 1 ? recruiters[0].email || '' : '',
+          recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
+          recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
           hiringManagerName: '',
           hiringManagerEmail: '',
           remoteUpdateStatus: 'error',
@@ -698,14 +713,17 @@ export function registerSlackHandlers(app, context) {
   app.action('recruiter_select', async ({ ack, body, client }) => {
     await ack();
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
-    const selectedIds = metadata.roleId
+    const mappedRecruiters = metadata.roleId ? mappedRecruitersForRole(metadata.roleId) : []
+    const selectedIds = metadata.roleId && metadata.eventType === 'job-offer'
+      ? mappedRecruiters.map((person) => person.id)
+      : metadata.roleId
       ? normalizeIdList([
           ...getSelectedOptionValues(body.view?.state?.values, 'recruiter_select'),
           ...getSelectedOptionValues(body.view?.state?.values, 'additional_recruiter_select'),
         ])
       : selectedOptionValues(body)
     const selectedId = selectedIds[0] || ''
-    const recruiters = metadata.roleId ? mappedRecruitersForRole(metadata.roleId) : getTalentRecruiters()
+    const recruiters = metadata.roleId ? mappedRecruiters : getTalentRecruiters()
     const selectedRecruiters = selectedIds.map((id) => findPersonInList(id, recruiters) || findMappedPersonById(id)).filter(Boolean).map(asRecruiter)
     const selectedRecruiter = selectedRecruiters[0] || findPersonInList(selectedId, recruiters)
     if (!selectedRecruiter) {
@@ -751,7 +769,7 @@ export function registerSlackHandlers(app, context) {
       : selectedOptionValues(body)
     const selectedId = selectedIds[0] || ''
     const selectedUser = metadata.roleId
-      ? (mappedHiringManagersForRole(metadata.roleId).find((person) => person.id === selectedId) || findMappedPersonById(selectedId))
+      ? (selectableHiringManagersForRole(metadata.roleId).find((person) => person.id === selectedId) || findMappedPersonById(selectedId))
       : await resolveSlackUser({ client, userId: selectedId, logger })
     await refreshIntakeModal({
       client,
@@ -971,7 +989,7 @@ export function registerSlackHandlers(app, context) {
   app.options('hm_select', async ({ options, ack, client }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
     if (metadata?.roleId) {
-      await ack({ options: compactPersonOptions(options.value, mappedHiringManagersForRole(metadata.roleId)) })
+      await ack({ options: compactPersonOptions(options.value, selectableHiringManagersForRole(metadata.roleId)) })
       return
     }
     const { users } = await ensureSlackDirectory({ client, config, logger })
@@ -980,7 +998,7 @@ export function registerSlackHandlers(app, context) {
 
   app.options('additional_hm_select', async ({ options, ack }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
-    await ack({ options: compactPersonOptions(options.value, mappedHiringManagersForRole(metadata?.roleId)) })
+    await ack({ options: compactPersonOptions(options.value, selectableHiringManagersForRole(metadata?.roleId)) })
   })
 
   app.options('guest_select', async ({ options, ack, client }) => {
@@ -3611,10 +3629,18 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     ...getSelectedOptionValues(values, 'recruiter_select'),
     ...getSelectedOptionValues(values, 'additional_recruiter_select'),
   ])
+  const jobOfferRecruiterIds = eventType === 'job-offer'
+    ? mappedRecruitersForRole(roleId).map((person) => person.id)
+    : []
   const recruiterIds = standardEventType
-    ? normalizeIdList(rawStandardRecruiterIds.length > 0 ? rawStandardRecruiterIds : [applicant?.recruiterId])
+    ? normalizeIdList(
+        jobOfferRecruiterIds.length > 0
+          ? jobOfferRecruiterIds
+          : (rawStandardRecruiterIds.length > 0 ? rawStandardRecruiterIds : [applicant?.recruiterId])
+      )
     : normalizeIdList([overrides.recruiter ?? (values.recruiter_block?.recruiter_select?.selected_option?.value || '')])
-  const standardHiringManagersAllowed = standardEventType && eventType !== '1st-interview'
+  const standardHiringManagersAllowed = standardEventType &&
+    (eventType === '2nd-interview' || eventType === 'final-interview')
   const hiringManagerIds = standardHiringManagersAllowed
     ? normalizeIdList(overrides.hiringManagerIds ?? [
         ...getSelectedOptionValues(values, 'hm_select'),
@@ -3650,6 +3676,9 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     : null
   const selectedRecruiters = standardEventType ? recruiterIds.map(findMappedPersonById).filter(Boolean).map(asRecruiter) : (recruiter ? [recruiter] : [])
   const selectedHiringManagers = standardHiringManagersAllowed ? hiringManagerIds.map(findMappedPersonById).filter(Boolean).map(asHiringManager) : (hiringManager ? [hiringManager] : [])
+  const suggestedHiringManagers = standardHiringManagersAllowed
+    ? mappedHiringManagersForRole(roleId)
+    : []
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
     ? toSlackOption(stageLabel(stageKey), stageKey)
@@ -3695,6 +3724,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     showAdditionalHiringManagers,
     selectedRecruiters,
     selectedHiringManagers,
+    suggestedHiringManagers,
     templateOption: template ? toSlackOption(template.label, template.id) : undefined,
     stageOption,
     candidateSearchQuery,
@@ -4064,14 +4094,22 @@ function roleById(id) {
   return getOpenRoles().find((role) => role.id === value || role.roleId === value || role.roleKey === value) || null
 }
 
-function roleAssignmentsForRole(roleId) {
+export function resolveRoleAssignmentsForRole(roleId) {
   const role = roleById(roleId)
-  if (!role) return []
-  const normalizedTitle = normalizeRoleTitle(role.title)
-  return getRoleAssignments().filter((assignment) => {
-    if (assignment.roleId) return assignment.roleId === role.roleId
-    return normalizeRoleTitle(assignment.roleTitle) === normalizedTitle
-  })
+  if (!role) {
+    return {
+      assignments: [],
+      matchType: 'unmatched',
+      matchedTitle: '',
+      confidence: 0,
+      candidates: [],
+    }
+  }
+  return matchRoleAssignments(role, getRoleAssignments())
+}
+
+function roleAssignmentsForRole(roleId) {
+  return resolveRoleAssignmentsForRole(roleId).assignments
 }
 
 export function mappedRecruitersForRole(roleId) {
@@ -4096,6 +4134,11 @@ export function mappedRecruitersForRole(roleId) {
 
 export function mappedHiringManagersForRole(roleId) {
   return uniquePeople(roleAssignmentsForRole(roleId).map((assignment) => assignment.hiringManager).filter(Boolean).map(asHiringManager))
+}
+
+export function selectableHiringManagersForRole(roleId) {
+  const mapped = mappedHiringManagersForRole(roleId)
+  return mapped.length > 0 ? mapped : getHiringManagers().map(asHiringManager)
 }
 
 function uniquePeople(people) {
@@ -4130,10 +4173,6 @@ function roleCandidateFilters(draftOrMetadata = {}) {
     recruiterEmails: selectedRecruiters.map((person) => person.email).filter(Boolean),
     recruiterNames: selectedRecruiters.map((person) => person.name).filter(Boolean),
   }
-}
-
-function normalizeRoleTitle(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 export function resolveZoomLinkForRecruiters(recruiters = []) {
