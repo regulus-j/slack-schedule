@@ -96,6 +96,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       stageOverrides: row.stage_overrides || {},
       attendanceOverrides: row.attendance_overrides || {},
       externalAttendees: normalizeArray(row.external_attendees),
+      customInvite: row.custom_invite || null,
       lastAvailabilityCheck: row.last_availability_check,
       selectedSlot: row.selected_slot,
     };
@@ -497,9 +498,10 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           attendance_overrides,
           external_attendees,
           last_availability_check,
-          selected_slot
+          selected_slot,
+          custom_invite
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 0, 'none', $19, $20, NULL, $21, $22, $23, $24, $25)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 0, 'none', $19, $20, NULL, $21, $22, $23, $24, $25, $26)
         RETURNING *`,
         [
           id,                                                              // $1
@@ -527,6 +529,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           input.externalAttendees ? JSON.stringify(input.externalAttendees) : JSON.stringify([]),    // $23
           input.lastAvailabilityCheck || null,                             // $24
           input.selectedSlot ? JSON.stringify(input.selectedSlot) : null,  // $25
+          input.customInvite ? JSON.stringify(input.customInvite) : JSON.stringify({}), // $26
         ],
       );
       return rowToCase(result.rows[0]);
@@ -600,6 +603,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           external_attendees = $43,
           last_availability_check = $44,
           selected_slot = $45,
+          custom_invite = $46,
           updated_at = now()
         WHERE id = $1
         RETURNING *`,
@@ -649,6 +653,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           merged.externalAttendees ? JSON.stringify(merged.externalAttendees) : JSON.stringify([]),
           merged.lastAvailabilityCheck || null,
           merged.selectedSlot || null,
+          merged.customInvite ? JSON.stringify(merged.customInvite) : JSON.stringify({}),
         ],
       );
       return rowToCase(result.rows[0]);

@@ -24,6 +24,7 @@ function normalizeCase(record) {
     scheduleHistory: normalizeArray(record.scheduleHistory),
     attendees: normalizeArray(record.attendees),
     externalAttendees: normalizeArray(record.externalAttendees),
+    customInvite: record.customInvite && typeof record.customInvite === 'object' ? record.customInvite : null,
   }
 }
 
@@ -142,6 +143,7 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
         stageOverrides: {},
         attendanceOverrides: {},
         externalAttendees: [],
+        customInvite: null,
         lastAvailabilityCheck: null,
         selectedSlot: null,
         ...input,

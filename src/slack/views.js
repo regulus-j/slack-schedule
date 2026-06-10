@@ -3,6 +3,7 @@ import { TIMEZONE_COUNTRY_MAP } from '../data/timezones.js'
 import { isScheduledCase, normalizeCaseSchedule, visibleCaseActions } from '../workflow/reschedule.js'
 import { DEFAULT_STAGE_RULES, STAGE_OPTIONS, normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
 import { normalizeAttendees } from '../workflow/attendees.js'
+import { isCustomInviteCase, normalizeCustomInviteMetadata } from '../workflow/custom-invite.js'
 import { resumeSlackLink } from '../resume-display.js'
 import {
   BUSINESS_DAY_END,
@@ -117,6 +118,12 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const eventType = draft.eventType || ''
   const standardEvent = isStandardIntakeEvent(eventType)
   const customInvite = eventType === 'custom-invite'
+  if (customInvite) {
+    return customInviteIntakeModal({
+      draft,
+      selectedTimeZoneOption,
+    })
+  }
   const recruiterSelect = recruiterSelectElement({ recruiters, draft })
   const manualCandidateMode = customInvite && Boolean(draft.manualCandidateMode)
   const recruiterEmailBlockId = dynamicBlockId('recruiter_email_block', draft.recruiterId)
@@ -437,6 +444,83 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   };
 }
 
+function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
+  const defaultSubject = draft.customInviteTitle ? `Invitation: ${draft.customInviteTitle}` : ''
+  const defaultBody = [
+    '[greeting]',
+    '',
+    'You are invited to [event_title].',
+    '',
+    'Date: [date]',
+    'Time: [time] [timezone]',
+    'Meeting link: [meeting_link]',
+  ].join('\n')
+
+  return {
+    type: 'modal',
+    callback_id: 'schedule_intake_submit',
+    title: plain('Schedule Event'),
+    submit: plain('Create'),
+    close: plain('Cancel'),
+    blocks: [
+      input('Event type', 'event_type_block', {
+        type: 'static_select',
+        action_id: 'event_type_select',
+        placeholder: plain('Choose event type'),
+        options: intakeEventTypeOptions(),
+        ...(draft.eventTypeOption ? { initial_option: draft.eventTypeOption } : {}),
+      }, false, true),
+      input('Event purpose / title', 'custom_title_block', {
+        type: 'plain_text_input',
+        action_id: 'custom_title',
+        placeholder: plain('Example: Client introduction'),
+        ...(draft.customInviteTitle ? { initial_value: draft.customInviteTitle } : {}),
+      }),
+      input('Recipients', 'custom_recipients_block', {
+        type: 'plain_text_input',
+        action_id: 'custom_recipients',
+        multiline: true,
+        placeholder: plain('Name <email> or email, one per line'),
+        ...(draft.customInviteRecipientsRaw ? { initial_value: draft.customInviteRecipientsRaw } : {}),
+      }),
+      input('Email subject', 'custom_subject_block', {
+        type: 'plain_text_input',
+        action_id: 'custom_subject',
+        ...(draft.customInviteSubject || defaultSubject
+          ? { initial_value: draft.customInviteSubject || defaultSubject }
+          : {}),
+      }),
+      input('Email body', 'custom_body_block', {
+        type: 'plain_text_input',
+        action_id: 'custom_body',
+        multiline: true,
+        initial_value: draft.customInviteBody || defaultBody,
+      }),
+      input('Meeting link', 'custom_meeting_link_block', {
+        type: 'plain_text_input',
+        action_id: 'custom_meeting_link',
+        placeholder: plain('Optional Zoom, Meet, Teams, or other URL'),
+        ...(draft.customInviteMeetingLink ? { initial_value: draft.customInviteMeetingLink } : {}),
+      }, true),
+      input('Notes', 'notes_block', {
+        type: 'plain_text_input',
+        action_id: 'notes',
+        multiline: true,
+        placeholder: plain('Optional scheduling context'),
+        ...(draft.notes ? { initial_value: draft.notes } : {}),
+      }, true),
+      input('Event timezone', 'timezone_block', {
+        type: 'external_select',
+        action_id: 'timezone_select',
+        min_query_length: 0,
+        placeholder: plain('Search by country or timezone'),
+        ...(selectedTimeZoneOption ? { initial_option: selectedTimeZoneOption } : {}),
+      }),
+      section('Available variables: [greeting], [name], [email], [event_title], [date], [time], [timezone], [meeting_link].'),
+    ],
+  }
+}
+
 export function candidateMessageModal({
   caseRecord,
   renderedTemplate,
@@ -474,6 +558,49 @@ export function candidateMessageModal({
 
 export function finalizeModal(caseRecord, recentAudits = []) {
   const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
+  if (isCustomInviteCase(caseRecord)) {
+    const customInvite = normalizeCustomInviteMetadata(caseRecord)
+    const referenceDate = resolveReferenceDate(caseRecord)
+    const timeOptions = buildPhTimeOptions({ referenceDate, interviewTimeZone })
+    return {
+      type: 'modal',
+      callback_id: 'finalize_schedule_submit',
+      private_metadata: caseRecord.id,
+      title: plain('Schedule Event'),
+      submit: plain('Preview'),
+      close: plain('Cancel'),
+      blocks: [
+        ...caseProgressHeader(caseRecord, recentAudits),
+        section(`*${caseTitle(caseRecord)}*`),
+        section(`Times shown in PH (${PH_TIME_ZONE}). Event timezone: ${interviewTimeZone}.`),
+        input('Duration', 'duration_block', {
+          type: 'static_select',
+          action_id: 'duration_select',
+          placeholder: plain('Select duration'),
+          options: durationSelectOptions(30),
+          initial_option: durationSelectOption(30),
+        }),
+        input('Event date', 'date_block', {
+          type: 'datepicker',
+          action_id: 'date',
+          placeholder: plain('Select date'),
+        }),
+        input('Event time (PH business hours)', 'time_block', {
+          type: 'static_select',
+          action_id: 'time',
+          placeholder: plain('Select time'),
+          options: timeOptions,
+        }),
+        input('Meeting link', 'zoom_block', {
+          type: 'plain_text_input',
+          action_id: 'zoom_link',
+          placeholder: plain('Optional Zoom, Meet, Teams, or other URL'),
+          ...(customInvite.meetingLink ? { initial_value: customInvite.meetingLink } : {}),
+        }, true),
+      ],
+    }
+  }
+
   const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
   const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
   const referenceDate = resolveReferenceDate(caseRecord)
@@ -528,17 +655,20 @@ export function finalizeModal(caseRecord, recentAudits = []) {
 
 export function finalizeEmailPreviewModal({ caseRecord, scheduleInput, renderedTemplate, recentAudits = [] }) {
   const plainBody = renderedTemplate.plainBody || renderedTemplate.body
+  const customInvite = isCustomInviteCase(caseRecord)
   return {
     type: 'modal',
     callback_id: 'finalize_email_preview_submit',
     private_metadata: JSON.stringify({ caseId: caseRecord.id, scheduleInput }),
-    title: plain('Preview Email'),
-    submit: plain('Create Invite'),
+    title: plain(customInvite ? 'Preview Invitation' : 'Preview Email'),
+    submit: plain(customInvite ? 'Create Event & Send' : 'Create Invite'),
     close: plain('Cancel'),
     blocks: [
       ...caseProgressHeader(caseRecord, recentAudits),
       section(`*${caseTitle(caseRecord)}*`),
-      section('Email preview before calendar invite creation.'),
+      section(customInvite
+        ? 'Preview of the personalized invitation. One email will be sent to each recipient after the calendar event is created.'
+        : 'Email preview before calendar invite creation.'),
       input('Email subject', 'email_subject_block', {
         type: 'plain_text_input',
         action_id: 'email_subject',
@@ -629,6 +759,30 @@ export function checkingAvailabilityModal(caseRecord) {
     blocks: [
       section(`*${caseTitle(caseRecord)}*`),
       section('🔍 Checking calendar availability. This may take a moment.'),
+    ],
+  }
+}
+
+export function customInviteRequestStatusModal({
+  title = 'Processing Request',
+  message,
+  status = 'loading',
+}) {
+  const icon = status === 'loading'
+    ? ':hourglass_flowing_sand:'
+    : status === 'success'
+      ? ':white_check_mark:'
+      : ':warning:'
+  return {
+    type: 'modal',
+    callback_id: 'custom_invite_request_status',
+    title: plain(title),
+    ...(status === 'loading' ? {} : { close: plain('Close') }),
+    blocks: [
+      section(`${icon} *${message}*`),
+      ...(status === 'loading'
+        ? [section('Please keep this window open while Calendar and email requests are completed.')]
+        : []),
     ],
   }
 }
@@ -1010,6 +1164,17 @@ function caseListBlocks(cases, emptyText) {
 }
 
 function caseSummary(caseRecord) {
+  if (isCustomInviteCase(caseRecord)) {
+    const customInvite = normalizeCustomInviteMetadata(caseRecord)
+    return [
+      `*${caseTitle(caseRecord)}*`,
+      `Status: *${displayStatus(caseRecord.status)}*`,
+      `Recipients: ${customInvite.recipients.length}`,
+      ...(customInvite.meetingLink ? [`Meeting link: ${customInvite.meetingLink}`] : []),
+      ...scheduleSummary(caseRecord),
+    ].join('\n')
+  }
+
   const applicant = caseRecord.applicant;
   const recruiter = caseRecord.recruiter;
   const hiringManager = caseRecord.hiringManager;
@@ -1049,12 +1214,25 @@ export function actionButtonsForCase(caseRecord, compact = false) {
       undefined,
       caseRecord.id,
     ),
+    retry_custom_invites: button(
+      compact ? 'Retry invitations' : 'Retry unsent invitations',
+      'retry_custom_invites',
+      'primary',
+      caseRecord.id,
+    ),
   }
 
   return visibleCaseActions(caseRecord).map((actionId) => actionMap[actionId]).filter(Boolean)
 }
 
 function nextStepText(caseRecord) {
+  if (isCustomInviteCase(caseRecord)) {
+    if (isScheduledCase(caseRecord)) {
+      return 'Next: view the calendar event or retry any invitation that did not send.'
+    }
+    return 'Next: choose the event date and time, review the invitation, then create the event.'
+  }
+
   if (caseRecord.status === 'Reschedule Requested') {
     return '🎯 *Next:* approve the updated candidate message to update Calendar and notify the candidate.';
   }
@@ -1112,6 +1290,9 @@ function resumeSummary(caseRecord) {
 }
 
 function caseTitle(caseRecord) {
+  if (isCustomInviteCase(caseRecord)) {
+    return normalizeCustomInviteMetadata(caseRecord).title
+  }
   const applicantName = caseRecord.applicant
     ? [caseRecord.applicant.firstName, caseRecord.applicant.lastName].filter(Boolean).join(' ')
     : 'Candidate';

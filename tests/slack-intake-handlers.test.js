@@ -100,18 +100,15 @@ test('cached candidate selection hydrates exact JazzHR application details and c
           hash: 'hash-1',
           private_metadata: JSON.stringify({
             channelId: 'C1',
-            eventType: 'custom-invite',
+            eventType: '1st-interview',
             candidateSearchError: 'Search expired. Press Search again.',
           }),
           state: {
             values: {
               event_type_block: {
                 event_type_select: {
-                  selected_option: { value: 'custom-invite' },
+                  selected_option: { value: '1st-interview' },
                 },
-              },
-              custom_purpose_block: {
-                custom_purpose: { value: 'Candidate follow-up' },
               },
               applicant_block: {
                 applicant_select: {

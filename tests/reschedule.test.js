@@ -378,31 +378,33 @@ test('finalize email preview modal shows formatted email before creating invite'
   assert.equal(metadata.scheduleInput.zoomLink, 'https://zoom.us/j/demo');
 });
 
-test('intake modal omits target window fields', () => {
+test('custom invite intake contains only generic event fields', () => {
   const view = intakeModal({
-    templates: [
-      {
-        id: 'demo-template',
-        label: 'Demo Template',
-        subject: 'Subject',
-        body: 'Body',
-      },
-    ],
+    templates: [],
     draft: {
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
+      customInviteTitle: 'Client intro',
+      customInviteRecipientsRaw: 'Alex <alex@example.com>\nteam@example.com',
+      customInviteSubject: 'Invitation: Client intro',
+      customInviteBody: '[greeting]\n\nJoin [event_title].',
     },
   });
 
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
   const blockIds = inputBlocks.map((block) => block.block_id);
 
-  assert.equal(blockIds.includes('window_start_block'), false);
-  assert.equal(blockIds.includes('window_end_block'), false);
-  assert.ok(view.blocks.some((block) =>
-    block.type === 'section' &&
-    block.text.text.includes('Calendar descriptions are generated automatically')
-  ));
+  assert.deepEqual(blockIds, [
+    'event_type_block',
+    'custom_title_block',
+    'custom_recipients_block',
+    'custom_subject_block',
+    'custom_body_block',
+    'custom_meeting_link_block',
+    'notes_block',
+    'timezone_block',
+  ])
+  assert.doesNotMatch(JSON.stringify(view.blocks), /Candidate|JazzHR|Recruiter|Hiring Manager|Resume|Stage/)
 });
 
 test('check availability modal keeps target window fields', () => {
@@ -418,18 +420,20 @@ test('check availability modal keeps target window fields', () => {
   assert.ok(blockIds.includes('schedule_window_end_block'));
 });
 
-test('intake modal starts with event type and custom invite asks for purpose', () => {
+test('custom invite intake starts with event type and supports multiple recipients', () => {
   const view = intakeModal({
     templates: [],
     draft: {
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
-      customInvitePurpose: 'Client intro',
+      customInviteTitle: 'Client intro',
+      customInviteRecipientsRaw: 'Alex <alex@example.com>\nteam@example.com',
     },
   });
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
   const eventTypeBlock = inputBlocks[0];
-  const purposeBlock = inputBlocks.find((block) => block.block_id === 'custom_purpose_block');
+  const titleBlock = inputBlocks.find((block) => block.block_id === 'custom_title_block');
+  const recipientsBlock = inputBlocks.find((block) => block.block_id === 'custom_recipients_block');
 
   assert.equal(eventTypeBlock.block_id, 'event_type_block');
   assert.deepEqual(eventTypeBlock.element.options.map((option) => option.text.text), [
@@ -439,12 +443,9 @@ test('intake modal starts with event type and custom invite asks for purpose', (
     'Job Offer',
     'Custom Invite',
   ]);
-  assert.ok(purposeBlock);
-  assert.equal(purposeBlock.label.text, 'What is this invite for?');
-  assert.equal(purposeBlock.element.action_id, 'custom_purpose');
-  assert.equal(purposeBlock.element.initial_value, 'Client intro');
-  assert.equal(inputBlocks.some((block) => block.block_id === 'stage_block'), false);
-  assert.equal(inputBlocks.some((block) => block.block_id === 'template_block'), false);
+  assert.equal(titleBlock.element.initial_value, 'Client intro');
+  assert.equal(recipientsBlock.element.multiline, true);
+  assert.match(recipientsBlock.element.initial_value, /team@example\.com/);
 });
 
 test('intake modal candidate details hides JazzHR resume and rating fields', () => {
@@ -474,7 +475,7 @@ test('intake modal candidate details hides JazzHR resume and rating fields', () 
   assert.match(text, /LinkedIn profile/);
 });
 
-test('intake modal includes a resume file upload field', () => {
+test('standard interview intake keeps the resume file upload field', () => {
   const view = intakeModal({
     templates: [
       {
@@ -485,8 +486,8 @@ test('intake modal includes a resume file upload field', () => {
       },
     ],
     draft: {
-      eventType: 'custom-invite',
-      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
+      eventType: '1st-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '1st Interview' }, value: '1st-interview' },
     },
   });
 
@@ -499,136 +500,41 @@ test('intake modal includes a resume file upload field', () => {
   assert.equal(resumeBlock.optional, true);
 });
 
-test('intake modal hides HM fields before a later-stage interview is selected', () => {
-  const recruiters = SAMPLE_PEOPLE.filter((p) => p.role === 'recruiter');
-  const view = intakeModal({
-    templates: [
-      {
-        id: 'demo-template',
-        label: 'Demo Template',
-        subject: 'Subject',
-        body: 'Body',
-      },
-    ],
-    draft: {
-      eventType: 'custom-invite',
-      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
-      applicantOption: { text: { type: 'plain_text', text: 'Alex Reyes - alex@example.com' }, value: 'applicant-demo-1' },
-      applicantEmail: 'alex@example.com',
-      recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
-      recruiterEmail: 'jamal@example.com',
-    },
-    recruiters,
-  });
-
-  const applicantNameBlock = view.blocks.find((block) => block.block_id === 'applicant_block');
-  const manualToggle = view.blocks
-    .flatMap((block) => block.elements || [])
-    .find((element) => element.action_id === 'manual_candidate_toggle');
-  const manualApplicantNameBlock = view.blocks.find((block) => block.block_id === 'manual_applicant_name_block');
-  const applicantEmailBlock = view.blocks.find((block) => block.block_id === 'applicant_email_block');
-  const recruiterNameBlock = view.blocks.find((block) => block.block_id === 'recruiter_block');
-  const recruiterEmailBlock = view.blocks.find((block) => block.block_id === 'recruiter_email_block');
-  const hmNameBlock = view.blocks.find((block) => block.block_id === 'hm_block');
-  const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block');
-
-  assert.equal(applicantNameBlock.element.type, 'external_select');
-  assert.equal(applicantNameBlock.optional, false);
-  assert.equal(manualToggle.type, 'checkboxes');
-  assert.equal(manualApplicantNameBlock, undefined);
-  assert.equal(recruiterNameBlock.element.type, 'external_select');
-  assert.equal(applicantEmailBlock.element.type, 'plain_text_input');
-  assert.equal(applicantEmailBlock.optional, true);
-  assert.equal(applicantEmailBlock.element.initial_value, 'alex@example.com');
-  assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
-  assert.equal(hmNameBlock, undefined);
-  assert.equal(hmEmailBlock, undefined);
-  assert.equal(applicantNameBlock.element.initial_option.value, 'applicant-demo-1');
-  assert.equal(recruiterNameBlock.element.initial_option.value, 'rec-jam');
-});
-
-test('intake modal shows required manual candidate fields only in manual mode', () => {
+test('custom invite intake omits interview-specific controls', () => {
   const view = intakeModal({
     templates: [],
     draft: {
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
-      manualCandidateMode: true,
-      manualApplicantName: 'Maria Santos',
-      manualApplicantRole: 'Executive Assistant',
-      applicantEmail: 'maria@example.com',
     },
   });
 
-  const applicantNameBlock = view.blocks.find((block) => block.block_id === 'applicant_block');
-  const searchBlock = view.blocks.find((block) => block.block_id === 'candidate_search_block');
-  const manualNameBlock = view.blocks.find((block) => block.block_id === 'manual_applicant_name_block');
-  const manualRoleBlock = view.blocks.find((block) => block.block_id === 'manual_applicant_role_block');
-  const applicantEmailBlock = view.blocks.find((block) => block.block_id === 'applicant_email_block');
-
-  assert.equal(applicantNameBlock, undefined);
-  assert.equal(searchBlock, undefined);
-  assert.equal(manualNameBlock.optional, false);
-  assert.equal(manualNameBlock.element.initial_value, 'Maria Santos');
-  assert.equal(manualRoleBlock.optional, false);
-  assert.equal(manualRoleBlock.element.initial_value, 'Executive Assistant');
-  assert.equal(applicantEmailBlock.optional, false);
-  assert.equal(applicantEmailBlock.element.initial_value, 'maria@example.com');
+  const blockIds = view.blocks.map((block) => block.block_id).filter(Boolean)
+  for (const blockId of [
+    'candidate_search_block',
+    'applicant_block',
+    'recruiter_block',
+    'hm_block',
+    'stage_block',
+    'resume_block',
+  ]) {
+    assert.equal(blockIds.includes(blockId), false)
+  }
 });
 
-test('intake modal requires HM fields and resume upload for later-stage interviews', () => {
+test('custom invite meeting link is optional and labeled generically', () => {
   const view = intakeModal({
     templates: [],
     draft: {
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
-      stageKey: 'final-interview',
-      stageOption: { text: { type: 'plain_text', text: 'Final Interview' }, value: 'final-interview' },
-      hiringManagerId: 'hm-ana',
-      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
-      hiringManagerEmail: 'ana@example.com',
     },
   });
 
-  const hmNameBlock = view.blocks.find((block) => block.block_id === 'hm_block');
-  const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block_hm-ana');
-  const resumeBlock = view.blocks.find((block) => block.block_id === 'resume_block');
-
-  assert.equal(hmNameBlock.element.type, 'external_select');
-  assert.equal(hmNameBlock.optional, false);
-  assert.equal(hmEmailBlock.element.type, 'plain_text_input');
-  assert.equal(hmEmailBlock.optional, false);
-  assert.equal(hmNameBlock.element.initial_option.value, 'hm-ana');
-  assert.equal(resumeBlock.element.type, 'file_input');
-  assert.equal(resumeBlock.element.action_id, 'resume_file');
-  assert.equal(resumeBlock.optional, false);
-});
-
-test('intake modal refreshes recruiter and HM email fields after selection', () => {
-  const view = intakeModal({
-    templates: [],
-    draft: {
-      eventType: 'custom-invite',
-      eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
-      stageKey: 'final-interview',
-      recruiterId: 'rec-jam',
-      recruiterOption: { text: { type: 'plain_text', text: 'Jamal Al Badi - jamal@example.com' }, value: 'rec-jam' },
-      recruiterEmail: 'jamal@example.com',
-      hiringManagerId: 'hm-ana',
-      hiringManagerOption: { text: { type: 'plain_text', text: 'Ana Cruz - ana@example.com' }, value: 'hm-ana' },
-      hiringManagerEmail: 'ana@example.com',
-    },
-  });
-
-  const recruiterEmailBlock = view.blocks.find((block) => block.block_id === 'recruiter_email_block_rec-jam');
-  const hmEmailBlock = view.blocks.find((block) => block.block_id === 'hm_email_block_hm-ana');
-
-  assert.equal(recruiterEmailBlock.block_id, 'recruiter_email_block_rec-jam');
-  assert.equal(recruiterEmailBlock.element.action_id, 'recruiter_email_rec-jam');
-  assert.equal(recruiterEmailBlock.element.initial_value, 'jamal@example.com');
-  assert.equal(hmEmailBlock.block_id, 'hm_email_block_hm-ana');
-  assert.equal(hmEmailBlock.element.action_id, 'hm_email_hm-ana');
-  assert.equal(hmEmailBlock.element.initial_value, 'ana@example.com');
+  const meetingLinkBlock = view.blocks.find((block) => block.block_id === 'custom_meeting_link_block')
+  assert.equal(meetingLinkBlock.label.text, 'Meeting link')
+  assert.equal(meetingLinkBlock.optional, true)
+  assert.match(meetingLinkBlock.element.placeholder.text, /Zoom, Meet, Teams/)
 });
 
 test('standard intake modal uses compact primary and optional additional people selectors', () => {
@@ -1021,7 +927,7 @@ test('builds intake draft resume reference from Slack file id when no URL is ava
   assert.equal(draft.resumeLink, 'F789');
 });
 
-test('builds intake draft from a manually entered candidate name', () => {
+test('builds generic custom invite draft without applicant or recruiter records', () => {
   setApplicants([]);
   setRecruiters([]);
   setHiringManagers([]);
@@ -1029,28 +935,27 @@ test('builds intake draft from a manually entered candidate name', () => {
   const draft = buildIntakeDraft(
     {
       event_type_block: { event_type_select: { selected_option: { value: 'custom-invite' } } },
-      manual_candidate_mode_block: {
-        manual_candidate_toggle: {
-          selected_options: [{ value: 'manual' }],
-        },
+      custom_title_block: { custom_title: { value: 'Client introduction' } },
+      custom_recipients_block: {
+        custom_recipients: { value: 'Maria Santos <MARIA@example.com>\nteam@example.com' },
       },
-      manual_applicant_name_block: { manual_applicant_name: { value: 'Maria Santos' } },
-      manual_applicant_role_block: { manual_applicant_role: { value: 'Executive Assistant' } },
-      applicant_email_block: { applicant_email: { value: 'maria@example.com' } },
-      stage_block: { stage_select: { selected_option: { value: '1st-interview' } } },
+      custom_subject_block: { custom_subject: { value: 'Invitation: [event_title]' } },
+      custom_body_block: { custom_body: { value: '[greeting]\n\nJoin us on [date].' } },
+      custom_meeting_link_block: { custom_meeting_link: { value: '' } },
     },
     [],
   );
 
   assert.equal(draft.applicantId, '');
-  assert.equal(draft.manualApplicantName, 'Maria Santos');
-  assert.equal(draft.manualApplicantRole, 'Executive Assistant');
-  assert.equal(draft.applicant.firstName, 'Maria');
-  assert.equal(draft.applicant.lastName, 'Santos');
-  assert.equal(draft.applicant.email, 'maria@example.com');
-  assert.equal(draft.applicant.jobTitle, 'Executive Assistant');
-  assert.equal(draft.applicant.source, 'Manual entry');
-  assert.equal(draft.applicantEmail, 'maria@example.com');
+  assert.equal(draft.applicant, null);
+  assert.equal(draft.recruiter, null);
+  assert.equal(draft.stageKey, null);
+  assert.equal(draft.customInviteTitle, 'Client introduction');
+  assert.deepEqual(draft.customInviteRecipients, [
+    { name: 'Maria Santos', email: 'maria@example.com' },
+    { name: '', email: 'team@example.com' },
+  ]);
+  assert.equal(draft.customInviteMeetingLink, '');
 });
 
 test('builds intake draft recruiter from the selected applicant', () => {

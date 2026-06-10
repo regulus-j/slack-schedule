@@ -114,23 +114,29 @@ export function convertLocalDateTimeToZone({
 export function buildCalendarEventDraft({
   candidateName,
   jobTitle,
+  eventTitle,
   startDate,
   startTime,
   durationMinutes = 30,
   zoomLink,
+  meetingLink,
   attendees = [],
   timeZone = PH_TIME_ZONE,
   description,
 }) {
   const start = localDateTimeToUtc(startDate, startTime, timeZone);
   const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+  const resolvedMeetingLink = meetingLink || zoomLink || ''
 
   return {
-    summary: `${candidateName} - ${jobTitle} Interview`,
-    description: description || ['Interview scheduled by the Slack scheduling assistant.', zoomLink ? `Zoom: ${zoomLink}` : '']
+    summary: eventTitle || `${candidateName} - ${jobTitle} Interview`,
+    description: description || [
+      eventTitle ? 'Event scheduled by the Slack scheduling assistant.' : 'Interview scheduled by the Slack scheduling assistant.',
+      resolvedMeetingLink ? `Meeting link: ${resolvedMeetingLink}` : '',
+    ]
       .filter(Boolean)
       .join('\n'),
-    location: zoomLink || 'Zoom',
+    location: resolvedMeetingLink || (eventTitle ? '' : 'Zoom'),
     start: {
       dateTime: start.toISOString(),
       timeZone,

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { resolveStageRules } from './stage-rules.js'
+import { isCustomInviteCase, normalizeCustomInviteMetadata } from './custom-invite.js'
 
 function normalizeArray(value, label) {
   if (Array.isArray(value)) return value
@@ -10,6 +11,19 @@ function normalizeArray(value, label) {
 }
 
 export function normalizeAttendees(caseRecord, stageRules) {
+  if (isCustomInviteCase(caseRecord)) {
+    return normalizeCustomInviteMetadata(caseRecord).recipients.map((recipient) => ({
+      id: `recipient-${recipient.email}`,
+      name: recipient.name || recipient.email,
+      email: recipient.email,
+      role: 'recipient',
+      required: true,
+      included: true,
+      slackUserId: null,
+      source: 'custom_invite',
+    }))
+  }
+
   const attendees = []
 
   const applicantName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName]

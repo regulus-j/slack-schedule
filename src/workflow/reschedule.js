@@ -1,3 +1,5 @@
+import { hasPendingCustomInviteDeliveries, isCustomInviteCase } from './custom-invite.js'
+
 export const RESCHEDULE_STATUSES = {
   NONE: 'none',
   REQUESTED: 'requested',
@@ -35,6 +37,16 @@ export function canStartReschedule(caseRecord) {
 }
 
 export function visibleCaseActions(caseRecord) {
+  if (isCustomInviteCase(caseRecord)) {
+    if (isScheduledCase(caseRecord)) {
+      return [
+        ...(hasPendingCustomInviteDeliveries(caseRecord) ? ['retry_custom_invites'] : []),
+        ...(caseRecord.calendarEventId ? ['view_calendar_details'] : []),
+      ]
+    }
+    return ['open_finalize_modal']
+  }
+
   if (caseRecord.rescheduleStatus === RESCHEDULE_STATUSES.CANCELLED) {
     return caseRecord.calendarEventId ? ['view_calendar_details'] : []
   }

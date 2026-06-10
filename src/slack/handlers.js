@@ -72,10 +72,20 @@ import {
   stageLabel,
 } from '../workflow/stage-rules.js'
 import { normalizeAttendees, refreshAttendees } from '../workflow/attendees.js'
+import {
+  buildCustomInviteEmail,
+  customInviteExternalAttendees,
+  isCustomInviteCase,
+  isFinalCustomInviteDeliveryStatus,
+  normalizeCustomInviteMetadata,
+  parseCustomInviteRecipients,
+  validateCustomInviteDraft,
+} from '../workflow/custom-invite.js'
 import { runSchedulingPipeline } from '../workflow/scheduler.js'
 import {
   calendarEventUrl,
   checkingAvailabilityModal,
+  customInviteRequestStatusModal,
   candidateMessageModal,
   caseMessageBlocks,
   externalAttendeeModal,
@@ -1007,6 +1017,71 @@ export function registerSlackHandlers(app, context) {
     const standardEventType = intakeDraft.standardEventType
     const errors = {};
 
+    if (intakeDraft.eventType === 'custom-invite') {
+      Object.assign(errors, validateCustomInviteDraft(intakeDraft))
+      if (Object.keys(errors).length > 0) {
+        await ack({ response_action: 'errors', errors })
+        return
+      }
+
+      await ack()
+      const coordinator = await resolveSlackUser({ client, userId: body.user.id, logger })
+      const customInvite = {
+        title: intakeDraft.customInviteTitle,
+        subject: intakeDraft.customInviteSubject,
+        body: intakeDraft.customInviteBody,
+        recipients: intakeDraft.customInviteRecipients,
+        meetingLink: intakeDraft.customInviteMeetingLink,
+        deliveryStatus: {},
+      }
+      const caseRecord = await store.createCase({
+        ownerSlackUserId: body.user.id,
+        channelId: getChannelId(body.view) || body.user.id,
+        eventType: 'custom-invite',
+        applicant: null,
+        recruiter: null,
+        hiringManager: null,
+        externalAttendees: customInviteExternalAttendees(customInvite.recipients),
+        attendanceOverrides: {},
+        templateId: null,
+        stageKey: null,
+        notes,
+        resumeLink: null,
+        interviewWindowStartDate: null,
+        interviewWindowEndDate: null,
+        interviewTimezone,
+        customInvite,
+        autofill: {
+          zoomLink: customInvite.meetingLink,
+          coordinatorEmail: coordinator?.email || '',
+          coordinatorName: coordinator?.name || '',
+          customInvitePurpose: customInvite.title,
+        },
+      })
+
+      await store.addAudit({
+        caseId: caseRecord.id,
+        actorSlackUserId: body.user.id,
+        action: 'event_created',
+        recipientCount: customInvite.recipients.length,
+      })
+
+      const caseMessage = await client.chat.postMessage({
+        channel: resolvePostingChannel(config, body.user.id),
+        text: 'Event scheduling case created',
+        blocks: caseMessageBlocks(caseRecord),
+      })
+      await store.updateCase(caseRecord.id, {
+        autofill: {
+          ...(caseRecord.autofill || {}),
+          caseMessageTs: caseMessage.ts,
+          caseMessageChannel: caseMessage.channel,
+        },
+      })
+      await publishHome({ client, userId: body.user.id, store, logger, config })
+      return
+    }
+
     if (intakeDraft.remoteUpdateStatus === 'loading') {
       errors.event_type_block = 'Wait for the form update to finish before submitting.'
     }
@@ -1336,6 +1411,14 @@ export function registerSlackHandlers(app, context) {
     try {
       const caseId = body.actions?.[0]?.value || body.view?.private_metadata
       const caseRecord = await requireCase(store, caseId)
+      if (isCustomInviteCase(caseRecord)) {
+        const recentAudits = await store.listAudits(caseRecord.id, 5)
+        await client.views.open({
+          trigger_id: body.trigger_id,
+          view: finalizeModal(caseRecord, recentAudits),
+        })
+        return
+      }
       const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
       const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
       const attendees = normalizeAttendees(caseRecord, stageRules)
@@ -1747,7 +1830,9 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          date_block: 'This case is already scheduled. Use Reschedule interview instead.',
+          date_block: isCustomInviteCase(caseRecord)
+            ? 'This event is already scheduled.'
+            : 'This case is already scheduled. Use Reschedule interview instead.',
         },
       });
       return;
@@ -1773,6 +1858,58 @@ export function registerSlackHandlers(app, context) {
       fromTimeZone: PH_TIME_ZONE,
       toTimeZone: interviewTimeZone,
     })
+    if (isCustomInviteCase(caseRecord)) {
+      const customInvite = normalizeCustomInviteMetadata(caseRecord)
+      const durationMinutes = Number(view.state.values.duration_block?.duration_select?.selected_option?.value || 30)
+      const attendees = customInvite.recipients.map((recipient) => recipient.email)
+      const attendeeDetails = customInviteExternalAttendees(customInvite.recipients)
+      const scheduleSnapshot = buildScheduleSnapshot({
+        date: converted.date,
+        time: converted.time,
+        zoomLink,
+        attendees,
+        attendeeDetails,
+        durationMinutes,
+      })
+      const previewCaseRecord = {
+        ...caseRecord,
+        customInvite: {
+          ...customInvite,
+          meetingLink: zoomLink,
+        },
+        selectedInterviewDate: converted.date,
+        selectedInterviewTime: converted.time,
+        currentSchedule: scheduleSnapshot,
+      }
+      const renderedTemplate = {
+        subject: customInvite.subject,
+        body: customInvite.body,
+        plainBody: customInvite.body,
+      }
+      const scheduleInput = {
+        eventTitle: customInvite.title,
+        startDate: converted.date,
+        startTime: converted.time,
+        durationMinutes,
+        meetingLink: zoomLink,
+        zoomLink,
+        attendees,
+        attendeeDetails,
+        timeZone: interviewTimeZone,
+      }
+      const recentAudits = await store.listAudits(caseId, 5)
+      await ack({
+        response_action: 'update',
+        view: finalizeEmailPreviewModal({
+          caseRecord: previewCaseRecord,
+          scheduleInput,
+          renderedTemplate,
+          recentAudits,
+        }),
+      })
+      return
+    }
+
     const selectedGuests = []
     const finalizeStageKey = normalizeStageKey(
       view.state.values.stage_block?.stage_select?.selected_option?.value ||
@@ -1845,16 +1982,113 @@ export function registerSlackHandlers(app, context) {
       await ack({
         response_action: 'errors',
         errors: {
-          email_subject_block: 'This case is already scheduled. Use Reschedule interview instead.',
+          email_subject_block: isCustomInviteCase(caseRecord)
+            ? 'This event is already scheduled.'
+            : 'This case is already scheduled. Use Reschedule interview instead.',
         },
       })
       return
     }
 
-    await ack()
+    if (isCustomInviteCase(caseRecord)) {
+      await ack({
+        response_action: 'update',
+        view: customInviteRequestStatusModal({
+          title: 'Scheduling Event',
+          message: 'Creating the calendar event and sending personalized invitations...',
+        }),
+      })
+    } else {
+      await ack()
+    }
     try {
       const emailSubject = view.state.values.email_subject_block.email_subject.value
       const emailBody = view.state.values.email_body_block.email_body.value
+      if (isCustomInviteCase(caseRecord)) {
+        const customInvite = {
+          ...normalizeCustomInviteMetadata(caseRecord),
+          subject: emailSubject,
+          body: emailBody,
+          meetingLink: scheduleInput.meetingLink || scheduleInput.zoomLink || '',
+        }
+        const finalCaseRecord = {
+          ...caseRecord,
+          customInvite,
+        }
+        const eventResult = await createCalendarEvent({
+          config,
+          logger,
+          caseRecord: finalCaseRecord,
+          store,
+          eventInput: {
+            ...scheduleInput,
+            eventTitle: customInvite.title,
+            meetingLink: customInvite.meetingLink,
+            description: [
+              caseRecord.notes || '',
+              customInvite.meetingLink ? `Meeting link: ${customInvite.meetingLink}` : '',
+            ].filter(Boolean).join('\n'),
+          },
+        })
+        const scheduleSnapshot = buildScheduleSnapshot({
+          date: scheduleInput.startDate,
+          time: scheduleInput.startTime,
+          zoomLink: customInvite.meetingLink,
+          attendees: scheduleInput.attendees,
+          attendeeDetails: scheduleInput.attendeeDetails,
+          durationMinutes: scheduleInput.durationMinutes,
+          eventId: eventResult.eventId,
+          htmlLink: eventResult.googleEvent?.htmlLink || null,
+        })
+        const updated = await store.updateCase(caseId, {
+          ...applyScheduledEvent(finalCaseRecord, eventResult, scheduleSnapshot),
+          customInvite,
+          externalAttendees: customInviteExternalAttendees(customInvite.recipients),
+        })
+        await store.addAudit({
+          caseId,
+          actorSlackUserId: body.user.id,
+          action: 'calendar_event_approved',
+          eventId: eventResult.eventId,
+        })
+        const deliveryResults = await deliverCustomInviteEmails({
+          config,
+          logger,
+          store,
+          caseRecord: updated,
+        })
+        const finalRecord = await requireCase(store, caseId)
+        await store.addAudit({
+          caseId,
+          actorSlackUserId: body.user.id,
+          action: 'custom_invitations_sent',
+          sent: deliveryResults.filter((result) => result.status === 'sent' || result.status === 'mocked').length,
+          failed: deliveryResults.filter((result) => result.status === 'failed').length,
+        })
+        await publishHome({ client, userId: body.user.id, store, logger, config })
+        await postCaseThreadMessage({
+          client,
+          config,
+          body,
+          store,
+          caseRecord: finalRecord,
+          text: 'Event scheduled',
+          blocks: caseMessageBlocks(finalRecord),
+          saveAsScheduledMessage: true,
+        })
+        if (body.view?.id) {
+          await client.views.update({
+            view_id: body.view.id,
+            view: customInviteRequestStatusModal({
+              title: 'Event Scheduled',
+              message: 'The event was created and invitation delivery is complete.',
+              status: 'success',
+            }),
+          })
+        }
+        return
+      }
+
       const emailBodies = signedEmailBodiesFromPlainText(emailBody)
       const finalCaseRecord = {
         ...caseRecord,
@@ -1938,6 +2172,17 @@ export function registerSlackHandlers(app, context) {
       })
     } catch (error) {
       logger.error('finalize_email_preview_submit_error', { caseId, error: error.message })
+      if (isCustomInviteCase(caseRecord) && body.view?.id) {
+        await client.views.update({
+          view_id: body.view.id,
+          view: customInviteRequestStatusModal({
+            title: 'Request Failed',
+            message: `The event could not be completed: ${error.message}`,
+            status: 'error',
+          }),
+        })
+        return
+      }
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
         user: body.user.id,
@@ -2180,12 +2425,98 @@ export function registerSlackHandlers(app, context) {
     })
   });
 
+  app.action('retry_custom_invites', async ({ ack, body, client }) => {
+    await ack()
+    const caseId = body.actions?.[0]?.value
+    const caseRecord = await requireCase(store, caseId)
+    if (!isCustomInviteCase(caseRecord) || !caseRecord.calendarEventId) {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: 'This event is not ready to send invitations.',
+      })
+      return
+    }
+
+    const loadingView = body.trigger_id
+      ? await client.views.open({
+          trigger_id: body.trigger_id,
+          view: customInviteRequestStatusModal({
+            title: 'Sending Invitations',
+            message: 'Retrying invitations that have not been delivered...',
+          }),
+        })
+      : null
+    const loadingViewId = loadingView?.view?.id
+    try {
+      const results = await deliverCustomInviteEmails({ config, logger, store, caseRecord })
+      const sent = results.filter((result) => result.status === 'sent' || result.status === 'mocked').length
+      const failed = results.filter((result) => result.status === 'failed').length
+      const skipped = results.filter((result) => result.status === 'skipped').length
+      const updated = await requireCase(store, caseId)
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: `Invitation retry complete: ${sent} sent, ${failed} failed, ${skipped} already delivered.`,
+      })
+      await postCaseThreadMessage({
+        client,
+        config,
+        body,
+        store,
+        caseRecord: updated,
+        text: 'Invitation delivery updated',
+        blocks: caseMessageBlocks(updated),
+        saveAsScheduledMessage: true,
+      })
+      if (loadingViewId) {
+        await client.views.update({
+          view_id: loadingViewId,
+          view: customInviteRequestStatusModal({
+            title: failed > 0 ? 'Retry Completed' : 'Invitations Sent',
+            message: `${sent} sent, ${failed} failed, ${skipped} already delivered.`,
+            status: failed > 0 ? 'error' : 'success',
+          }),
+        })
+      }
+    } catch (error) {
+      logger.error('custom_invite_retry_failed', { caseId, error: error.message })
+      if (loadingViewId) {
+        await client.views.update({
+          view_id: loadingViewId,
+          view: customInviteRequestStatusModal({
+            title: 'Retry Failed',
+            message: `Invitations could not be retried: ${error.message}`,
+            status: 'error',
+          }),
+        })
+      }
+    }
+  })
+
   app.action('view_calendar_details', async ({ ack, body, client }) => {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
     const caseRecord = await requireCase(store, body.actions[0].value);
     const schedule = caseRecord.currentSchedule || {};
     const eventLink = caseRecord.calendarEventHtmlLink || schedule.htmlLink || calendarEventUrl(caseRecord.calendarEventId) || null;
+    if (isCustomInviteCase(caseRecord)) {
+      const customInvite = normalizeCustomInviteMetadata(caseRecord)
+      const lines = [
+        eventLink
+          ? `*Calendar:* <${eventLink}|Open in Google Calendar>`
+          : (caseRecord.calendarEventId ? 'Calendar event created' : '*Calendar:* not created yet'),
+        `*Date:* ${schedule.date || 'TBD'}`,
+        `*Time:* ${schedule.time || 'TBD'}`,
+        `*Meeting link:* ${schedule.zoomLink || customInvite.meetingLink || 'None'}`,
+      ]
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: lines.join('\n'),
+      })
+      return
+    }
 
     const lines = [
       eventLink
@@ -2750,6 +3081,93 @@ export function ccRecipientsFromAttendees(caseRecord, attendees = []) {
   return [...new Set(emails.map(normalizeEmail).filter((email) => email && email !== candidateEmail))]
 }
 
+const customInviteDeliveryLocks = new Map()
+
+export async function deliverCustomInviteEmails(args) {
+  const caseId = args.caseRecord.id
+  const existing = customInviteDeliveryLocks.get(caseId)
+  if (existing) return existing
+
+  const delivery = deliverCustomInviteEmailsUnlocked(args)
+    .finally(() => customInviteDeliveryLocks.delete(caseId))
+  customInviteDeliveryLocks.set(caseId, delivery)
+  return delivery
+}
+
+async function deliverCustomInviteEmailsUnlocked({ config, logger, store, caseRecord }) {
+  const results = []
+  const caseId = caseRecord.id
+
+  for (const recipient of normalizeCustomInviteMetadata(caseRecord).recipients) {
+    const latest = await store.getCase(caseId)
+    const customInvite = normalizeCustomInviteMetadata(latest || caseRecord)
+    const existingStatus = customInvite.deliveryStatus[recipient.email]?.status
+    if (existingStatus === 'sending' || isFinalCustomInviteDeliveryStatus(existingStatus)) {
+      results.push({ email: recipient.email, status: 'skipped' })
+      continue
+    }
+
+    const sendingAt = new Date().toISOString()
+    const sendingMetadata = {
+      ...customInvite,
+      deliveryStatus: {
+        ...customInvite.deliveryStatus,
+        [recipient.email]: {
+          status: 'sending',
+          updatedAt: sendingAt,
+        },
+      },
+    }
+    const pendingCase = await store.updateCase(caseId, { customInvite: sendingMetadata })
+    const email = buildCustomInviteEmail(pendingCase, recipient)
+
+    try {
+      const sendResult = await sendRecruiterEmail({
+        config,
+        logger,
+        store,
+        caseRecord: pendingCase,
+        email,
+      })
+      const status = sendResult.mocked ? 'mocked' : 'sent'
+      const completedMetadata = {
+        ...sendingMetadata,
+        deliveryStatus: {
+          ...sendingMetadata.deliveryStatus,
+          [recipient.email]: {
+            status,
+            messageId: sendResult.messageId || '',
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      }
+      await store.updateCase(caseId, { customInvite: completedMetadata })
+      results.push({ email: recipient.email, status, email, sendResult })
+    } catch (error) {
+      const failedMetadata = {
+        ...sendingMetadata,
+        deliveryStatus: {
+          ...sendingMetadata.deliveryStatus,
+          [recipient.email]: {
+            status: 'failed',
+            error: error.message,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      }
+      await store.updateCase(caseId, { customInvite: failedMetadata })
+      logger.error('custom_invite_email_failed', {
+        caseId,
+        recipientEmail: recipient.email,
+        error: error.message,
+      })
+      results.push({ email: recipient.email, status: 'failed', error: error.message })
+    }
+  }
+
+  return results
+}
+
 async function sendAttendeeInviteEmails({ config, logger, store, caseRecord }) {
   const recipients = attendeeInviteRecipients(caseRecord)
   const results = []
@@ -3063,6 +3481,62 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     ''
   )
   const customInvite = eventType === 'custom-invite'
+  if (customInvite) {
+    const customInviteTitle = overrides.customInviteTitle !== undefined
+      ? overrides.customInviteTitle
+      : getInputValue(values, 'custom_title')
+    const customInviteRecipientsRaw = overrides.customInviteRecipientsRaw !== undefined
+      ? overrides.customInviteRecipientsRaw
+      : getInputValue(values, 'custom_recipients')
+    const customInviteSubject = overrides.customInviteSubject !== undefined
+      ? overrides.customInviteSubject
+      : getInputValue(values, 'custom_subject')
+    const customInviteBody = overrides.customInviteBody !== undefined
+      ? overrides.customInviteBody
+      : getInputValue(values, 'custom_body')
+    const customInviteMeetingLink = overrides.customInviteMeetingLink !== undefined
+      ? overrides.customInviteMeetingLink
+      : getInputValue(values, 'custom_meeting_link')
+    const interviewTimezone = overrides.interviewTimezone ??
+      (values.timezone_block?.timezone_select?.selected_option?.value || '')
+    let customInviteRecipients = []
+    let customInviteRecipientError = ''
+    try {
+      customInviteRecipients = parseCustomInviteRecipients(customInviteRecipientsRaw)
+    } catch (error) {
+      customInviteRecipientError = error.message
+    }
+
+    return {
+      eventType,
+      eventTypeOption: toSlackOption(eventTypeLabel(eventType), eventType),
+      standardEventType: false,
+      customInviteTitle,
+      customInviteRecipientsRaw,
+      customInviteRecipients,
+      customInviteRecipientError,
+      customInviteSubject,
+      customInviteBody,
+      customInviteMeetingLink,
+      notes: getInputValue(values, 'notes'),
+      interviewTimezone,
+      applicant: null,
+      recruiter: null,
+      hiringManager: null,
+      applicantId: '',
+      recruiterId: '',
+      hiringManagerId: '',
+      recruiterIds: [],
+      hiringManagerIds: [],
+      templateId: null,
+      stageKey: null,
+      resumeLink: '',
+      zoomLink: customInviteMeetingLink,
+      extraAttendees: customInviteExternalAttendees(customInviteRecipients),
+      remoteUpdateStatus: '',
+      remoteUpdateMessage: '',
+    }
+  }
   const customInvitePurpose = customInvite
     ? (overrides.customInvitePurpose !== undefined ? overrides.customInvitePurpose : getInputValue(values, 'custom_purpose'))
     : ''
