@@ -182,7 +182,11 @@ test('custom invite intake and scheduling views use generic terminology', () => 
   })
   const intakeText = JSON.stringify(intake.blocks)
   assert.match(intakeText, /Event purpose \/ title/)
-  assert.match(intakeText, /Recipients/)
+  assert.match(intakeText, /Recipient email addresses/)
+  assert.match(intakeText, /Alex Reyes <alex@example\.com>/)
+  assert.match(intakeText, /Add one recipient per line/)
+  assert.match(intakeText, /Names are optional/)
+  assert.match(intakeText, /one shared calendar event/)
   assert.doesNotMatch(intakeText, /Candidate|JazzHR|Recruiter|Hiring Manager|Resume/)
 
   const schedule = finalizeModal(makeCustomCase())

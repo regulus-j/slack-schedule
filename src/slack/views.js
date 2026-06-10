@@ -476,13 +476,20 @@ function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
         placeholder: plain('Example: Client introduction'),
         ...(draft.customInviteTitle ? { initial_value: draft.customInviteTitle } : {}),
       }),
-      input('Recipients', 'custom_recipients_block', {
+      section([
+        '*Add one recipient per line*',
+        'Use either `Name <email>` or just `email`:',
+        '```Alex Reyes <alex@example.com>',
+        'guest@example.com```',
+        '_All recipients are guests on one shared calendar event and can see each other._',
+      ].join('\n')),
+      input('Recipient email addresses', 'custom_recipients_block', {
         type: 'plain_text_input',
         action_id: 'custom_recipients',
         multiline: true,
-        placeholder: plain('Name <email> or email, one per line'),
+        placeholder: plain('Enter one recipient per line'),
         ...(draft.customInviteRecipientsRaw ? { initial_value: draft.customInviteRecipientsRaw } : {}),
-      }),
+      }, false, false, 'Names are optional. Every line must contain a valid email address.'),
       input('Email subject', 'custom_subject_block', {
         type: 'plain_text_input',
         action_id: 'custom_subject',
@@ -1315,12 +1322,13 @@ function section(text) {
   return { type: 'section', text: mrkdwn(text) };
 }
 
-function input(label, blockId, element, optional = false, dispatchAction = false) {
+function input(label, blockId, element, optional = false, dispatchAction = false, hint = '') {
   return {
     type: 'input',
     block_id: blockId,
     optional,
     ...(dispatchAction ? { dispatch_action: true } : {}),
+    ...(hint ? { hint: { type: 'plain_text', text: trimForSlack(hint, 2000) } } : {}),
     label: plain(label),
     element,
   };
