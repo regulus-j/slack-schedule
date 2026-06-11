@@ -1441,7 +1441,7 @@ No circular dependencies. All new modules depend on existing utilities (`time.js
 
 ### 8.2 Multiple Hiring Managers
 
-**Supported by:** Treating additional HMs as panel interviewers in the `guests` array with `role: 'hiring_manager'`. The singular `hiringManager` field remains the primary HM for message generation. All HMs in the attendee list are queried for free/busy and invited to the calendar event.
+**Supported by:** Treating additional HMs as panel interviewers in the `guests` array with `role: 'hiring_manager'`. The singular `hiringManager` field remains the primary HM for message generation. HMs are invited to the calendar event but are not queried for Google Calendar free/busy. Cross-case conflicts can still be detected from schedules stored by this app.
 
 **Future enhancement:** If multiple HMs need equal standing, the `hiringManager` field could become an array. The current singular field is preserved for backward compatibility; the `attendees` list is the authoritative source for scheduling.
 
@@ -1449,7 +1449,7 @@ No circular dependencies. All new modules depend on existing utilities (`time.js
 
 **Supported by:** The `externalAttendees` array on cases. External attendees have no `slackUserId` and are not in sample data. They are added via a text input in the modal (name + email) and stored as `{ name, email, role: 'external', required: false }`.
 
-**Free/busy checking:** External attendees with company email domains are included in the Google freeBusy call. Those without (e.g., `@gmail.com`) are excluded from the calendar query — they show as always available.
+**Free/busy checking:** External attendees are excluded from Google freeBusy and show as available unless another schedule stored by this app identifies a conflict.
 
 ### 8.4 Time Zone Per-Interview
 
@@ -1578,6 +1578,7 @@ export async function deleteCalendarEvent({ config, logger, caseRecord, store })
 | Slot ranking as pure function | Testable independently; no side effects; easy to tune weights |
 | `bufferMinutes` per-stage | Different interview types need different gaps (30 min for technical, 15 min for screening) |
 | Candidate excluded from freeBusy | Candidates aren't on the company Google Calendar; their availability is confirmed via email response |
+| Hiring managers excluded from freeBusy | HM calendar access is not required; recruiters confirm HM availability outside this integration |
 | Mock-safe degradation | All Google calls return `{ mocked: true }` when unconfigured — scheduler shows all slots as available |
 | Two-phase Slack modal | Phase 1 captures configuration (attendees, window); Phase 2 displays results. Matches Slack's modal UX constraints. |
 | Manual entry preserved as fallback | The existing datepicker+timepicker flow remains available for edge cases |

@@ -139,7 +139,7 @@ export function attendeesForFreeBusy(attendees) {
     .filter((a) =>
       a.included &&
       a.email &&
-      ['recruiter', 'hiring_manager', 'guest'].includes(a.role) &&
+      ['recruiter', 'guest'].includes(a.role) &&
       a.source !== 'external'
     )
     .map((a) => ({ id: a.email }))

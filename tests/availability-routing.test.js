@@ -1,44 +1,50 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import {
-  checkAvailability,
-  partitionAvailabilityAttendees,
-} from '../src/workflow/scheduler.js'
+import { checkAvailability } from '../src/workflow/scheduler.js'
 
-test('partitions managers to Apps Script and only recruiters and guests to OAuth', () => {
-  const result = partitionAvailabilityAttendees([
-    attendee('candidate', 'candidate@example.com'),
-    attendee('recruiter', 'recruiter@example.com'),
-    attendee('hiring_manager', 'manager@example.com'),
-    attendee('guest', 'guest@example.com'),
-    attendee('external', 'external@example.com'),
-    attendee('recipient', 'recipient@example.com'),
-    { ...attendee('guest', 'external-guest@example.com'), source: 'external' },
-  ])
+test('hiring-manager-only availability does not call a calendar provider', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => {
+    throw new Error('calendar provider should not be called')
+  }
 
-  assert.deepEqual(result.hiringManagers.map((item) => item.email), ['manager@example.com'])
-  assert.deepEqual(result.oauthAttendees.map((item) => item.email), [
-    'recruiter@example.com',
-    'guest@example.com',
-  ])
+  try {
+    const result = await checkAvailability({
+      caseRecord: {
+        id: 'case-hm-only',
+        interviewWindowStartDate: '2099-06-15',
+        interviewWindowEndDate: '2099-06-16',
+        interviewTimezone: 'Australia/Sydney',
+        attendees: [
+          attendee('hiring_manager', 'manager@example.com', 'Manager One'),
+        ],
+      },
+      config: {},
+      logger: silentLogger(),
+      store: {},
+    })
+
+    assert.deepEqual(result.busyByEmail, {})
+    assert.deepEqual(result.sources, [])
+    assert.equal(result.mocked, false)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
-test('checks multiple managers in one Apps Script request and excludes external attendees', async () => {
+test('Google free-busy checks recruiters but excludes hiring managers', async () => {
   const originalFetch = globalThis.fetch
   let requestBody
   globalThis.fetch = async (url, options) => {
-    assert.equal(new URL(url).searchParams.get('token'), 'token')
+    assert.match(String(url), /calendar\/v3\/freeBusy/)
     requestBody = JSON.parse(options.body)
     return jsonResponse({
-      ok: true,
       calendars: {
-        'manager.one@example.com': {
+        'recruiter@example.com': {
           busy: [{ start: '2099-06-15T01:00:00Z', end: '2099-06-15T02:00:00Z' }],
         },
-        'manager.two@example.com': { busy: [] },
       },
-      errors: {},
     })
   }
 
@@ -46,88 +52,54 @@ test('checks multiple managers in one Apps Script request and excludes external 
     const result = await checkAvailability({
       caseRecord: {
         id: 'case-routing',
+        ownerSlackUserId: 'UOWNER',
         interviewWindowStartDate: '2099-06-15',
         interviewWindowEndDate: '2099-06-16',
         interviewTimezone: 'Australia/Sydney',
         attendees: [
           attendee('candidate', 'candidate@example.com'),
           attendee('recruiter', 'recruiter@example.com'),
-          attendee('hiring_manager', 'manager.one@example.com', 'Manager One'),
-          attendee('hiring_manager', 'manager.two@example.com', 'Manager Two'),
-          attendee('external', 'external@example.com'),
-          attendee('recipient', 'recipient@example.com'),
+          attendee('hiring_manager', 'manager@example.com', 'Manager One'),
+          attendee('guest', 'guest@example.com'),
+          { ...attendee('guest', 'external-guest@example.com'), source: 'external' },
         ],
       },
       config: {
-        google: {},
-        hiringManagerAvailability: {
-          url: 'https://script.google.com/macros/s/demo/exec',
-          token: 'token',
+        google: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          redirectUri: 'https://example.com/oauth',
+          sharedCalendarId: 'calendar@example.com',
         },
       },
       logger: silentLogger(),
-      store: {},
+      store: {
+        async getGoogleToken() {
+          return {
+            access_token: 'access-token',
+            expiry_date: Date.now() + 60 * 60 * 1000,
+          }
+        },
+      },
     })
 
-    assert.deepEqual(requestBody.attendees, [
-      { email: 'manager.one@example.com' },
-      { email: 'manager.two@example.com' },
+    assert.deepEqual(requestBody.items, [
+      { id: 'recruiter@example.com' },
+      { id: 'guest@example.com' },
     ])
-    assert.deepEqual(Object.keys(result.busyByEmail), [
-      'manager.one@example.com',
-      'manager.two@example.com',
-    ])
-    assert.equal(result.managerCount, 2)
-    assert.deepEqual(result.sources, ['apps_script_hm', 'google_oauth'])
-    assert.equal(result.mocked, true)
+    assert.deepEqual(Object.keys(result.busyByEmail), ['recruiter@example.com'])
+    assert.deepEqual(result.sources, ['google_oauth'])
+    assert.equal(result.mocked, false)
+    assert.equal('managerCount' in result, false)
   } finally {
     globalThis.fetch = originalFetch
   }
 })
 
-test('manager lookup failure blocks availability instead of returning mocked slots', async () => {
-  const originalFetch = globalThis.fetch
-  globalThis.fetch = async () => jsonResponse({
-    ok: true,
-    calendars: {},
-    errors: { 'manager@example.com': { reason: 'notFound' } },
-  })
-
-  try {
-    await assert.rejects(
-      checkAvailability({
-        caseRecord: {
-          id: 'case-failure',
-          interviewWindowStartDate: '2099-06-15',
-          interviewWindowEndDate: '2099-06-16',
-          interviewTimezone: 'Australia/Sydney',
-          attendees: [
-            attendee('recruiter', 'recruiter@example.com'),
-            attendee('hiring_manager', 'manager@example.com', 'Unavailable Manager'),
-          ],
-        },
-        config: {
-          google: {},
-          hiringManagerAvailability: {
-            url: 'https://script.google.com/macros/s/demo/exec',
-            token: 'token',
-          },
-        },
-        logger: silentLogger(),
-        store: {},
-      }),
-      (error) => error.code === 'hm_availability_incomplete' &&
-        error.managerNames.includes('Unavailable Manager')
-    )
-  } finally {
-    globalThis.fetch = originalFetch
-  }
-})
-
-test('custom invite recipients do not invoke either availability provider', async () => {
+test('custom invite recipients do not invoke calendar availability', async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => {
-    throw new Error('fetch should not be called')
+    throw new Error('calendar provider should not be called')
   }
 
   try {

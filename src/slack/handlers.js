@@ -1539,7 +1539,6 @@ export function registerSlackHandlers(app, context) {
   app.view('scheduling_phase_one', async ({ ack, body, view, client }) => {
     let schedulingCaseId = null
     let schedulingCaseRecord = null
-    let availabilityWindow = null
     try {
       let metadata = {}
       try {
@@ -1558,11 +1557,6 @@ export function registerSlackHandlers(app, context) {
 
       const windowStart = view.state.values.schedule_window_start_block?.schedule_window_start?.selected_date || ''
       const windowEnd = view.state.values.schedule_window_end_block?.schedule_window_end?.selected_date || ''
-      availabilityWindow = {
-        startDate: windowStart,
-        endDate: windowEnd,
-        timeZone: schedulingCaseRecord?.interviewTimezone || null,
-      }
       const durationStr = view.state.values.duration_block?.duration_select?.selected_option?.value || '30'
       const durationMinutes = parseInt(durationStr, 10)
 
@@ -1576,7 +1570,6 @@ export function registerSlackHandlers(app, context) {
       const caseRecord = await requireCase(store, caseId)
       if (!caseRecord) throw new Error('Case not found')
       schedulingCaseRecord = caseRecord
-      availabilityWindow.timeZone = caseRecord.interviewTimezone || null
 
       await ack({
         response_action: 'update',
@@ -1640,32 +1633,6 @@ export function registerSlackHandlers(app, context) {
         }, recentAudits)
       })
     } catch (error) {
-      const managerNames = Array.isArray(error?.managerNames) ? error.managerNames : []
-      const failureMessage = managerNames.length > 0 && !managerNames.every((name) => error.message.includes(name))
-        ? `${error.message} Affected hiring managers: ${managerNames.join(', ')}.`
-        : error.message
-
-      if (error?.name === 'HiringManagerAvailabilityError' && schedulingCaseId && store.updateCase) {
-        try {
-          await store.updateCase(schedulingCaseId, {
-            lastAvailabilityCheck: {
-              status: 'failed',
-              checkedAt: new Date().toISOString(),
-              window: availabilityWindow,
-              sources: ['apps_script_hm'],
-              managerCount: managerNames.length,
-              failureCode: error?.code || 'availability_check_failed',
-              failureReason: error.message,
-            }
-          })
-        } catch (persistError) {
-          logger.warn('scheduling_availability_failure_persist_failed', {
-            caseId: schedulingCaseId,
-            error: persistError.message,
-          })
-        }
-      }
-
       logger.error('scheduling_check_availability_error', {
         caseId: schedulingCaseId,
         code: error?.code || 'availability_check_failed',
@@ -1675,14 +1642,14 @@ export function registerSlackHandlers(app, context) {
       try {
         await client.views.update({
           view_id: body.view.id,
-          view: availabilityCheckErrorModal(schedulingCaseRecord || { id: schedulingCaseId }, failureMessage),
+          view: availabilityCheckErrorModal(schedulingCaseRecord || { id: schedulingCaseId }, error.message),
         })
       } catch (viewError) {
         logger.warn('scheduling_availability_error_modal_failed', { error: viewError.message })
         await client.chat.postEphemeral({
           channel: resolvePostingChannel(config, body.user.id),
           user: body.user.id,
-          text: `Could not check availability: ${failureMessage}`
+          text: `Could not check availability: ${error.message}`
         })
       }
     }

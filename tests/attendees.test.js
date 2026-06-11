@@ -296,7 +296,7 @@ test('includedAttendees filters to included only', () => {
   assert.equal(result[1].id, 'a3')
 })
 
-test('attendeesForFreeBusy includes only internal interview roles', () => {
+test('attendeesForFreeBusy includes recruiters and internal guests but excludes hiring managers', () => {
   const attendees = [
     { id: 'a1', email: 'a@test.com', role: 'candidate', included: true },
     { id: 'a2', email: 'b@test.com', role: 'hiring_manager', included: true },
@@ -309,7 +309,6 @@ test('attendeesForFreeBusy includes only internal interview roles', () => {
 
   const result = attendeesForFreeBusy(attendees)
   assert.deepEqual(result, [
-    { id: 'b@test.com' },
     { id: 'c@test.com' },
     { id: 'd@test.com' },
   ])

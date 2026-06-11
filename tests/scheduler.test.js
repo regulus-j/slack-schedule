@@ -425,6 +425,42 @@ test('detectConflicts detects double-booking across cases', () => {
   assert.ok(conflicts[0].message.includes('Bob Jones'))
 })
 
+test('detectConflicts still catches app-tracked hiring manager double-bookings', () => {
+  const conflicts = detectConflicts({
+    proposedSlot: { start: '2026-06-01T00:00:00.000Z', end: '2026-06-01T00:30:00.000Z' },
+    attendees: [
+      {
+        email: 'manager@opg.com',
+        included: true,
+        name: 'Hiring Manager',
+        role: 'hiring_manager',
+        required: true,
+      },
+    ],
+    busyPeriods: {},
+    existingCaseSchedules: [
+      {
+        id: 'case-2',
+        selectedSlot: { start: '2026-06-01T00:00:00.000Z', end: '2026-06-01T00:30:00.000Z' },
+        attendees: [
+          {
+            email: 'manager@opg.com',
+            included: true,
+            name: 'Hiring Manager',
+            role: 'hiring_manager',
+          },
+        ],
+        applicant: { firstName: 'Bob', lastName: 'Jones' },
+      },
+    ],
+    bufferMinutes: 15,
+  })
+
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].type, 'double_booking')
+  assert.equal(conflicts[0].attendeeEmail, 'manager@opg.com')
+})
+
 test('detectConflicts detects buffer violation (gap before slot)', () => {
   const conflicts = detectConflicts({
     proposedSlot: { start: '2026-06-01T00:30:00.000Z', end: '2026-06-01T01:00:00.000Z' },

@@ -56,16 +56,6 @@ export function loadConfig(env = process.env) {
       sheetName: mergedEnv.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME || null,
       sheetGid: mergedEnv.ROLE_ASSIGNMENT_EXPORT_SHEET_GID || null,
     },
-    hiringManagerAvailability: {
-      url: mergedEnv.HM_AVAILABILITY_SCRIPT_URL ||
-        mergedEnv.ROLE_ASSIGNMENT_EXPORT_URL ||
-        mergedEnv.RECRUITER_PHONE_EXPORT_URL ||
-        null,
-      token: mergedEnv.HM_AVAILABILITY_SCRIPT_TOKEN ||
-        mergedEnv.ROLE_ASSIGNMENT_EXPORT_TOKEN ||
-        mergedEnv.RECRUITER_PHONE_EXPORT_TOKEN ||
-        null,
-    },
     security: {
       encryptionKey: mergedEnv.APP_ENCRYPTION_KEY,
     },

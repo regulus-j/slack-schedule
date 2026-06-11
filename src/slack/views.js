@@ -776,7 +776,7 @@ export function availabilityCheckErrorModal(caseRecord, message) {
     blocks: [
       section(`*${caseTitle(caseRecord)}*`),
       section(`:warning: ${message}`),
-      section('No scheduling slots were shown. Check the Apps Script deployment and calendar access, then retry from the scheduling request.'),
+      section('No scheduling slots were shown. Check Google Calendar access, then retry from the scheduling request.'),
     ],
   }
 }
