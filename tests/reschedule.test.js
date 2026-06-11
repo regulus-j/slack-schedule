@@ -1637,6 +1637,10 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
 test('2nd/final candidate email describes the resume attachment and includes all meeting guests', async () => {
   const email = await buildScheduledCandidateEmail({
     ...baseCase,
+    recruiter: {
+      ...baseCase.recruiter,
+      phone: '+63 900 111 2222',
+    },
     templateId: '2nd-or-Final-invite',
     stageKey: 'final-interview',
     resumeLink: 'https://example.com/resume.pdf',
@@ -1655,6 +1659,8 @@ test('2nd/final candidate email describes the resume attachment and includes all
 
   assert.match(email.body, /The applicant's resume is attached to this email/);
   assert.match(email.plainBody, /The applicant's resume is attached to this email/);
+  assert.match(email.body, /Jamal Al Badi: \+63 900 111 2222/);
+  assert.match(email.plainBody, /Jamal Al Badi: \+63 900 111 2222/);
   assert.doesNotMatch(email.body, /files\.slack\.com|example\.com\/resume/);
   assert.match(email.body, /Meeting guests:/);
   assert.match(email.body, /Alex Reyes: alex@example\.com/);
@@ -1665,6 +1671,10 @@ test('2nd/final candidate email describes the resume attachment and includes all
 test('1st interview candidate email includes all meeting guests', async () => {
   const email = await buildScheduledCandidateEmail({
     ...baseCase,
+    recruiter: {
+      ...baseCase.recruiter,
+      phone: '+63 900 111 2222',
+    },
     templateId: '1st-interview-invite',
     stageKey: '1st-interview',
     currentSchedule: {
@@ -1681,6 +1691,8 @@ test('1st interview candidate email includes all meeting guests', async () => {
   });
 
   assert.match(email.body, /Meeting guests:/);
+  assert.match(email.body, /Jamal Al Badi: \+63 900 111 2222/);
+  assert.match(email.plainBody, /Jamal Al Badi: \+63 900 111 2222/);
   assert.match(email.body, /Alex Reyes: alex@example\.com/);
   assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);
   assert.match(email.body, /Ana Cruz: ana@example\.com/);

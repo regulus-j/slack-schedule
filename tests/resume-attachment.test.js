@@ -58,6 +58,52 @@ test('resolves missing Slack file metadata through files.info', async () => {
   assert.equal(attachment.filename, 'candidate.docx')
 })
 
+test('uses complete stored metadata without calling files.info', async () => {
+  let filesInfoCalled = false
+  const attachment = await resolveResumeAttachment({
+    caseRecord: {
+      resumeFile: {
+        id: 'F456',
+        name: 'candidate.pdf',
+        mimeType: 'application/pdf',
+        downloadUrl: 'https://files.slack.com/files-pri/T123-F456/candidate.pdf',
+      },
+    },
+    client: {
+      files: {
+        async info() {
+          filesInfoCalled = true
+          throw new Error('files.info should not be called')
+        },
+      },
+    },
+    botToken: 'xoxb-test',
+    fetchImpl: async () => new Response(Buffer.from('pdf'), { status: 200 }),
+  })
+
+  assert.equal(filesInfoCalled, false)
+  assert.equal(attachment.filename, 'candidate.pdf')
+})
+
+test('explains that missing files:read requires a Slack app reinstall', async () => {
+  await assert.rejects(
+    resolveResumeAttachment({
+      caseRecord: { resumeFile: { id: 'F456' } },
+      client: {
+        files: {
+          async info() {
+            const error = new Error('An API error occurred: missing_scope')
+            error.data = { error: 'missing_scope', needed: 'files:read' }
+            throw error
+          },
+        },
+      },
+      botToken: 'xoxb-test',
+    }),
+    /missing the files:read scope.*Reinstall the app/i,
+  )
+})
+
 test('rejects resumes larger than the configured source limit', async () => {
   await assert.rejects(
     resolveResumeAttachment({
@@ -65,6 +111,7 @@ test('rejects resumes larger than the configured source limit', async () => {
         resumeFile: {
           id: 'F789',
           name: 'large.pdf',
+          mimeType: 'application/pdf',
           url_private_download: 'https://files.slack.com/files-pri/T123-F789/large.pdf',
         },
       },

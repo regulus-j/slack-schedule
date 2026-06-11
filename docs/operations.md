@@ -33,6 +33,10 @@ Recommended Render settings:
 
 Run `npm run migrate` (or the Compose `migrate` service) against the Postgres database before production launch. If `DATABASE_URL` is present, the app uses Postgres. Without it, local development falls back to JSON state in `data/runtime/state.json`.
 
+The Slack app requires the `files:read` bot scope to attach private resumes to
+candidate emails. Updating `manifest.json` does not update an installed app's
+token automatically. Reinstall the Slack app after adding or changing scopes.
+
 ## Security
 
 - Keep `.env` local only.

@@ -7,18 +7,25 @@ export async function resolveResumeAttachment({
   maxBytes = 15 * 1024 * 1024,
   fetchImpl = fetch,
 }) {
-  const stored = normalizeResumeFile(caseRecord?.resumeFile, caseRecord?.resumeLink)
+  const resumeFile = caseRecord?.resumeFile
+  const stored = normalizeResumeFile(resumeFile, caseRecord?.resumeLink)
   if (!stored.id && !stored.downloadUrl) {
     throw new Error('The required resume file is missing. Upload the resume again before sending.')
   }
 
   let file = stored
-  if (file.id && client?.files?.info) {
-    const result = await client.files.info({ file: file.id })
-    file = normalizeResumeFile(result?.file, file.downloadUrl || caseRecord?.resumeLink)
-  } else if ((!file.downloadUrl || !file.name || !file.mimeType) && file.id) {
+  if (file.id && !hasCompleteSlackFileMetadata(resumeFile)) {
     if (!client?.files?.info) {
       throw new Error('Slack file metadata is unavailable. Upload the resume again before sending.')
+    }
+    try {
+      const result = await client.files.info({ file: file.id })
+      file = normalizeResumeFile(result?.file, file.downloadUrl || caseRecord?.resumeLink)
+    } catch (error) {
+      if (error?.data?.error === 'missing_scope') {
+        throw new Error('The Slack app is missing the files:read scope. Reinstall the app in the workspace, then retry scheduling.')
+      }
+      throw error
     }
   }
 
@@ -73,6 +80,15 @@ export function normalizeResumeFile(file, fallbackUrl = '') {
 export function slackFileId(value) {
   const match = String(value || '').match(/(?:^|[-/])(F[A-Z0-9]+)(?:[/?-]|$)/i)
   return match?.[1] || ''
+}
+
+function hasCompleteSlackFileMetadata(file) {
+  if (!file || typeof file !== 'object') return false
+  return Boolean(
+    clean(file.downloadUrl || file.url_private_download) &&
+    clean(file.name) &&
+    clean(file.mimeType || file.mimetype)
+  )
 }
 
 function filenameFromUrl(value) {

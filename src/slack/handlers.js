@@ -2329,7 +2329,7 @@ export function registerSlackHandlers(app, context) {
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
         user: body.user.id,
-        text: `Could not create the calendar invite: ${error.message}`,
+        text: `Could not complete scheduling: ${error.message}`,
       })
     }
   });
