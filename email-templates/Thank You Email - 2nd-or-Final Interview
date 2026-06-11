@@ -1,26 +1,29 @@
 Subject: We Appreciate Your Application and Participation
 
 Body:
-<html><body style="font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;">
-<p style="margin: 0 0 14px 0;">Hi <strong>[applicant_first_name]</strong>,</p>
+<html>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#000000;font-size:14px;line-height:1.38;margin:0;padding:0;">
+<p style="line-height:1.38;margin-top:0;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Hi [applicant_first_name],</strong></span></span></p>
 
-<p style="margin: 0 0 14px 0;">Thank you for taking the time to participate in the final interview for the <strong>[job_title]</strong> position. We truly appreciate the effort you invested in completing your application and sharing your experience, skills, and insights with us.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">Thank you for taking the time to participate in the final interview for the <strong style="font-weight:700">[job_title]</strong> position. We truly appreciate the effort you invested in completing your application and sharing your experience, skills, and insights with us.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">We wanted to take a moment to sincerely thank you for your time and participation throughout the process.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">We wanted to take a moment to sincerely thank you for your time and participation throughout the process.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">We encourage you to stay connected - follow us on our social media channels to stay updated on our latest opportunities:</p>
-<ul style="margin: 0 0 14px 0; padding-left: 20px;">
-<li style="margin-bottom: 8px;"><a href="https://www.facebook.com/OPGteam/">Facebook</a></li>
-<li style="margin-bottom: 8px;"><a href="https://www.instagram.com/_opgteam/">Instagram</a></li>
-<li style="margin-bottom: 8px;">TikTok</li>
-<li style="margin-bottom: 8px;"><a href="https://www.linkedin.com/company/outsourced-pro-global/">LinkedIn</a></li>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">We encourage you to stay connected - follow us on our social media channels to stay updated on our latest opportunities:</span></span></p>
+
+<ul style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.38;color:#000000;margin-top:0;margin-bottom:16px;padding-left:22px;">
+<li style="margin-bottom:8px;"><a href="https://www.facebook.com/OPGteam/" style="color:#1155cc;text-decoration:underline">Facebook</a></li>
+<li style="margin-bottom:8px;"><a href="https://www.instagram.com/_opgteam/" style="color:#1155cc;text-decoration:underline">Instagram</a></li>
+<li style="margin-bottom:8px;">TikTok</li>
+<li style="margin-bottom:8px;"><a href="https://www.linkedin.com/company/outsourced-pro-global/" style="color:#1155cc;text-decoration:underline">LinkedIn</a></li>
 </ul>
 
-<p style="margin: 0 0 14px 0;">You're also welcome to refer others who may be a great fit.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">You're also welcome to refer others who may be a great fit.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">It was a pleasure learning more about you, and we sincerely value your interest in joining Outsourced Pro Global.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">It was a pleasure learning more about you, and we sincerely value your interest in joining Outsourced Pro Global.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">Recruiter contact: [recruiter_phone_line]</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Recruiter contact:</strong> [recruiter_phone_line]</span></span></p>
 
 [signature]
-</body></html>
+</body>
+</html>

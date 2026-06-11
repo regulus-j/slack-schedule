@@ -20,6 +20,7 @@ import {
   buildScheduledCandidateEmail,
   buildTemplateVariables,
   ccRecipientsFromAttendees,
+  emailBodiesFromPreview,
   isScheduleWorkflowTrigger,
   mappedHiringManagersForRole,
   mappedRecruitersForRole,
@@ -1659,6 +1660,11 @@ test('2nd/final candidate email describes the resume attachment and includes all
 
   assert.match(email.body, /The applicant's resume is attached to this email/);
   assert.match(email.plainBody, /The applicant's resume is attached to this email/);
+  assert.match(email.body, /font-family:Arial,Helvetica,sans-serif/);
+  assert.match(email.body, /font-size:14px/);
+  assert.match(email.body, /line-height:1\.38/);
+  assert.match(email.body, /margin-top:16px;margin-bottom:16px/);
+  assert.match(email.body, /<strong style="font-weight:700">Friendly Reminders:<\/strong>/);
   assert.match(email.body, /Jamal Al Badi: \+63 900 111 2222/);
   assert.match(email.plainBody, /Jamal Al Badi: \+63 900 111 2222/);
   assert.doesNotMatch(email.body, /files\.slack\.com|example\.com\/resume/);
@@ -1697,6 +1703,31 @@ test('1st interview candidate email includes all meeting guests', async () => {
   assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);
   assert.match(email.body, /Ana Cruz: ana@example\.com/);
 });
+
+test('unchanged finalize preview preserves rich scheduling template HTML', () => {
+  const rendered = {
+    body: '<html><body><p style="line-height:1.38"><strong>Hi Alex</strong></p></body></html>',
+    htmlBody: '<html><body><p style="line-height:1.38"><strong>Hi Alex</strong></p></body></html>',
+    plainBody: 'Hi Alex',
+  }
+
+  const emailBodies = emailBodiesFromPreview(rendered, 'Hi Alex')
+
+  assert.equal(emailBodies.htmlBody, rendered.htmlBody)
+  assert.equal(emailBodies.plainBody, rendered.plainBody)
+  assert.match(emailBodies.htmlBody, /line-height:1\.38/)
+})
+
+test('edited finalize preview safely formats the edited plain text', () => {
+  const emailBodies = emailBodiesFromPreview({
+    htmlBody: '<html><body><strong>Original</strong></body></html>',
+    plainBody: 'Original',
+  }, 'Edited body')
+
+  assert.match(emailBodies.htmlBody, /Edited body/)
+  assert.doesNotMatch(emailBodies.htmlBody, /Original/)
+  assert.match(emailBodies.plainBody, /Edited body/)
+})
 
 test('scheduled candidate email renders selected duration from stage overrides', async () => {
   const email = await buildScheduledCandidateEmail({

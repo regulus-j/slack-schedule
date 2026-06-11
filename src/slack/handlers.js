@@ -1388,7 +1388,8 @@ export function registerSlackHandlers(app, context) {
       return;
     }
 
-    const emailBodies = signedEmailBodiesFromPlainText(plainBody);
+    const renderedCandidateEmail = await buildScheduledCandidateEmail(caseRecord)
+    const emailBodies = emailBodiesFromPreview(renderedCandidateEmail, plainBody)
     const email = {
       subject,
       body: emailBodies.htmlBody,
@@ -1457,7 +1458,16 @@ export function registerSlackHandlers(app, context) {
       return;
     }
     const plainBody = view.state.values.email_body_block.email_body.value || '';
-    const emailBodies = signedEmailBodiesFromPlainText(plainBody);
+    const templates = await loadTemplates()
+    const template = templates.find((item) => item.id === 'interview-reminder')
+    const renderedReminder = template
+      ? renderTemplate(template, buildTemplateVariables(caseRecord))
+      : buildReminderEmail(caseRecord)
+    const emailBodies = emailBodiesFromPreview({
+      body: renderedReminder.body,
+      htmlBody: renderedReminder.htmlBody || renderedReminder.body,
+      plainBody: renderedReminder.plainBody,
+    }, plainBody)
     const email = {
       kind: 'manual_reminder',
       subject: view.state.values.email_subject_block.email_subject.value,
@@ -2212,7 +2222,6 @@ export function registerSlackHandlers(app, context) {
         return
       }
 
-      const emailBodies = signedEmailBodiesFromPlainText(emailBody)
       const finalCaseRecord = {
         ...caseRecord,
         stageKey: scheduleInput.stageKey || caseRecord.stageKey,
@@ -2230,8 +2239,10 @@ export function registerSlackHandlers(app, context) {
           durationMinutes: scheduleInput.durationMinutes,
         }),
       }
+      const renderedCandidateEmail = await buildScheduledCandidateEmail(previewCaseRecord)
+      const emailBodies = emailBodiesFromPreview(renderedCandidateEmail, emailBody)
       const scheduledCandidateEmail = {
-        ...(await buildScheduledCandidateEmail(previewCaseRecord)),
+        ...renderedCandidateEmail,
         subject: emailSubject,
         ...emailBodies,
       }
@@ -2249,7 +2260,7 @@ export function registerSlackHandlers(app, context) {
         store,
         eventInput: {
           ...scheduleInput,
-          description: plainTextToHtml(emailBody),
+          description: stripSignatureHtml(scheduledCandidateEmail.htmlBody || plainTextToHtml(emailBody)),
         },
       });
 
@@ -3262,6 +3273,22 @@ export async function buildScheduledCandidateEmail(caseRecord) {
     cc: candidateInviteCcRecipients(caseRecord),
     from: caseRecord.recruiter?.email,
   }
+}
+
+export function emailBodiesFromPreview(renderedEmail, submittedPlainBody) {
+  const submitted = normalizePreviewText(submittedPlainBody)
+  const renderedPlain = normalizePreviewText(renderedEmail?.plainBody)
+  if (submitted === renderedPlain && (renderedEmail?.htmlBody || renderedEmail?.body)) {
+    return {
+      htmlBody: renderedEmail.htmlBody || renderedEmail.body,
+      plainBody: renderedEmail.plainBody,
+    }
+  }
+  return signedEmailBodiesFromPlainText(submittedPlainBody)
+}
+
+function normalizePreviewText(value) {
+  return String(value || '').replace(/\r\n/g, '\n').trim()
 }
 
 export function buildCancellationEmail(caseRecord) {

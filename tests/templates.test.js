@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   TEMPLATE_METADATA,
   loadSchedulingTemplates,
+  loadTemplates,
   normalizeTemplateText,
   parseTemplate,
   renderTemplate,
@@ -163,6 +164,23 @@ test('loadSchedulingTemplates only exposes interview invite templates', async ()
     'job-offer-discussion',
   ])
   assert.ok(!templates.some((template) => template.id.endsWith('.eml')))
+})
+
+test('all operational email templates use the shared Arial 14px formatting standard', async () => {
+  const templates = await loadTemplates()
+  const operationalTemplates = templates.filter((template) => Object.hasOwn(TEMPLATE_METADATA, template.id))
+
+  assert.deepEqual(
+    operationalTemplates.map((template) => template.id).sort(),
+    Object.keys(TEMPLATE_METADATA).sort(),
+  )
+  for (const template of operationalTemplates) {
+    assert.match(template.body, /font-family:Arial,Helvetica,sans-serif/, template.id)
+    assert.match(template.body, /font-size:14px/, template.id)
+    assert.match(template.body, /line-height:1\.38/, template.id)
+    assert.match(template.body, /margin-bottom:16px/, template.id)
+    assert.match(template.body, /\[signature\]/, template.id)
+  }
 })
 
 test('stripSignatureHtml removes signature and wrapper tags from rendered template body', () => {

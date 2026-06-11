@@ -1,50 +1,52 @@
 Subject: Let's Connect About Your Application
 
 Body:
-<html><body style="font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;">
-<p style="margin: 0 0 14px 0;">Hi <strong>[applicant_first_name]</strong>,</p>
+<html>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#000000;font-size:14px;line-height:1.38;margin:0;padding:0;">
+<p style="line-height:1.38;margin-top:0;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Hi [applicant_first_name],</strong></span></span></p>
 
-<p style="margin: 0 0 14px 0;">Thank you so much for applying for the <strong>[job_title]</strong> role at <strong>Outsourced Pro Global</strong>. We're excited to learn more about you and share what makes our team a great place to grow.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">Thank you so much for applying for the <strong style="font-weight:700">[job_title]</strong> role at <strong style="font-weight:700">Outsourced Pro Global</strong>. We're excited to learn more about you and share what makes our team a great place to grow.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">We'd love to invite you for a <strong>[interview_duration_text] Zoom first interview</strong> with our Recruitment Specialist. This is a great chance for us to get to know each other better and see if this role and our company are the right fit for you.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">We'd love to invite you for a <strong style="font-weight:700">[interview_duration_text] Zoom first interview</strong> with our Recruitment Specialist. This is a great chance for us to get to know each other better and see if this role and our company are the right fit for you.</span></span></p>
 
-<p style="margin: 0 0 8px 0;"><strong>Interview details:</strong></p>
-<p style="margin: 0 0 14px 0; padding: 12px 16px; background-color: #f5f5f5; border-left: 3px solid #cccccc; line-height: 2;">
-  <strong>Date:</strong> [Date]<br>
-  <strong>Time:</strong> [Time] [Timezone]<br>
-  <strong>Platform:</strong> Zoom<br>
-  <strong>Zoom Link:</strong> <a href="[Link]">[Link]</a>
-</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:8px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Interview details:</strong></span></span></p>
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;color:#000000;margin:0 0 16px 0;padding:14px 16px;background-color:#f5f5f5;border-left:3px solid #cccccc;">
+<strong style="font-weight:700">Date:</strong> [Date]<br>
+<strong style="font-weight:700">Time:</strong> [Time] [Timezone]<br>
+<strong style="font-weight:700">Platform:</strong> Zoom<br>
+<strong style="font-weight:700">Zoom Link:</strong> <a href="[Link]" style="color:#1155cc;text-decoration:underline">[Link]</a>
+</div>
 
-<p style="margin: 0 0 8px 0;"><strong>Meeting guests:</strong></p>
-<p style="margin: 0 0 14px 0; line-height: 1.8;">[guest_list_text]</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:8px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Meeting guests:</strong></span></span></p>
+<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;color:#000000;margin-top:0;margin-bottom:16px;white-space:pre-wrap">[guest_list_text]</p>
 
-<p style="margin: 0 0 14px 0;">To help you feel confident and prepared, here are <strong>a few tips for a smooth and successful interview</strong>:</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">To help you feel confident and prepared, here are <strong style="font-weight:700">a few tips for a smooth and successful interview</strong>:</span></span></p>
 
-<ul style="margin: 0 0 14px 0; padding-left: 20px;">
-<li style="margin-bottom: 8px;">Take some time to review the <strong>job description</strong> and learn more <strong>about our client company: <a href="https://freedompropertyinvestors.com.au/">Freedom Property Investors</a>.</strong></li>
-<li style="margin-bottom: 8px;">Make sure your <strong>internet connection, camera, and microphone</strong> are working properly ahead of time.</li>
-<li style="margin-bottom: 8px;">Choose a <strong>quiet, distraction-free space</strong> where you can focus comfortably.</li>
-<li style="margin-bottom: 8px;">We recommend joining the meeting 5-10 minutes early.</li>
-<li style="margin-bottom: 8px;">Be ready to share your experiences, achievements, and how your skills align with the role.</li>
-<li style="margin-bottom: 8px;">Prepare a few questions - this is a great way to show your interest and learn more about the opportunity.</li>
+<ul style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.38;color:#000000;margin-top:0;margin-bottom:16px;padding-left:22px;">
+<li style="margin-bottom:8px;">Take some time to review the <strong style="font-weight:700">job description</strong> and learn more <strong style="font-weight:700">about our client company: <a href="https://freedompropertyinvestors.com.au/" style="color:#1155cc;text-decoration:underline">Freedom Property Investors</a>.</strong></li>
+<li style="margin-bottom:8px;">Make sure your <strong style="font-weight:700">internet connection, camera, and microphone</strong> are working properly ahead of time.</li>
+<li style="margin-bottom:8px;">Choose a <strong style="font-weight:700">quiet, distraction-free space</strong> where you can focus comfortably.</li>
+<li style="margin-bottom:8px;">We recommend joining the meeting 5-10 minutes early.</li>
+<li style="margin-bottom:8px;">Be ready to share your experiences, achievements, and how your skills align with the role.</li>
+<li style="margin-bottom:8px;">Prepare a few questions - this is a great way to show your interest and learn more about the opportunity.</li>
 </ul>
 
-<p style="margin: 0 0 14px 0;">Please also <strong>avoid the following during the interview</strong>:</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">Please also <strong style="font-weight:700">avoid the following during the interview</strong>:</span></span></p>
 
-<ul style="margin: 0 0 14px 0; padding-left: 20px;">
-<li style="margin-bottom: 8px;">Joining the interview from a noisy public place, while travelling, or in an environment with frequent interruptions.</li>
-<li style="margin-bottom: 8px;">Turning off your camera unless this has been discussed and agreed upon with the recruiter beforehand.</li>
-<li style="margin-bottom: 8px;">Multitasking, taking other calls, checking emails, or engaging in other activities that may distract you during the interview.</li>
-<li style="margin-bottom: 8px;">Using inappropriate language or speaking negatively about previous employers, managers, colleagues, or clients.</li>
-<li style="margin-bottom: 8px;">Having another person answer questions, provide prompts, or participate in the interview on your behalf.</li>
-<li style="margin-bottom: 8px;">Using AI tools, chatbots, transcription assistants, or external resources to generate, suggest, or answer interview questions.</li>
-<li style="margin-bottom: 8px;">Missing the interview without prior notice. If you need to reschedule, please inform us as early as possible so alternative arrangements can be made.</li>
+<ul style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.38;color:#000000;margin-top:0;margin-bottom:16px;padding-left:22px;">
+<li style="margin-bottom:8px;">Joining the interview from a noisy public place, while travelling, or in an environment with frequent interruptions.</li>
+<li style="margin-bottom:8px;">Turning off your camera unless this has been discussed and agreed upon with the recruiter beforehand.</li>
+<li style="margin-bottom:8px;">Multitasking, taking other calls, checking emails, or engaging in other activities that may distract you during the interview.</li>
+<li style="margin-bottom:8px;">Using inappropriate language or speaking negatively about previous employers, managers, colleagues, or clients.</li>
+<li style="margin-bottom:8px;">Having another person answer questions, provide prompts, or participate in the interview on your behalf.</li>
+<li style="margin-bottom:8px;">Using AI tools, chatbots, transcription assistants, or external resources to generate, suggest, or answer interview questions.</li>
+<li style="margin-bottom:8px;">Missing the interview without prior notice. If you need to reschedule, please inform us as early as possible so alternative arrangements can be made.</li>
 </ul>
 
-<p style="margin: 0 0 14px 0;">If you have any questions, please feel free to reply to this email or contact your Recruitment Specialist at <strong>[recruiter_phone_line]</strong> - we're happy to assist.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">If you have any questions, please feel free to reply to this email or contact your Recruitment Specialist at <strong style="font-weight:700">[recruiter_phone_line]</strong> - we're happy to assist.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">We're excited to connect with you and wish you the best as you prepare for your interview.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">We're excited to connect with you and wish you the best as you prepare for your interview.</span></span></p>
 
 [signature]
-</body></html>
+</body>
+</html>

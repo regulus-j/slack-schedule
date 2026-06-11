@@ -1,20 +1,22 @@
 Subject: Still Interested in the [job_title] Role? Let's Connect!
 
 Body:
-<html><body style="font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;">
-<p style="margin: 0 0 14px 0;">Hi <strong>[applicant_first_name]</strong>,</p>
+<html>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#000000;font-size:14px;line-height:1.38;margin:0;padding:0;">
+<p style="line-height:1.38;margin-top:0;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Hi [applicant_first_name],</strong></span></span></p>
 
-<p style="margin: 0 0 14px 0;">I hope you're doing well. We wanted to check in and see if you're still interested in the <strong>[job_title]</strong> role with Outsourced Pro Global.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">I hope you're doing well. We wanted to check in and see if you're still interested in the <strong style="font-weight:700">[job_title]</strong> role with Outsourced Pro Global.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">Your application caught our attention, and we believe your skills and experience align well with what we're looking for. We're excited about the possibility of you joining our team.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">Your application caught our attention, and we believe your skills and experience align well with what we're looking for. We're excited about the possibility of you joining our team.</span></span></p>
 
-<p style="margin: 0 0 14px 0;">If you'd like to move forward, simply schedule an interview at a time that works best for you using the link below:</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">If you'd like to move forward, simply schedule an interview at a time that works best for you using the link below:</span></span></p>
 
-<p style="margin: 0 0 14px 0;"><a href="[Schedule Your Interview Here]" style="display: inline-block; background-color: #0057b8; color: #ffffff; font-weight: bold; padding: 10px 20px; border-radius: 4px; text-decoration: none; font-size: 14px;">Schedule Your Interview</a></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><a href="[Schedule Your Interview Here]" style="display:inline-block;background-color:#0057b8;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;line-height:1.38;padding:10px 20px;border-radius:4px;text-decoration:none;">Schedule Your Interview</a></p>
 
-<p style="margin: 0 0 14px 0;">Should you have any concerns or questions, please email, call, or text your Recruitment Specialist: [recruiter_phone_line]</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">Should you have any concerns or questions, please email, call, or text your Recruitment Specialist: <strong style="font-weight:700">[recruiter_phone_line]</strong></span></span></p>
 
-<p style="margin: 0 0 14px 0;">Thank you for considering Outsourced Pro Global as your next career step. We look forward to connecting with you soon.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">Thank you for considering Outsourced Pro Global as your next career step. We look forward to connecting with you soon.</span></span></p>
 
 [signature]
-</body></html>
+</body>
+</html>
