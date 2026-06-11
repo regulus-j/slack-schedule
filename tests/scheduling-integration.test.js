@@ -254,8 +254,8 @@ test('integration: end-to-end from stage resolution through ranked slots', () =>
 
   // 6. Get free/busy format
   const fbAttendees = attendeesForFreeBusy(included)
-  assert.ok(fbAttendees.length >= 2)
-  assert.deepEqual(fbAttendees[0], { id: 'jane@test.com' })
+  assert.equal(fbAttendees.length, 1)
+  assert.deepEqual(fbAttendees[0], { id: 'sarah@opg.com' })
 
   // 7. Generate slots with 45 min duration (2nd-or-final typical)
   const slots = generateCandidateSlots({

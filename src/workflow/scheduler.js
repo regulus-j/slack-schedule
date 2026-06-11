@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { BUSINESS_DAY_START, BUSINESS_DAY_END, SYDNEY_TIME_ZONE, formatDateForInput, localDateTimeToUtc } from '../time.js'
 import { checkFreeBusy } from '../services/google.js'
+import { checkHiringManagerAvailability } from '../services/hm-availability.js'
 import { normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from './stage-rules.js'
 import { normalizeAttendees, includedAttendees, attendeesForFreeBusy } from './attendees.js'
 
@@ -165,11 +166,18 @@ export function generateCandidateSlots({
 
 export async function checkAvailability({ caseRecord, config, logger, store }) {
   const included = includedAttendees(caseRecord.attendees || [])
-  const calendarAttendees = attendeesForFreeBusy(included)
+  const { hiringManagers, oauthAttendees } = partitionAvailabilityAttendees(included)
+  const calendarAttendees = attendeesForFreeBusy(oauthAttendees)
 
-  if (calendarAttendees.length === 0) {
+  if (calendarAttendees.length === 0 && hiringManagers.length === 0) {
     logger.warn('scheduler_no_calendar_attendees', { caseId: caseRecord.id })
-    return { slots: (caseRecord._candidateSlots || []).map((s) => ({ ...s, allAvailable: true })), checkedAt: new Date().toISOString() }
+    return {
+      busyByEmail: {},
+      mocked: false,
+      checkedAt: new Date().toISOString(),
+      sources: [],
+      managerCount: 0,
+    }
   }
 
   const windowStart = caseRecord.interviewWindowStartDate || caseRecord.interviewWindowStart
@@ -188,20 +196,35 @@ export async function checkAvailability({ caseRecord, config, logger, store }) {
 
   try {
     const recruiterId = caseRecord.ownerSlackUserId || caseRecord.recruiter?.slackUserId || caseRecord.recruiter?.id || null
-    const freeBusyResult = await checkFreeBusy({
-      config,
-      logger,
-      attendees: calendarAttendees,
-      windows,
-      store,
-      recruiterId
-    })
+    const oauthPromise = calendarAttendees.length > 0
+      ? checkFreeBusy({
+          config,
+          logger,
+          attendees: calendarAttendees,
+          windows,
+          store,
+          recruiterId
+        }).catch((error) => {
+          logger.warn('scheduler_oauth_freebusy_failed', { caseId: caseRecord.id, error: error.message })
+          return { mocked: true, busy: {}, error: error.message }
+        })
+      : Promise.resolve({ mocked: false, busy: {} })
+    const managerPromise = hiringManagers.length > 0
+      ? checkHiringManagerAvailability({
+          config,
+          logger,
+          attendees: hiringManagers,
+          windows,
+        })
+      : Promise.resolve({ busyByEmail: {}, source: null })
 
-    const busyByEmail = {}
+    const [freeBusyResult, managerResult] = await Promise.all([oauthPromise, managerPromise])
+
+    const busyByEmail = { ...managerResult.busyByEmail }
     if (!freeBusyResult.mocked && freeBusyResult.busy) {
       const calendars = freeBusyResult.busy
       for (const [email, calendar] of Object.entries(calendars)) {
-        busyByEmail[email] = (calendar.busy || []).map((b) => ({
+        busyByEmail[email.toLowerCase()] = (calendar.busy || []).map((b) => ({
           start: isoOrDateToIso(b.start),
           end: isoOrDateToIso(b.end)
         }))
@@ -218,16 +241,40 @@ export async function checkAvailability({ caseRecord, config, logger, store }) {
     return {
       busyByEmail,
       mocked: freeBusyResult.mocked || false,
-      checkedAt: new Date().toISOString()
+      checkedAt: new Date().toISOString(),
+      timeMin: windows[0].timeMin,
+      timeMax: windows[0].timeMax,
+      sources: [
+        ...(managerResult.source ? [managerResult.source] : []),
+        ...(calendarAttendees.length > 0 ? ['google_oauth'] : []),
+      ],
+      managerCount: hiringManagers.length,
     }
   } catch (error) {
+    if (error?.name === 'HiringManagerAvailabilityError') throw error
     logger.warn('scheduler_freebusy_failed', { caseId: caseRecord.id, error: error.message })
     return {
       busyByEmail: {},
       mocked: true,
       error: error.message,
-      checkedAt: new Date().toISOString()
+      checkedAt: new Date().toISOString(),
+      timeMin: windows[0].timeMin,
+      timeMax: windows[0].timeMax,
+      sources: calendarAttendees.length > 0 ? ['google_oauth'] : [],
+      managerCount: hiringManagers.length,
     }
+  }
+}
+
+export function partitionAvailabilityAttendees(attendees) {
+  const included = includedAttendees(attendees)
+  return {
+    hiringManagers: included.filter((attendee) => attendee.role === 'hiring_manager' && attendee.email),
+    oauthAttendees: included.filter((attendee) =>
+      ['recruiter', 'guest'].includes(attendee.role) &&
+      attendee.email &&
+      attendee.source !== 'external'
+    ),
   }
 }
 
@@ -498,6 +545,14 @@ export async function runSchedulingPipeline({ caseRecord, config, logger, store 
   })
 
   const busyByEmail = availabilityResult.busyByEmail || {}
+  const availabilityCheck = {
+    status: 'success',
+    checkedAt: availabilityResult.checkedAt,
+    window: { timeMin: availabilityResult.timeMin, timeMax: availabilityResult.timeMax },
+    sources: availabilityResult.sources || [],
+    managerCount: availabilityResult.managerCount || 0,
+    mocked: Boolean(availabilityResult.mocked),
+  }
 
   if (availabilityResult.mocked) {
     warnings.push('Calendar availability check is mocked — all slots shown as available.')
@@ -538,7 +593,8 @@ export async function runSchedulingPipeline({ caseRecord, config, logger, store 
     allSlots: ranked,
     warnings,
     stageRules,
-    attendees: allAttendees
+    attendees: allAttendees,
+    availabilityCheck,
   }
 }
 

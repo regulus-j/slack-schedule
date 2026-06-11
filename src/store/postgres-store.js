@@ -46,6 +46,20 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     return Array.isArray(value) ? value : [];
   }
 
+  function normalizeJson(value) {
+    if (!value || typeof value === 'object') return value || null;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+
+  function serializeJson(value) {
+    if (value == null) return null;
+    return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+
   function rowToCase(row) {
     return {
       id: row.id,
@@ -97,7 +111,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       attendanceOverrides: row.attendance_overrides || {},
       externalAttendees: normalizeArray(row.external_attendees),
       customInvite: row.custom_invite || null,
-      lastAvailabilityCheck: row.last_availability_check,
+      lastAvailabilityCheck: normalizeJson(row.last_availability_check),
       selectedSlot: row.selected_slot,
     };
   }
@@ -527,7 +541,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           input.stageOverrides ? JSON.stringify(input.stageOverrides) : JSON.stringify({}), // $21
           input.attendanceOverrides ? JSON.stringify(input.attendanceOverrides) : JSON.stringify({}), // $22
           input.externalAttendees ? JSON.stringify(input.externalAttendees) : JSON.stringify([]),    // $23
-          input.lastAvailabilityCheck || null,                             // $24
+          serializeJson(input.lastAvailabilityCheck),                      // $24
           input.selectedSlot ? JSON.stringify(input.selectedSlot) : null,  // $25
           input.customInvite ? JSON.stringify(input.customInvite) : JSON.stringify({}), // $26
         ],
@@ -651,7 +665,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           merged.stageOverrides ? JSON.stringify(merged.stageOverrides) : JSON.stringify({}),
           merged.attendanceOverrides ? JSON.stringify(merged.attendanceOverrides) : JSON.stringify({}),
           merged.externalAttendees ? JSON.stringify(merged.externalAttendees) : JSON.stringify([]),
-          merged.lastAvailabilityCheck || null,
+          serializeJson(merged.lastAvailabilityCheck),
           merged.selectedSlot || null,
           merged.customInvite ? JSON.stringify(merged.customInvite) : JSON.stringify({}),
         ],

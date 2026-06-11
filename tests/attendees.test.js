@@ -296,18 +296,23 @@ test('includedAttendees filters to included only', () => {
   assert.equal(result[1].id, 'a3')
 })
 
-test('attendeesForFreeBusy returns { id: email }[] format for included attendees with email', () => {
+test('attendeesForFreeBusy includes only internal interview roles', () => {
   const attendees = [
     { id: 'a1', email: 'a@test.com', role: 'candidate', included: true },
-    { id: 'a2', email: 'b@test.com', role: 'hiring_manager', included: false },
+    { id: 'a2', email: 'b@test.com', role: 'hiring_manager', included: true },
     { id: 'a3', email: 'c@test.com', role: 'recruiter', included: true },
-    { id: 'a4', email: '', role: 'guest', included: true }
+    { id: 'a4', email: 'd@test.com', role: 'guest', included: true },
+    { id: 'a5', email: 'e@test.com', role: 'external', included: true },
+    { id: 'a6', email: 'f@test.com', role: 'recipient', included: true },
+    { id: 'a7', email: 'g@test.com', role: 'guest', source: 'external', included: true }
   ]
 
   const result = attendeesForFreeBusy(attendees)
-  assert.equal(result.length, 2)
-  assert.deepEqual(result[0], { id: 'a@test.com' })
-  assert.deepEqual(result[1], { id: 'c@test.com' })
+  assert.deepEqual(result, [
+    { id: 'b@test.com' },
+    { id: 'c@test.com' },
+    { id: 'd@test.com' },
+  ])
 })
 
 test('validateAttendees rejects when no interviewer', () => {

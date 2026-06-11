@@ -756,7 +756,21 @@ export function checkingAvailabilityModal(caseRecord) {
     close: plain('Cancel'),
     blocks: [
       section(`*${caseTitle(caseRecord)}*`),
-      section('🔍 Checking calendar availability. This may take a moment.'),
+      section(':hourglass_flowing_sand: Checking calendar availability. This may take a moment.'),
+    ],
+  }
+}
+
+export function availabilityCheckErrorModal(caseRecord, message) {
+  return {
+    type: 'modal',
+    callback_id: 'scheduling_availability_error',
+    title: plain('Availability Unavailable'),
+    close: plain('Close'),
+    blocks: [
+      section(`*${caseTitle(caseRecord)}*`),
+      section(`:warning: ${message}`),
+      section('No scheduling slots were shown. Check the Apps Script deployment and calendar access, then retry from the scheduling request.'),
     ],
   }
 }

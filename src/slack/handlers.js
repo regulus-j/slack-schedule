@@ -86,6 +86,7 @@ import { matchRoleAssignments, normalizeRoleTitle } from '../workflow/role-assig
 import {
   calendarEventUrl,
   checkingAvailabilityModal,
+  availabilityCheckErrorModal,
   customInviteRequestStatusModal,
   customInviteSentEmailsModal,
   candidateMessageModal,
@@ -1519,6 +1520,9 @@ export function registerSlackHandlers(app, context) {
   })
 
   app.view('scheduling_phase_one', async ({ ack, body, view, client }) => {
+    let schedulingCaseId = null
+    let schedulingCaseRecord = null
+    let availabilityWindow = null
     try {
       let metadata = {}
       try {
@@ -1527,6 +1531,7 @@ export function registerSlackHandlers(app, context) {
         metadata = { caseId: view.private_metadata }
       }
       const caseId = metadata.caseId
+      schedulingCaseId = caseId
 
       const stageKey = normalizeStageKey(view.state.values.stage_block?.stage_select?.selected_option?.value || metadata.stageKey) || '1st-interview'
       const stageOverrides = metadata.stageOverrides || {}
@@ -1536,6 +1541,11 @@ export function registerSlackHandlers(app, context) {
 
       const windowStart = view.state.values.schedule_window_start_block?.schedule_window_start?.selected_date || ''
       const windowEnd = view.state.values.schedule_window_end_block?.schedule_window_end?.selected_date || ''
+      availabilityWindow = {
+        startDate: windowStart,
+        endDate: windowEnd,
+        timeZone: schedulingCaseRecord?.interviewTimezone || null,
+      }
       const durationStr = view.state.values.duration_block?.duration_select?.selected_option?.value || '30'
       const durationMinutes = parseInt(durationStr, 10)
 
@@ -1548,6 +1558,8 @@ export function registerSlackHandlers(app, context) {
 
       const caseRecord = await requireCase(store, caseId)
       if (!caseRecord) throw new Error('Case not found')
+      schedulingCaseRecord = caseRecord
+      availabilityWindow.timeZone = caseRecord.interviewTimezone || null
 
       await ack({
         response_action: 'update',
@@ -1596,6 +1608,9 @@ export function registerSlackHandlers(app, context) {
         logger,
         store
       })
+      await store.updateCase(caseRecord.id, {
+        lastAvailabilityCheck: result.availabilityCheck
+      })
 
       const recentAudits = await store.listAudits(caseRecord.id, 5)
 
@@ -1608,16 +1623,51 @@ export function registerSlackHandlers(app, context) {
         }, recentAudits)
       })
     } catch (error) {
-      if (!body?.view?.id) {
-        logger.error('scheduling_check_availability_error', { error: error.message })
-        return
+      const managerNames = Array.isArray(error?.managerNames) ? error.managerNames : []
+      const failureMessage = managerNames.length > 0 && !managerNames.every((name) => error.message.includes(name))
+        ? `${error.message} Affected hiring managers: ${managerNames.join(', ')}.`
+        : error.message
+
+      if (error?.name === 'HiringManagerAvailabilityError' && schedulingCaseId && store.updateCase) {
+        try {
+          await store.updateCase(schedulingCaseId, {
+            lastAvailabilityCheck: {
+              status: 'failed',
+              checkedAt: new Date().toISOString(),
+              window: availabilityWindow,
+              sources: ['apps_script_hm'],
+              managerCount: managerNames.length,
+              failureCode: error?.code || 'availability_check_failed',
+              failureReason: error.message,
+            }
+          })
+        } catch (persistError) {
+          logger.warn('scheduling_availability_failure_persist_failed', {
+            caseId: schedulingCaseId,
+            error: persistError.message,
+          })
+        }
       }
-      logger.error('scheduling_check_availability_error', { error: error.message })
-      await client.chat.postEphemeral({
-        channel: resolvePostingChannel(config, body.user.id),
-        user: body.user.id,
-        text: `❌ Could not check availability: ${error.message}`
+
+      logger.error('scheduling_check_availability_error', {
+        caseId: schedulingCaseId,
+        code: error?.code || 'availability_check_failed',
       })
+      if (!body?.view?.id) return
+
+      try {
+        await client.views.update({
+          view_id: body.view.id,
+          view: availabilityCheckErrorModal(schedulingCaseRecord || { id: schedulingCaseId }, failureMessage),
+        })
+      } catch (viewError) {
+        logger.warn('scheduling_availability_error_modal_failed', { error: viewError.message })
+        await client.chat.postEphemeral({
+          channel: resolvePostingChannel(config, body.user.id),
+          user: body.user.id,
+          text: `Could not check availability: ${failureMessage}`
+        })
+      }
     }
   })
 

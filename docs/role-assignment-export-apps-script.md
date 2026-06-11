@@ -93,6 +93,82 @@ function json_(obj) {
 
 The app accepts the current response shape: `{ sourceFileId, sheet, count, rows }`.
 
+## Hiring Manager Free/Busy
+
+The same deployment can handle hiring-manager availability without changing the spreadsheet export route. This version uses the built-in `CalendarApp` service, so you do not need to add anything under **Services**.
+
+```javascript
+function doPost(e) {
+  try {
+    const expectedToken = PropertiesService.getScriptProperties().getProperty('TOKEN');
+    const token = e.parameter.token;
+    if (!expectedToken || token !== expectedToken) {
+      return json_({ ok: false, error: 'Unauthorized' });
+    }
+
+    const request = JSON.parse(e.postData && e.postData.contents || '{}');
+    if (request.action !== 'freeBusy') {
+      return json_({ ok: false, error: 'Unsupported action' });
+    }
+
+    const timeMin = String(request.timeMin || '');
+    const timeMax = String(request.timeMax || '');
+    const emails = (request.attendees || [])
+      .map(item => String(item.email || '').trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!timeMin || !timeMax || emails.length === 0) {
+      return json_({ ok: false, error: 'timeMin, timeMax, and attendees are required' });
+    }
+
+    const start = new Date(timeMin);
+    const end = new Date(timeMax);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
+      return json_({ ok: false, error: 'Invalid availability window' });
+    }
+
+    const calendars = {};
+    const errors = {};
+    emails.forEach(email => {
+      try {
+        const calendar = CalendarApp.getCalendarById(email);
+        if (!calendar) {
+          errors[email] = { reason: 'calendar_unavailable' };
+          return;
+        }
+
+        calendars[email] = {
+          busy: calendar.getEvents(start, end)
+            .filter(event =>
+              event.getTransparency() !== CalendarApp.EventTransparency.TRANSPARENT
+            )
+            .map(event => ({
+              start: event.getStartTime().toISOString(),
+              end: event.getEndTime().toISOString()
+            }))
+        };
+      } catch (calendarError) {
+        errors[email] = { reason: 'calendar_unavailable' };
+      }
+    });
+
+    return json_({
+      ok: true,
+      timeMin,
+      timeMax,
+      calendars,
+      errors
+    });
+  } catch (err) {
+    return json_({ ok: false, error: err.message });
+  }
+}
+```
+
+Redeploy the web app after adding `doPost`. During deployment, authorize Calendar access if prompted. The deployment account must have each hiring-manager calendar shared with it and available in its Google Calendar list. The response intentionally excludes event titles and descriptions.
+
+The Node app uses `HM_AVAILABILITY_SCRIPT_URL` and `HM_AVAILABILITY_SCRIPT_TOKEN` when set. They otherwise fall back to the role-assignment export deployment, then the recruiter export deployment.
+
 For the current `Open Roles and Recruiter Assignment` tab, the exported row keys are:
 
 - `4`: role title or section label such as `Open Roles`.
