@@ -136,7 +136,10 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     (eventType === '2nd-interview' || eventType === 'final-interview')
   const applicantBlockId = dynamicBlockId('applicant_block', draft.applicantId || draft.roleId)
   const zoomBlockId = dynamicBlockId('zoom_block', draft.zoomLink)
-  const zoomLinkOptions = recruiterZoomOptions(draft.selectedRecruiters)
+  const zoomLinkRecruiters = draft.selectedRecruiters?.length > 0
+    ? draft.selectedRecruiters
+    : draft.availableRecruiters
+  const zoomLinkOptions = recruiterZoomOptions(zoomLinkRecruiters)
   const availableRecruiters = draft.availableRecruiters || draft.selectedRecruiters || []
   const availableHiringManagers = draft.availableHiringManagers ||
     uniquePeopleById([...(draft.selectedHiringManagers || []), ...(draft.suggestedHiringManagers || [])])
@@ -391,6 +394,9 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           options: zoomLinkOptions,
           ...(draft.zoomLinkOption ? { initial_option: draft.zoomLinkOption } : {}),
         }, true),
+      ] : []),
+      ...(standardEvent && zoomLinkOptions.length === 0 ? [
+        section(':warning: No recruiter Zoom links are available from the recruiter directory. Paste the final Zoom link below and check the recruiter export configuration.'),
       ] : []),
       input('Zoom link', zoomBlockId, {
         type: 'plain_text_input',

@@ -597,6 +597,48 @@ test('standard intake modal uses unified recruiter and hiring manager checkboxes
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
 })
 
+test('standard intake shows role recruiter Zoom choices before recruiters are selected', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '1st-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '1st Interview' }, value: '1st-interview' },
+      stageKey: '1st-interview',
+      roleId: 'job-1',
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+      recruiterIds: [],
+      selectedRecruiters: [],
+      availableRecruiters: [
+        { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', zoomLink: 'https://zoom.us/j/mara' },
+        { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jam@example.com', zoomLink: 'https://zoom.us/j/jam' },
+      ],
+    },
+  })
+
+  const zoomChoice = view.blocks.find((block) => block.block_id === 'zoom_choice_block')
+  assert.deepEqual(zoomChoice.element.options.map((option) => option.value), [
+    'https://zoom.us/j/mara',
+    'https://zoom.us/j/jam',
+  ])
+})
+
+test('standard intake explains when recruiter Zoom data is unavailable', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '1st-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '1st Interview' }, value: '1st-interview' },
+      stageKey: '1st-interview',
+      recruiterIds: [],
+      selectedRecruiters: [],
+      availableRecruiters: [],
+    },
+  })
+
+  assert.equal(view.blocks.some((block) => block.block_id === 'zoom_choice_block'), false)
+  assert.match(JSON.stringify(view.blocks), /No recruiter Zoom links are available/)
+})
+
 test('completed cases hide reschedule cancel and reminder actions', () => {
   const actions = visibleCaseActions({
     ...baseCase,
@@ -826,6 +868,41 @@ test('role mapping uses exact JazzHR job and enriches its hiring lead from recru
     zoomLink: person.zoomLink,
   })), [{ id: 'sheet-allen', zoomLink: 'https://zoom.us/j/allen' }])
   assert.deepEqual(mappedHiringManagersForRole('job-open').map((person) => person.name), ['Veanne Reyes'])
+
+  setJazzhrJobs([])
+})
+
+test('mapped recruiters inherit Zoom links from the recruiter directory', () => {
+  setRoleAssignments([
+    {
+      roleId: 'job-zoom',
+      roleTitle: 'Support Specialist',
+      recruiter: {
+        id: 'role-rec-mara',
+        name: 'Mara Santos',
+        email: 'mara@example.com',
+        role: 'recruiter',
+      },
+    },
+  ])
+  setJazzhrJobs([{ id: 'job-zoom', title: 'Support Specialist', status: 'Open' }])
+  setTalentRecruiters([
+    {
+      id: 'directory-rec-mara',
+      name: 'Mara Santos',
+      email: 'mara@example.com',
+      role: 'recruiter',
+      zoomLink: 'https://zoom.us/j/mara',
+    },
+  ])
+
+  assert.deepEqual(mappedRecruitersForRole('job-zoom').map((person) => ({
+    id: person.id,
+    zoomLink: person.zoomLink,
+  })), [{
+    id: 'role-rec-mara',
+    zoomLink: 'https://zoom.us/j/mara',
+  }])
 
   setJazzhrJobs([])
 })

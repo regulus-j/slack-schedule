@@ -4378,7 +4378,13 @@ function roleAssignmentsForRole(roleId) {
 }
 
 export function mappedRecruitersForRole(roleId) {
-  const mapped = uniquePeople(roleAssignmentsForRole(roleId).map((assignment) => assignment.recruiter).filter(Boolean).map(asRecruiter))
+  const mapped = uniquePeople(
+    roleAssignmentsForRole(roleId)
+      .map((assignment) => assignment.recruiter)
+      .filter(Boolean)
+      .map(enrichRecruiterFromDirectory)
+      .map(asRecruiter),
+  )
   if (mapped.length > 0) return mapped
 
   const role = roleById(roleId)
@@ -4395,6 +4401,22 @@ export function mappedRecruitersForRole(roleId) {
   }
 
   return getRoleAssignments().length > 0 ? [] : getTalentRecruiters()
+}
+
+function enrichRecruiterFromDirectory(recruiter) {
+  if (!recruiter) return recruiter
+  const directoryRecruiter = getTalentRecruiters().find((person) =>
+    (normalizeEmail(recruiter.email) &&
+      normalizeEmail(person.email) === normalizeEmail(recruiter.email)) ||
+    normalizeRoleTitle(person.name) === normalizeRoleTitle(recruiter.name)
+  )
+  if (!directoryRecruiter) return recruiter
+  return {
+    ...directoryRecruiter,
+    ...recruiter,
+    phone: directoryRecruiter.phone || recruiter.phone || '',
+    zoomLink: directoryRecruiter.zoomLink || recruiter.zoomLink || '',
+  }
 }
 
 export function mappedHiringManagersForRole(roleId) {
