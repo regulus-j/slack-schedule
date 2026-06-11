@@ -23,6 +23,7 @@ import {
 } from '../data/search.js'
 import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, signedEmailBodiesFromPlainText, stripSignatureHtml } from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
+import { normalizeResumeFile, resolveResumeAttachment } from '../services/resume-attachment.js'
 import {
   applicantEligibilityReason,
   fetchApplicantDetail,
@@ -83,6 +84,10 @@ import {
 } from '../workflow/custom-invite.js'
 import { runSchedulingPipeline } from '../workflow/scheduler.js'
 import { matchRoleAssignments, normalizeRoleTitle } from '../workflow/role-assignment-matcher.js'
+import {
+  markCaseComplete,
+  scheduleCaseNotifications,
+} from '../workflow/notifications.js'
 import {
   calendarEventUrl,
   checkingAvailabilityModal,
@@ -1085,6 +1090,7 @@ export function registerSlackHandlers(app, context) {
     const recruiterId = intakeDraft.recruiterId;
     const notes = intakeDraft.notes;
     const resumeLink = intakeDraft.resumeLink;
+    const resumeFile = intakeDraft.resumeFile;
     const zoomLink = intakeDraft.zoomLink;
     const interviewTimezone = intakeDraft.interviewTimezone || defaultTimeZone;
     const requiresHiringManager = stageRequiresHiringManager(stageKey)
@@ -1122,6 +1128,7 @@ export function registerSlackHandlers(app, context) {
         stageKey: null,
         notes,
         resumeLink: null,
+        resumeFile: null,
         interviewWindowStartDate: null,
         interviewWindowEndDate: null,
         interviewTimezone,
@@ -1252,6 +1259,7 @@ export function registerSlackHandlers(app, context) {
       stageKey,
       notes,
       resumeLink,
+      resumeFile,
       interviewWindowStartDate: null,
       interviewWindowEndDate: null,
       interviewTimezone,
@@ -1389,6 +1397,15 @@ export function registerSlackHandlers(app, context) {
       to: caseRecord.applicant?.email,
       from: caseRecord.recruiter?.email,
     };
+    try {
+      await addRequiredResumeAttachment({ email, caseRecord, client, config })
+    } catch (error) {
+      await ack({
+        response_action: 'errors',
+        errors: { email_body_block: error.message },
+      })
+      return
+    }
     if (hasBlockingEmailStatus(caseRecord.gmailSendStatus) && isSameEmail(caseRecord.candidateEmail, email)) {
       await ack();
       await client.chat.postMessage({
@@ -1401,13 +1418,13 @@ export function registerSlackHandlers(app, context) {
     await ack();
     const pendingEmailCase = await store.updateCase(caseId, {
       status: 'Waiting for Candidate',
-      candidateEmail: email,
+      candidateEmail: persistableEmail(email),
       gmailSendStatus: 'sending',
     });
     const emailResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingEmailCase, email, store });
     const updated = await store.updateCase(caseId, {
       status: 'Waiting for Candidate',
-      candidateEmail: email,
+      candidateEmail: persistableEmail(email),
       gmailSendStatus: emailResult.mocked ? 'mocked' : 'sent',
     });
     await store.addAudit({
@@ -1865,6 +1882,12 @@ export function registerSlackHandlers(app, context) {
         selectedInterviewTime: startTime,
       }
       const scheduledCandidateEmail = await buildScheduledCandidateEmail(previewCaseRecord)
+      await addRequiredResumeAttachment({
+        email: scheduledCandidateEmail,
+        caseRecord: previewCaseRecord,
+        client,
+        config,
+      })
       const eventResult = await createCalendarEvent({
         config,
         logger,
@@ -1898,6 +1921,9 @@ export function registerSlackHandlers(app, context) {
         ...applyScheduledEvent(caseRecord, eventResult, completedScheduleInput),
         selectedSlot: slotValue ? { start: slotValue } : null
       })
+      if (config.notifications?.enabled) {
+        await scheduleCaseNotifications({ store, caseRecord: updated })
+      }
 
       await store.addAudit({
         caseId: caseRecord.id,
@@ -1910,7 +1936,7 @@ export function registerSlackHandlers(app, context) {
       const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store })
       const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
       await store.updateCase(caseRecord.id, {
-        candidateEmail: scheduledCandidateEmail,
+        candidateEmail: persistableEmail(scheduledCandidateEmail),
         gmailSendStatus: candidateEmailResult.mocked ? 'mocked' : 'sent',
         attendeeInviteStatus: attendeeInviteResults.length === 0
           ? 'none'
@@ -2226,6 +2252,29 @@ export function registerSlackHandlers(app, context) {
         templateId: scheduleInput.templateId || caseRecord.templateId,
         stageOverrides: scheduleInput.stageOverrides || caseRecord.stageOverrides || {},
       }
+      const previewCaseRecord = {
+        ...finalCaseRecord,
+        currentSchedule: buildScheduleSnapshot({
+          date: scheduleInput.startDate,
+          time: scheduleInput.startTime,
+          zoomLink: scheduleInput.zoomLink,
+          attendees: scheduleInput.attendees,
+          attendeeDetails: scheduleInput.attendeeDetails,
+          durationMinutes: scheduleInput.durationMinutes,
+        }),
+      }
+      const scheduledCandidateEmail = {
+        ...(await buildScheduledCandidateEmail(previewCaseRecord)),
+        subject: emailSubject,
+        ...emailBodies,
+      }
+      await addRequiredResumeAttachment({
+        email: scheduledCandidateEmail,
+        caseRecord: previewCaseRecord,
+        client,
+        config,
+      })
+      scheduledCandidateEmail.body = scheduledCandidateEmail.htmlBody
       const eventResult = await createCalendarEvent({
         config,
         logger,
@@ -2260,16 +2309,13 @@ export function registerSlackHandlers(app, context) {
         eventId: eventResult.eventId,
       });
 
-      const scheduledCandidateEmail = {
-        ...(await buildScheduledCandidateEmail(updated)),
-        subject: emailSubject,
-        ...emailBodies,
+      if (config.notifications?.enabled) {
+        await scheduleCaseNotifications({ store, caseRecord: updated })
       }
-      scheduledCandidateEmail.body = scheduledCandidateEmail.htmlBody
       const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store });
       const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
       const reminderUpdated = await store.updateCase(caseId, {
-        candidateEmail: scheduledCandidateEmail,
+        candidateEmail: persistableEmail(scheduledCandidateEmail),
         gmailSendStatus: candidateEmailResult.mocked ? 'mocked' : 'sent',
         attendeeInviteStatus: attendeeInviteResults.length === 0
           ? 'none'
@@ -2484,6 +2530,9 @@ export function registerSlackHandlers(app, context) {
       caseId,
       applyCompletedReschedule(caseRecord, eventResult, completedRequest, emailResult),
     );
+    if (config.notifications?.enabled) {
+      await scheduleCaseNotifications({ store, caseRecord: updated })
+    }
     await store.addAudit({
       caseId,
       actorSlackUserId: body.user.id,
@@ -2554,6 +2603,33 @@ export function registerSlackHandlers(app, context) {
       blocks: caseMessageBlocks(updated),
     })
   });
+
+  app.action('mark_event_complete', async ({ ack, body, client }) => {
+    await ack()
+    const actionValue = completionActionValue(body.actions?.[0]?.value)
+    const caseId = actionValue.caseId
+    const result = await markCaseComplete({
+      store,
+      caseId,
+      actorSlackUserId: body.user.id,
+      scheduleVersion: actionValue.scheduleVersion,
+    })
+    const message = result.stale
+      ? 'This completion button belongs to an older schedule. The current event was not changed.'
+      : (result.alreadyCompleted
+          ? 'This event was already marked complete. No duplicate feedback email was queued.'
+          : 'Event marked complete. The candidate feedback request has been queued.')
+    const channel = body.channel?.id || await openDm(client, body.user.id)
+    await client.chat.postMessage({ channel, text: message })
+    if (!result.alreadyCompleted && !result.stale) {
+      await store.addAudit({
+        caseId,
+        actorSlackUserId: body.user.id,
+        action: 'event_marked_complete',
+      })
+    }
+    await publishHome({ client, userId: body.user.id, store, logger, config })
+  })
 
   app.action('hiring_manager_checkboxes', async ({ ack, body, client }) => {
     await ack()
@@ -3925,6 +4001,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     hiringManagerEmail: hiringManager?.email || '',
     notes: getInputValue(values, 'notes'),
     resumeLink: extractResumeFileReference(values),
+    resumeFile: extractResumeFile(values),
     zoomLink,
     zoomLinkAuto,
     remoteUpdateStatus: overrides.remoteUpdateStatus || '',
@@ -4459,6 +4536,12 @@ function extractResumeFileReference(values) {
   return legacyLinkElement?.value?.trim() || ''
 }
 
+function extractResumeFile(values) {
+  const resumeElement = values.resume_block?.resume_file
+  const file = Array.isArray(resumeElement?.files) ? resumeElement.files[0] : null
+  return file ? normalizeResumeFile(file) : null
+}
+
 function resumeFileReference(file) {
   return String(
     file.permalink ||
@@ -4468,6 +4551,33 @@ function resumeFileReference(file) {
     file.name ||
     '',
   ).trim()
+}
+
+function completionActionValue(value) {
+  try {
+    const parsed = JSON.parse(String(value || ''))
+    if (parsed?.caseId) {
+      return {
+        caseId: String(parsed.caseId),
+        scheduleVersion: parsed.scheduleVersion,
+      }
+    }
+  } catch {
+    // Legacy completion buttons stored only the case ID.
+  }
+  return { caseId: String(value || ''), scheduleVersion: undefined }
+}
+
+async function addRequiredResumeAttachment({ email, caseRecord, client, config }) {
+  if (!stageRequiresResumeLink(caseRecord.stageKey)) return email
+  const attachment = await resolveResumeAttachment({
+    caseRecord,
+    client,
+    botToken: config.slack.botToken,
+    maxBytes: config.notifications?.resumeAttachmentMaxBytes || 15 * 1024 * 1024,
+  })
+  email.attachments = [attachment]
+  return email
 }
 
 async function openDm(client, userId) {
@@ -4481,6 +4591,12 @@ function hasUnresolvedSchedulePlaceholders(value) {
 
 function hasBlockingEmailStatus(status) {
   return ['sending', 'sent', 'mocked'].includes(status)
+}
+
+function persistableEmail(email) {
+  if (!email) return email
+  const { attachments, ...persisted } = email
+  return persisted
 }
 
 function isSameEmail(left, right) {

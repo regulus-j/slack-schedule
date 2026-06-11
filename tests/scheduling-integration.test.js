@@ -81,8 +81,8 @@ test('integration: legacy final-offer alias resolves to final interview rules', 
 test('integration: full pipeline generate slots → intersect with mock busy → rank', () => {
   // Step 1: Generate candidate slots
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -259,8 +259,8 @@ test('integration: end-to-end from stage resolution through ranked slots', () =>
 
   // 7. Generate slots with 45 min duration (2nd-or-final typical)
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: rules.typicalDurationMinutes,
     timeZone: SYDNEY_TIME_ZONE
   })

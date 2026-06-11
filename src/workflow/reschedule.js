@@ -20,7 +20,8 @@ export function normalizeCaseSchedule(caseRecord) {
 }
 
 export function isScheduledCase(caseRecord) {
-  return caseRecord.status === 'Scheduled' || Boolean(caseRecord.calendarEventId);
+  return caseRecord.status !== 'Completed' &&
+    (caseRecord.status === 'Scheduled' || Boolean(caseRecord.calendarEventId));
 }
 
 export function canFinalizeSchedule(caseRecord) {
@@ -50,6 +51,13 @@ export function visibleCaseActions(caseRecord) {
 
   if (caseRecord.rescheduleStatus === RESCHEDULE_STATUSES.CANCELLED) {
     return caseRecord.calendarEventId ? ['view_calendar_details'] : []
+  }
+
+  if (caseRecord.status === 'Completed') {
+    return [
+      ...(caseRecord.resumeLink ? ['view_resume'] : []),
+      ...(caseRecord.calendarEventId ? ['view_calendar_details'] : []),
+    ]
   }
 
   if (isScheduledCase(caseRecord)) {

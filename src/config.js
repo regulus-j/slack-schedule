@@ -72,6 +72,15 @@ export function loadConfig(env = process.env) {
     scheduling: {
       timeZones: resolveTimeZoneList(mergedEnv.SCHEDULING_TIME_ZONES),
     },
+    notifications: {
+      enabled: parseBoolean(mergedEnv.AUTOMATED_NOTIFICATIONS_ENABLED, false),
+      pollIntervalMs: positiveInteger(mergedEnv.NOTIFICATION_POLL_INTERVAL_MS, 60000),
+      feedbackFormUrl: mergedEnv.FEEDBACK_FORM_URL || '',
+      resumeAttachmentMaxBytes: positiveInteger(
+        mergedEnv.RESUME_ATTACHMENT_MAX_BYTES,
+        15 * 1024 * 1024,
+      ),
+    },
   };
 }
 
@@ -117,9 +126,12 @@ export function validateStartupConfig(config) {
   if (!config.slack.botToken) missing.push('SLACK_BOT_TOKEN');
   if (!config.slack.appToken) missing.push('SLACK_APP_TOKEN');
   if (!config.jazzhr.apiKey) missing.push('JAZZHR_API_KEY');
+  if (config.notifications?.enabled && !config.notifications.feedbackFormUrl) {
+    missing.push('FEEDBACK_FORM_URL')
+  }
 
   if (missing.length > 0) {
-    throw new Error(`Missing required Slack environment variables: ${missing.join(', ')}`);
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }
 }
 

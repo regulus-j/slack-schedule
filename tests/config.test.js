@@ -43,3 +43,21 @@ test('hiring manager availability prefers the role assignment deployment fallbac
   assert.equal(config.hiringManagerAvailability.url, 'https://script.google.com/macros/s/role/exec')
   assert.equal(config.hiringManagerAvailability.token, 'role-token')
 })
+
+test('automated notification configuration uses safe defaults and explicit overrides', () => {
+  const defaults = loadConfig({})
+  assert.equal(defaults.notifications.enabled, false)
+  assert.equal(defaults.notifications.pollIntervalMs, 60000)
+  assert.equal(defaults.notifications.resumeAttachmentMaxBytes, 15728640)
+
+  const configured = loadConfig({
+    AUTOMATED_NOTIFICATIONS_ENABLED: 'true',
+    NOTIFICATION_POLL_INTERVAL_MS: '5000',
+    FEEDBACK_FORM_URL: 'https://example.com/feedback',
+    RESUME_ATTACHMENT_MAX_BYTES: '1024',
+  })
+  assert.equal(configured.notifications.enabled, true)
+  assert.equal(configured.notifications.pollIntervalMs, 5000)
+  assert.equal(configured.notifications.feedbackFormUrl, 'https://example.com/feedback')
+  assert.equal(configured.notifications.resumeAttachmentMaxBytes, 1024)
+})

@@ -3,6 +3,14 @@ import { generateSignatureHTML, signaturePlainText } from '../signature.js'
 const GENERATED_EMAIL_BODY_STYLE = 'font-family: Arial, Helvetica, sans-serif; color: #222222; font-size: 14px; line-height: 1.6; margin: 0; padding: 0;'
 const EMAIL_PARAGRAPH_STYLE = 'margin: 0 0 14px 0;'
 const EMAIL_DETAIL_BLOCK_STYLE = 'margin: 0 0 14px 0; padding: 12px 16px; background-color: #f5f5f5; border-left: 3px solid #cccccc; line-height: 2;'
+const INTERVIEW_PREPARATION_TIPS = [
+  'Review the job description and take some time to learn more about our client company, Freedom Property Investors.',
+  'Test your internet connection, camera, and microphone before the interview to avoid any technical issues.',
+  'Choose a quiet, professional, and distraction-free environment where you can focus comfortably.',
+  'Join the meeting 5-10 minutes early to ensure you are ready to begin on time.',
+  'Be prepared to discuss your experience, achievements, and how your skills align with the role.',
+  'Have a few thoughtful questions ready to demonstrate your interest and learn more about the opportunity.',
+]
 
 export function escapeEmailHtml(value) {
   return String(value ?? '')
@@ -120,6 +128,10 @@ export function buildReminderEmail(caseRecord) {
       durationText ? { label: 'Duration', value: escapeEmailHtml(durationText) } : null,
       { label: 'Zoom Link', value: emailLink(zoomLink) },
     ]),
+    emailParagraph('To help you feel confident and prepared, here are a few tips for a smooth and successful interview:'),
+    `<ul style="margin: 0 0 14px 0; padding-left: 20px;">${INTERVIEW_PREPARATION_TIPS
+      .map((tip) => `<li style="margin-bottom: 8px;">${escapeEmailHtml(tip)}</li>`)
+      .join('')}</ul>`,
     emailParagraph('Please let us know if you need any support before the interview.'),
   ])
 
@@ -134,6 +146,9 @@ export function buildReminderEmail(caseRecord) {
     ...durationPlainLine,
     `Zoom Link: ${zoomLink}`,
     '',
+    'To help you feel confident and prepared, here are a few tips for a smooth and successful interview:',
+    ...INTERVIEW_PREPARATION_TIPS.map((tip) => `- ${tip}`),
+    '',
     'Please let us know if you need any support before the interview.',
   ])
 
@@ -141,6 +156,44 @@ export function buildReminderEmail(caseRecord) {
     to: caseRecord.applicant?.email,
     from: caseRecord.recruiter?.email,
     subject: `Reminder: ${jobTitle} interview`,
+    body: htmlBody,
+    htmlBody,
+    plainBody,
+  }
+}
+
+export function buildFeedbackRequestEmail(caseRecord, feedbackFormUrl) {
+  const candidateName = caseRecord.applicant?.firstName || 'there'
+  const fullName = [
+    caseRecord.applicant?.firstName,
+    caseRecord.applicant?.lastName,
+  ].filter(Boolean).join(' ') || 'Candidate'
+  const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
+  const eventLabel = caseRecord.stageKey === 'job-offer-discussion'
+    ? 'job offer discussion'
+    : 'interview'
+  const htmlBody = generatedEmailHtml([
+    emailParagraph(`Hi <strong>${escapeEmailHtml(candidateName)}</strong>,`),
+    emailParagraph(`Thank you for taking the time to complete your ${escapeEmailHtml(eventLabel)} for the <strong>${escapeEmailHtml(jobTitle)}</strong> role.`),
+    emailParagraph('We would appreciate your feedback about your experience. Your comments help us improve the candidate journey.'),
+    `<p style="margin: 0 0 14px 0;"><a href="${escapeEmailAttribute(feedbackFormUrl)}" style="display: inline-block; padding: 10px 16px; background-color: #1155cc; color: #ffffff; text-decoration: none; border-radius: 4px;">Share your feedback</a></p>`,
+    emailParagraph('Thank you again for your time and interest in Outsourced Pro Global.'),
+  ])
+  const plainBody = generatedEmailPlainText([
+    `Hi ${candidateName},`,
+    '',
+    `Thank you for taking the time to complete your ${eventLabel} for the ${jobTitle} role.`,
+    '',
+    'We would appreciate your feedback about your experience. Your comments help us improve the candidate journey.',
+    '',
+    `Share your feedback: ${feedbackFormUrl}`,
+    '',
+    'Thank you again for your time and interest in Outsourced Pro Global.',
+  ])
+  return {
+    to: caseRecord.applicant?.email,
+    from: caseRecord.recruiter?.email,
+    subject: `We value your feedback, ${fullName}`,
     body: htmlBody,
     htmlBody,
     plainBody,

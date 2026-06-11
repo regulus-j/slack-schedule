@@ -597,6 +597,17 @@ test('standard intake modal uses unified recruiter and hiring manager checkboxes
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
 })
 
+test('completed cases hide reschedule cancel and reminder actions', () => {
+  const actions = visibleCaseActions({
+    ...baseCase,
+    status: 'Completed',
+    calendarEventId: 'event-1',
+    resumeLink: 'https://example.com/resume.pdf',
+  })
+
+  assert.deepEqual(actions, ['view_resume', 'view_calendar_details'])
+})
+
 test('checkbox options keep selections first and filter remaining people by search', () => {
   const people = [
     { id: 'p-a', name: 'Alex', email: 'alex@example.com' },
@@ -1546,7 +1557,7 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222');
 });
 
-test('2nd/final candidate email includes resume link and all meeting guests', async () => {
+test('2nd/final candidate email describes the resume attachment and includes all meeting guests', async () => {
   const email = await buildScheduledCandidateEmail({
     ...baseCase,
     templateId: '2nd-or-Final-invite',
@@ -1565,8 +1576,9 @@ test('2nd/final candidate email includes resume link and all meeting guests', as
     },
   });
 
-  assert.match(email.body, /Please find the applicant's resume here: <a href="https:\/\/example\.com\/resume\.pdf">\[Resume\]Customer Support Specialist - Alex Reyes<\/a>/);
-  assert.match(email.plainBody, /Please find the applicant's resume here: \[Resume\]Customer Support Specialist - Alex Reyes: https:\/\/example\.com\/resume\.pdf/);
+  assert.match(email.body, /The applicant's resume is attached to this email/);
+  assert.match(email.plainBody, /The applicant's resume is attached to this email/);
+  assert.doesNotMatch(email.body, /files\.slack\.com|example\.com\/resume/);
   assert.match(email.body, /Meeting guests:/);
   assert.match(email.body, /Alex Reyes: alex@example\.com/);
   assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);

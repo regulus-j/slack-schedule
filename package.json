@@ -8,7 +8,8 @@
     "start": "node app.js",
     "test": "node --test",
     "check": "node --check app.js",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node scripts/migrate.js",
+    "notifications:test": "node scripts/notifications-cli.js"
   },
   "license": "MIT",
   "dependencies": {

@@ -1354,6 +1354,9 @@ function caseTitle(caseRecord) {
   if (isCustomInviteCase(caseRecord)) {
     return normalizeCustomInviteMetadata(caseRecord).title
   }
+  if (caseRecord.status === 'Completed') {
+    return 'This event is complete. The candidate feedback request is handled automatically.'
+  }
   const applicantName = caseRecord.applicant
     ? [caseRecord.applicant.firstName, caseRecord.applicant.lastName].filter(Boolean).join(' ')
     : 'Candidate';

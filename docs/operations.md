@@ -57,3 +57,27 @@ Run `npm run migrate` (or the Compose `migrate` service) against the Postgres da
 - JazzHR key replacement: rotate `JAZZHR_API_KEY`, restart service, trigger cache refresh.
 - Failed Calendar event: inspect case audit, confirm no stored `calendarEventId`, then retry from the Finalize modal.
 - Stuck case: move to `Needs Attention`, review audit history, and resume from the last approval step.
+
+## Automated notification testing
+
+Automated notifications are disabled unless `AUTOMATED_NOTIFICATIONS_ENABLED=true`.
+The worker polls persisted jobs using `NOTIFICATION_POLL_INTERVAL_MS` and resumes pending
+work after a restart.
+
+Preview one notification without sending:
+
+```powershell
+npm.cmd run notifications:test -- --case case-id --type candidate-reminder --email test@example.com
+```
+
+Deliver to explicit test recipients:
+
+```powershell
+npm.cmd run notifications:test -- --case case-id --type all --email test@example.com --slack-user U12345678 --deliver
+```
+
+Using the actual recipients stored on the case requires an explicit opt-in:
+
+```powershell
+npm.cmd run notifications:test -- --case case-id --type all --use-case-recipients --deliver
+```

@@ -266,6 +266,7 @@ export function buildGmailRawMessage(email) {
   const plainBody = email.plainBody || stripHtml(htmlBody)
   const logo = logoAttachment()
   const hasLogo = logo && htmlBody.includes('cid:opg-logo')
+  const attachments = Array.isArray(email.attachments) ? email.attachments : []
 
   const subject = email.subject || ''
   const to = email.to || ''
@@ -304,16 +305,45 @@ export function buildGmailRawMessage(email) {
   const parts = [headers.join('\r\n'), '', altPart.join('\r\n')]
 
   if (hasLogo && logo) {
-    parts.push('', `--${mixedBoundary}`, logo.mimePart, '', `--${mixedBoundary}--`)
-  } else {
-    parts.push('', `--${mixedBoundary}--`)
+    parts.push('', `--${mixedBoundary}`, logo.mimePart)
   }
+  for (const attachment of attachments) {
+    parts.push(
+      '',
+      `--${mixedBoundary}`,
+      buildAttachmentMimePart(attachment),
+    )
+  }
+  parts.push('', `--${mixedBoundary}--`)
 
   return Buffer.from(parts.join('\r\n'))
     .toString('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/g, '')
+}
+
+function buildAttachmentMimePart(attachment) {
+  const filename = sanitizeHeaderValue(attachment.filename || 'attachment')
+  const mimeType = sanitizeHeaderValue(attachment.mimeType || 'application/octet-stream')
+  const content = Buffer.isBuffer(attachment.content)
+    ? attachment.content
+    : Buffer.from(attachment.content || '')
+  return [
+    `Content-Type: ${mimeType}; name="${filename}"`,
+    'Content-Transfer-Encoding: base64',
+    `Content-Disposition: attachment; filename="${filename}"`,
+    '',
+    wrapBase64(content.toString('base64')),
+  ].join('\r\n')
+}
+
+function sanitizeHeaderValue(value) {
+  return String(value || '').replace(/[\r\n"]/g, '').trim()
+}
+
+function wrapBase64(value) {
+  return String(value || '').match(/.{1,76}/g)?.join('\r\n') || ''
 }
 
 function normalizeEmailHeaderList(value) {

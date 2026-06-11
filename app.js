@@ -8,6 +8,10 @@ import { loadTalentDirectory } from './src/services/talent-directory.js';
 import { hydrateJazzhrCacheFromStore, refreshJazzhrCache, refreshJazzhrOpenJobs } from './src/services/jazzhr.js';
 import { ensureSlackDirectory } from './src/services/slack-directory.js';
 import { startEventLoopLagMonitor } from './src/event-loop-monitor.js';
+import {
+  backfillNotificationJobs,
+  startNotificationWorker,
+} from './src/workflow/notifications.js';
 
 const config = loadConfig();
 validateStartupConfig(config);
@@ -43,6 +47,12 @@ logger.info('role_assignment_export_configured', {
 
 await app.start();
 logger.info('slack_app_started', { socketMode: true });
+
+if (config.notifications.enabled) {
+  const backfill = await backfillNotificationJobs({ store, logger })
+  logger.info('notification_jobs_backfilled', backfill)
+}
+startNotificationWorker({ store, client: app.client, config, logger })
 
 ensureSlackDirectory({ client: app.client, config, logger }).catch((error) => {
   logger.warn('slack_directory_startup_preload_failed', slackApiErrorDetails(error));

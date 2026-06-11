@@ -76,7 +76,8 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       interviewTimezone: row.interview_timezone,
       selectedInterviewDate: row.selected_interview_date,
       selectedInterviewTime: row.selected_interview_time,
-      resumeLink: row.resume_link || row.resume_file || null,
+      resumeLink: row.resume_link || row.resume_file?.downloadUrl || row.resume_file?.permalink || null,
+      resumeFile: normalizeJson(row.resume_file),
       autofill: row.autofill,
       approvals: normalizeArray(row.approvals),
       guests: normalizeArray(row.guests),
@@ -113,7 +114,30 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       customInvite: row.custom_invite || null,
       lastAvailabilityCheck: normalizeJson(row.last_availability_check),
       selectedSlot: row.selected_slot,
+      completedAt: row.completed_at?.toISOString?.() || row.completed_at,
+      completedBy: row.completed_by,
+      feedbackEmail: normalizeJson(row.feedback_email),
+      feedbackEmailStatus: row.feedback_email_status,
     };
+  }
+
+  function rowToNotificationJob(row) {
+    return {
+      id: row.id,
+      caseId: row.case_id,
+      type: row.type,
+      scheduleVersion: row.schedule_version || 0,
+      dueAt: row.due_at?.toISOString?.() || row.due_at,
+      status: row.status,
+      attempts: row.attempts || 0,
+      maxAttempts: row.max_attempts || 5,
+      payload: normalizeJson(row.payload) || {},
+      lockedAt: row.locked_at?.toISOString?.() || row.locked_at,
+      lastError: row.last_error,
+      completedAt: row.completed_at?.toISOString?.() || row.completed_at,
+      createdAt: row.created_at?.toISOString?.() || row.created_at,
+      updatedAt: row.updated_at?.toISOString?.() || row.updated_at,
+    }
   }
 
   function rowToJazzhrCandidate(row) {
@@ -513,9 +537,10 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           external_attendees,
           last_availability_check,
           selected_slot,
-          custom_invite
+          custom_invite,
+          resume_file
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 0, 'none', $19, $20, NULL, $21, $22, $23, $24, $25, $26)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 0, 'none', $19, $20, NULL, $21, $22, $23, $24, $25, $26, $27)
         RETURNING *`,
         [
           id,                                                              // $1
@@ -532,7 +557,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           input.interviewTimezone || null,                                 // $12
           input.selectedInterviewDate || null,                             // $13
           input.selectedInterviewTime || null,                             // $14
-          input.resumeLink || input.resumeFile || null,                    // $15
+          input.resumeLink || input.resumeFile?.downloadUrl || input.resumeFile?.permalink || null, // $15
           input.autofill ? JSON.stringify(input.autofill) : JSON.stringify({}),          // $16
           input.approvals ? JSON.stringify(input.approvals) : JSON.stringify({}),        // $17
           input.guests ? JSON.stringify(input.guests) : JSON.stringify([]),              // $18
@@ -544,6 +569,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           serializeJson(input.lastAvailabilityCheck),                      // $24
           input.selectedSlot ? JSON.stringify(input.selectedSlot) : null,  // $25
           input.customInvite ? JSON.stringify(input.customInvite) : JSON.stringify({}), // $26
+          serializeJson(input.resumeFile),                                 // $27
         ],
       );
       return rowToCase(result.rows[0]);
@@ -565,6 +591,19 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     async getCase(id) {
       const result = await query('SELECT * FROM scheduling_cases WHERE id = $1', [id]);
       return result.rows[0] ? rowToCase(result.rows[0]) : undefined;
+    },
+
+    async listNotificationEligibleCases() {
+      const result = await query(
+        `SELECT *
+         FROM scheduling_cases
+         WHERE status = 'Scheduled'
+           AND current_schedule IS NOT NULL
+           AND stage_key = ANY($1)
+         ORDER BY updated_at ASC`,
+        [['1st-interview', '2nd-interview', 'final-interview', 'job-offer-discussion']],
+      )
+      return result.rows.map(rowToCase)
     },
 
     async updateCase(id, patch) {
@@ -618,6 +657,11 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           last_availability_check = $44,
           selected_slot = $45,
           custom_invite = $46,
+          resume_file = $47,
+          completed_at = $48,
+          completed_by = $49,
+          feedback_email = $50,
+          feedback_email_status = $51,
           updated_at = now()
         WHERE id = $1
         RETURNING *`,
@@ -634,7 +678,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           merged.interviewTimezone || null,
           merged.selectedInterviewDate || null,
           merged.selectedInterviewTime || null,
-          merged.resumeLink || merged.resumeFile || null,
+          merged.resumeLink || merged.resumeFile?.downloadUrl || merged.resumeFile?.permalink || null,
           merged.autofill ? JSON.stringify(merged.autofill) : JSON.stringify({}),
           merged.guests ? JSON.stringify(merged.guests) : JSON.stringify([]),
           merged.candidateEmail || null,
@@ -668,9 +712,207 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           serializeJson(merged.lastAvailabilityCheck),
           merged.selectedSlot || null,
           merged.customInvite ? JSON.stringify(merged.customInvite) : JSON.stringify({}),
+          serializeJson(merged.resumeFile),
+          merged.completedAt || null,
+          merged.completedBy || null,
+          serializeJson(merged.feedbackEmail),
+          merged.feedbackEmailStatus || null,
         ],
       );
       return rowToCase(result.rows[0]);
+    },
+
+    async upsertNotificationJob(input) {
+      const result = await query(
+        `INSERT INTO notification_jobs (
+          id, case_id, type, schedule_version, due_at, status, attempts, max_attempts, payload
+        )
+        VALUES ($1, $2, $3, $4, $5, 'pending', 0, $6, $7)
+        ON CONFLICT (case_id, type, schedule_version) DO UPDATE SET
+          due_at = EXCLUDED.due_at,
+          payload = EXCLUDED.payload,
+          status = CASE
+            WHEN notification_jobs.status = 'completed' THEN notification_jobs.status
+            ELSE 'pending'
+          END,
+          locked_at = CASE
+            WHEN notification_jobs.status = 'completed' THEN notification_jobs.locked_at
+            ELSE NULL
+          END,
+          last_error = CASE
+            WHEN notification_jobs.status = 'completed' THEN notification_jobs.last_error
+            ELSE NULL
+          END,
+          updated_at = now()
+        RETURNING *`,
+        [
+          input.id || `notification-${crypto.randomUUID()}`,
+          input.caseId,
+          input.type,
+          input.scheduleVersion || 0,
+          input.dueAt,
+          input.maxAttempts || 5,
+          serializeJson(input.payload || {}),
+        ],
+      )
+      return rowToNotificationJob(result.rows[0])
+    },
+
+    async claimDueNotificationJobs({ now = new Date().toISOString(), limit = 10, leaseMs = 300000 } = {}) {
+      const leaseCutoff = new Date(new Date(now).getTime() - leaseMs).toISOString()
+      const result = await query(
+        `WITH claimable AS (
+          SELECT id
+          FROM notification_jobs
+          WHERE (
+            (status = 'pending' AND due_at <= $1)
+            OR (status = 'running' AND locked_at < $2)
+          )
+          AND attempts < max_attempts
+          ORDER BY due_at ASC
+          FOR UPDATE SKIP LOCKED
+          LIMIT $3
+        )
+        UPDATE notification_jobs AS jobs SET
+          status = 'running',
+          attempts = jobs.attempts + 1,
+          locked_at = $1,
+          updated_at = now()
+        FROM claimable
+        WHERE jobs.id = claimable.id
+        RETURNING jobs.*`,
+        [now, leaseCutoff, limit],
+      )
+      return result.rows.map(rowToNotificationJob)
+    },
+
+    async finishNotificationJob(id, result = {}) {
+      const updated = await query(
+        `UPDATE notification_jobs SET
+          status = 'completed',
+          payload = payload || $2::jsonb,
+          completed_at = now(),
+          locked_at = NULL,
+          last_error = NULL,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+        [id, serializeJson({ result })],
+      )
+      return updated.rows[0] ? rowToNotificationJob(updated.rows[0]) : null
+    },
+
+    async retryNotificationJob(id, { dueAt, error } = {}) {
+      const updated = await query(
+        `UPDATE notification_jobs SET
+          status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'pending' END,
+          due_at = COALESCE($2, due_at),
+          locked_at = NULL,
+          last_error = $3,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+        [id, dueAt || null, error || null],
+      )
+      return updated.rows[0] ? rowToNotificationJob(updated.rows[0]) : null
+    },
+
+    async cancelNotificationJobs(caseId, { exceptScheduleVersion } = {}) {
+      const params = [caseId]
+      let versionClause = ''
+      if (exceptScheduleVersion !== undefined) {
+        params.push(exceptScheduleVersion)
+        versionClause = `AND schedule_version <> $${params.length}`
+      }
+      const result = await query(
+        `UPDATE notification_jobs SET
+          status = 'cancelled',
+          locked_at = NULL,
+          updated_at = now()
+        WHERE case_id = $1
+          AND status IN ('pending', 'running', 'failed')
+          ${versionClause}`,
+        params,
+      )
+      return result.rowCount
+    },
+
+    async completeCase(caseId, {
+      actorSlackUserId,
+      expectedScheduleVersion,
+      completedAt,
+      feedbackJob,
+    }) {
+      const pool = await getPool()
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const currentResult = await client.query(
+          'SELECT * FROM scheduling_cases WHERE id = $1 FOR UPDATE',
+          [caseId],
+        )
+        if (!currentResult.rows[0]) throw new Error(`Case not found: ${caseId}`)
+        const current = rowToCase(currentResult.rows[0])
+        if (current.status === 'Completed') {
+          await client.query('COMMIT')
+          return { caseRecord: current, alreadyCompleted: true }
+        }
+        if (
+          expectedScheduleVersion !== undefined &&
+          Number(expectedScheduleVersion) !== Number(current.scheduleVersion || 1)
+        ) {
+          await client.query('COMMIT')
+          return { caseRecord: current, alreadyCompleted: false, stale: true }
+        }
+
+        const completedResult = await client.query(
+          `UPDATE scheduling_cases SET
+            status = 'Completed',
+            completed_at = $2,
+            completed_by = $3,
+            action_lock = NULL,
+            last_action_at = $2,
+            last_action_by = $3,
+            updated_at = now()
+          WHERE id = $1
+          RETURNING *`,
+          [caseId, completedAt, actorSlackUserId || null],
+        )
+        await client.query(
+          `UPDATE notification_jobs SET
+            status = 'cancelled',
+            locked_at = NULL,
+            updated_at = now()
+          WHERE case_id = $1
+            AND status IN ('pending', 'running', 'failed')
+            AND type <> 'feedback-request'`,
+          [caseId],
+        )
+        if (feedbackJob) {
+          await client.query(
+            `INSERT INTO notification_jobs (
+              id, case_id, type, schedule_version, due_at, status, payload
+            )
+            VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+            ON CONFLICT (case_id, type, schedule_version) DO NOTHING`,
+            [
+              feedbackJob.id || `notification-${crypto.randomUUID()}`,
+              caseId,
+              feedbackJob.type,
+              current.scheduleVersion || 1,
+              feedbackJob.dueAt,
+              serializeJson(feedbackJob.payload || {}),
+            ],
+          )
+        }
+        await client.query('COMMIT')
+        return { caseRecord: rowToCase(completedResult.rows[0]), alreadyCompleted: false }
+      } catch (error) {
+        await client.query('ROLLBACK')
+        throw error
+      } finally {
+        client.release()
+      }
     },
 
     async addAudit(entry) {

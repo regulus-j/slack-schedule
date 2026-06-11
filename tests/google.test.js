@@ -194,3 +194,23 @@ test('buildGmailRawMessage includes cc recipients', () => {
   assert.match(decoded, /^Cc: interviewer@example\.com, hm@example\.com/m);
   assert.match(decoded, /^From: recruiter@example\.com/m);
 });
+
+test('buildGmailRawMessage includes binary attachments', () => {
+  const raw = buildGmailRawMessage({
+    to: 'candidate@example.com',
+    from: 'recruiter@example.com',
+    subject: 'Resume',
+    htmlBody: '<p>Attached</p>',
+    plainBody: 'Attached',
+    attachments: [{
+      filename: 'candidate.pdf',
+      mimeType: 'application/pdf',
+      content: Buffer.from('resume bytes'),
+    }],
+  });
+  const decoded = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+
+  assert.match(decoded, /Content-Type: application\/pdf; name="candidate\.pdf"/);
+  assert.match(decoded, /Content-Disposition: attachment; filename="candidate\.pdf"/);
+  assert.match(decoded, /cmVzdW1lIGJ5dGVz/);
+});

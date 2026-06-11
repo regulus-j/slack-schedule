@@ -30,8 +30,8 @@ function makeSlot(startIso, endIso, overrides = {}) {
 
 test('generates 18 slots for a single 7-4 business day with 30 min duration', () => {
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -41,8 +41,8 @@ test('generates 18 slots for a single 7-4 business day with 30 min duration', ()
 
 test('generates 9 slots for a single business day with 60 min duration', () => {
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: 60,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -52,8 +52,8 @@ test('generates 9 slots for a single business day with 60 min duration', () => {
 
 test('all generated slots have required properties', () => {
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -69,8 +69,8 @@ test('all generated slots have required properties', () => {
 
 test('slots are ordered chronologically', () => {
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -84,8 +84,8 @@ test('slots are ordered chronologically', () => {
 
 test('respects custom business hours', () => {
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: 60,
     timeZone: SYDNEY_TIME_ZONE,
     businessStart: '10:00',
@@ -97,10 +97,10 @@ test('respects custom business hours', () => {
 })
 
 test('skips weekends (Saturday)', () => {
-  // 2026-05-30 is a Saturday
+  // 2099-05-30 is a Saturday
   const slots = generateCandidateSlots({
-    startDate: '2026-05-30',
-    endDate: '2026-05-30',
+    startDate: '2099-05-30',
+    endDate: '2099-05-30',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -109,10 +109,10 @@ test('skips weekends (Saturday)', () => {
 })
 
 test('skips weekends (Sunday)', () => {
-  // 2026-05-31 is a Sunday
+  // 2099-05-31 is a Sunday
   const slots = generateCandidateSlots({
-    startDate: '2026-05-31',
-    endDate: '2026-05-31',
+    startDate: '2099-05-31',
+    endDate: '2099-05-31',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -121,10 +121,10 @@ test('skips weekends (Sunday)', () => {
 })
 
 test('generates slots across multiple business days', () => {
-  // Monday June 1 through Wednesday June 3, 2026 = 3 business days
+  // Monday June 1 through Wednesday June 3, 2099 = 3 business days
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-03',
+    startDate: '2099-06-01',
+    endDate: '2099-06-03',
     durationMinutes: 60,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -152,8 +152,8 @@ test('does not generate slots before today in the interview timezone', () => {
 
 test('returns empty for invalid date range (end before start)', () => {
   const slots = generateCandidateSlots({
-    startDate: '2026-06-05',
-    endDate: '2026-06-01',
+    startDate: '2099-06-05',
+    endDate: '2099-06-01',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
@@ -164,8 +164,8 @@ test('returns empty for invalid date range (end before start)', () => {
 test('handles exact slot alignment at business day boundaries', () => {
   // With 30-min slots 07:00-16:00, first slot starts at 07:00 and last ends at 16:00
   const slots = generateCandidateSlots({
-    startDate: '2026-06-01',
-    endDate: '2026-06-01',
+    startDate: '2099-06-01',
+    endDate: '2099-06-01',
     durationMinutes: 30,
     timeZone: SYDNEY_TIME_ZONE
   })
