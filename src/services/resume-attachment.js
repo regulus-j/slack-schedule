@@ -14,10 +14,7 @@ export async function resolveResumeAttachment({
   }
 
   let file = stored
-  if (file.id && !hasCompleteSlackFileMetadata(resumeFile)) {
-    if (!client?.files?.info) {
-      throw new Error('Slack file metadata is unavailable. Upload the resume again before sending.')
-    }
+  if (file.id && client?.files?.info) {
     try {
       const result = await client.files.info({ file: file.id })
       file = normalizeResumeFile(result?.file, file.downloadUrl || caseRecord?.resumeLink)
@@ -27,6 +24,8 @@ export async function resolveResumeAttachment({
       }
       throw error
     }
+  } else if (file.id && !file.downloadUrl) {
+    throw new Error('Slack file metadata is unavailable. Upload the resume again before sending.')
   }
 
   if (!file.downloadUrl) {
@@ -51,6 +50,12 @@ export async function resolveResumeAttachment({
   if (content.length > maxBytes) {
     throw new Error(`The resume is larger than the ${formatMegabytes(maxBytes)} MB attachment limit.`)
   }
+  validateResumeContent({
+    content,
+    contentType: response.headers?.get?.('content-type') || '',
+    filename: file.name,
+    mimeType: file.mimeType,
+  })
 
   return {
     filename: sanitizeFilename(file.name || 'resume'),
@@ -82,12 +87,48 @@ export function slackFileId(value) {
   return match?.[1] || ''
 }
 
-function hasCompleteSlackFileMetadata(file) {
-  if (!file || typeof file !== 'object') return false
-  return Boolean(
-    clean(file.downloadUrl || file.url_private_download) &&
-    clean(file.name) &&
-    clean(file.mimeType || file.mimetype)
+function validateResumeContent({ content, contentType, filename, mimeType }) {
+  const normalizedContentType = clean(contentType).toLowerCase()
+  const textPrefix = content.subarray(0, 1024).toString('utf8').trimStart().toLowerCase()
+  if (
+    normalizedContentType.includes('text/html') ||
+    textPrefix.startsWith('<!doctype html') ||
+    textPrefix.startsWith('<html') ||
+    textPrefix.includes('this browser is no longer supported')
+  ) {
+    throw new Error('Slack returned a sign-in page instead of the resume file. Verify files:read access and upload the resume again.')
+  }
+
+  const extension = extensionFromFilename(filename)
+  const normalizedMimeType = clean(mimeType).toLowerCase()
+  if ((extension === 'pdf' || normalizedMimeType === 'application/pdf') && !content.includes(Buffer.from('%PDF-'))) {
+    throw new Error('The downloaded resume is not a valid PDF. Upload the original PDF again before sending.')
+  }
+  if (
+    (extension === 'docx' || normalizedMimeType.includes('officedocument.wordprocessingml.document')) &&
+    !hasZipSignature(content)
+  ) {
+    throw new Error('The downloaded resume is not a valid DOCX file. Upload the original document again before sending.')
+  }
+  if (
+    (extension === 'doc' || normalizedMimeType === 'application/msword') &&
+    !content.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))
+  ) {
+    throw new Error('The downloaded resume is not a valid DOC file. Upload the original document again before sending.')
+  }
+}
+
+function extensionFromFilename(value) {
+  const match = clean(value).toLowerCase().match(/\.([a-z0-9]+)$/)
+  return match?.[1] || ''
+}
+
+function hasZipSignature(content) {
+  const signature = content.subarray(0, 4)
+  return (
+    signature.equals(Buffer.from([0x50, 0x4b, 0x03, 0x04])) ||
+    signature.equals(Buffer.from([0x50, 0x4b, 0x05, 0x06])) ||
+    signature.equals(Buffer.from([0x50, 0x4b, 0x07, 0x08]))
   )
 }
 

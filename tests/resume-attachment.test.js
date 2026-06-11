@@ -18,9 +18,12 @@ test('downloads a private Slack resume with bot authentication', async () => {
     fetchImpl: async (url, options) => {
       assert.match(url, /files\.slack\.com/)
       authorization = options.headers.authorization
-      return new Response(Buffer.from('resume bytes'), {
+      return new Response(Buffer.from('%PDF-1.7\nresume bytes'), {
         status: 200,
-        headers: { 'content-length': '12' },
+        headers: {
+          'content-length': '21',
+          'content-type': 'application/pdf',
+        },
       })
     },
   })
@@ -28,7 +31,7 @@ test('downloads a private Slack resume with bot authentication', async () => {
   assert.equal(authorization, 'Bearer xoxb-test')
   assert.equal(attachment.filename, 'candidate.pdf')
   assert.equal(attachment.mimeType, 'application/pdf')
-  assert.equal(attachment.content.toString(), 'resume bytes')
+  assert.equal(attachment.content.toString(), '%PDF-1.7\nresume bytes')
 })
 
 test('resolves missing Slack file metadata through files.info', async () => {
@@ -51,15 +54,16 @@ test('resolves missing Slack file metadata through files.info', async () => {
       },
     },
     botToken: 'xoxb-test',
-    fetchImpl: async () => new Response(Buffer.from('docx'), { status: 200 }),
+    fetchImpl: async () => new Response(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x01]), { status: 200 }),
   })
 
   assert.equal(requestedFile, 'F456')
   assert.equal(attachment.filename, 'candidate.docx')
 })
 
-test('uses complete stored metadata without calling files.info', async () => {
+test('refreshes complete stored metadata through files.info before downloading', async () => {
   let filesInfoCalled = false
+  let downloadedUrl = ''
   const attachment = await resolveResumeAttachment({
     caseRecord: {
       resumeFile: {
@@ -71,17 +75,29 @@ test('uses complete stored metadata without calling files.info', async () => {
     },
     client: {
       files: {
-        async info() {
+        async info({ file }) {
           filesInfoCalled = true
-          throw new Error('files.info should not be called')
+          assert.equal(file, 'F456')
+          return {
+            file: {
+              id: file,
+              name: 'candidate.pdf',
+              mimetype: 'application/pdf',
+              url_private_download: 'https://files.slack.com/files-pri/T123-F456/refreshed.pdf',
+            },
+          }
         },
       },
     },
     botToken: 'xoxb-test',
-    fetchImpl: async () => new Response(Buffer.from('pdf'), { status: 200 }),
+    fetchImpl: async (url) => {
+      downloadedUrl = url
+      return new Response(Buffer.from('%PDF-1.7\ncontent'), { status: 200 })
+    },
   })
 
-  assert.equal(filesInfoCalled, false)
+  assert.equal(filesInfoCalled, true)
+  assert.match(downloadedUrl, /refreshed\.pdf$/)
   assert.equal(attachment.filename, 'candidate.pdf')
 })
 
@@ -120,5 +136,48 @@ test('rejects resumes larger than the configured source limit', async () => {
       fetchImpl: async () => new Response(Buffer.from('too large'), { status: 200 }),
     }),
     /larger than the 0 MB attachment limit/,
+  )
+})
+
+test('rejects a Slack browser page returned with HTTP 200 instead of a PDF', async () => {
+  await assert.rejects(
+    resolveResumeAttachment({
+      caseRecord: {
+        resumeFile: {
+          id: 'F999',
+          name: 'candidate.pdf',
+          mimeType: 'application/pdf',
+          url_private_download: 'https://files.slack.com/files-pri/T123-F999/candidate.pdf',
+        },
+      },
+      botToken: 'xoxb-test',
+      fetchImpl: async () => new Response(
+        Buffer.from('<!DOCTYPE html><html><body>This browser is no longer supported</body></html>'),
+        {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        },
+      ),
+    }),
+    /sign-in page instead of the resume file/i,
+  )
+})
+
+test('rejects non-PDF bytes labeled as a PDF', async () => {
+  await assert.rejects(
+    resolveResumeAttachment({
+      caseRecord: {
+        resumeFile: {
+          name: 'candidate.pdf',
+          mimeType: 'application/pdf',
+          downloadUrl: 'https://example.com/candidate.pdf',
+        },
+      },
+      fetchImpl: async () => new Response(Buffer.from('not a PDF'), {
+        status: 200,
+        headers: { 'content-type': 'application/octet-stream' },
+      }),
+    }),
+    /not a valid PDF/i,
   )
 })
