@@ -515,6 +515,7 @@ export function registerSlackHandlers(app, context) {
       defaultTimeZone,
     })
     const updatedBody = bodyWithUpdatedView(body, loadingResult)
+    let remoteUpdateError = ''
     try {
       await syncJazzhrJobCandidates({
         config,
@@ -523,41 +524,27 @@ export function registerSlackHandlers(app, context) {
         jobId: role?.roleId || roleId,
         concurrency: config.jazzhr.applicantFetchConcurrency,
       })
-      await refreshIntakeModal({
-        client,
-        body: updatedBody,
-        templates: await loadSchedulingTemplates(),
-        draftOverrides: {
-          roleTitleInput: role?.title || '',
-          recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
-          recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
-          hiringManagerName: '',
-          hiringManagerEmail: '',
-          remoteUpdateStatus: '',
-          remoteUpdateMessage: '',
-        },
-        timeZones: schedulingTimeZones,
-        defaultTimeZone,
-      })
     } catch (error) {
       logger.warn('intake_role_remote_update_failed', { roleId, error: error.message })
-      await refreshIntakeModal({
-        client,
-        body: updatedBody,
-        templates: await loadSchedulingTemplates(),
-        draftOverrides: {
-          roleTitleInput: role?.title || '',
-          recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
-          recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
-          hiringManagerName: '',
-          hiringManagerEmail: '',
-          remoteUpdateStatus: 'error',
-          remoteUpdateMessage: 'JazzHR candidate data could not be refreshed. Existing cached options and editable fields remain available.',
-        },
-        timeZones: schedulingTimeZones,
-        defaultTimeZone,
-      })
+      remoteUpdateError = 'JazzHR candidate data could not be refreshed. Existing cached options and editable fields remain available.'
     }
+    await refreshIntakeModalAfterAsync({
+      client,
+      body: updatedBody,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: {
+        roleTitleInput: role?.title || '',
+        recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
+        recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
+        hiringManagerName: '',
+        hiringManagerEmail: '',
+        remoteUpdateStatus: remoteUpdateError ? 'error' : '',
+        remoteUpdateMessage: remoteUpdateError,
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+      logger,
+    })
   })
 
   app.action('open_schedule_tracker', async ({ ack, body, client }) => {
@@ -629,7 +616,7 @@ export function registerSlackHandlers(app, context) {
               user: body.user.id,
               text: `This application is not available for scheduling because its JazzHR stage is "${applicant.stage || inactiveReason}".`,
             })
-            await refreshIntakeModal({
+            await refreshIntakeModalAfterAsync({
               client,
               body: updatedBody,
               templates: await loadSchedulingTemplates(),
@@ -641,6 +628,7 @@ export function registerSlackHandlers(app, context) {
               },
               timeZones: schedulingTimeZones,
               defaultTimeZone,
+              logger,
             })
             return
           }
@@ -657,7 +645,7 @@ export function registerSlackHandlers(app, context) {
       : null
     const applicantRecruiterIds = applicantRecruiter ? [applicantRecruiter.id] : []
 
-    await refreshIntakeModal({
+    await refreshIntakeModalAfterAsync({
       client,
       body: updatedBody,
       templates: await loadSchedulingTemplates(),
@@ -681,6 +669,7 @@ export function registerSlackHandlers(app, context) {
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
+      logger,
     });
   });
 
@@ -3102,6 +3091,26 @@ async function refreshIntakeModal({
       private_metadata: privateMetadata,
     },
   });
+}
+
+async function refreshIntakeModalAfterAsync(options) {
+  try {
+    return await refreshIntakeModal(options)
+  } catch (error) {
+    const latestView = error?.data?.error === 'hash_conflict' ? error.data.view : null
+    if (!latestView?.id || !latestView?.hash) throw error
+
+    options.logger?.info('intake_modal_hash_conflict_recovered', {
+      viewId: latestView.id,
+    })
+    return refreshIntakeModal({
+      ...options,
+      body: {
+        ...options.body,
+        view: latestView,
+      },
+    })
+  }
 }
 
 function bodyWithUpdatedView(body, updateResult) {

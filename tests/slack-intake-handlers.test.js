@@ -82,6 +82,7 @@ test('cached candidate selection hydrates exact JazzHR application details and c
 
   let acked = false
   const updates = []
+  let latestView
   try {
     await actions.get('applicant_select')({
       ack: async () => {
@@ -123,7 +124,46 @@ test('cached candidate selection hydrates exact JazzHR application details and c
         views: {
           async update(payload) {
             updates.push(payload)
-            return { view: payload.view }
+            if (updates.length === 1) {
+              latestView = {
+                ...payload.view,
+                id: 'V1',
+                hash: 'hash-2',
+                state: {
+                  values: {
+                    event_type_block: {
+                      event_type_select: {
+                        selected_option: { value: '1st-interview' },
+                      },
+                    },
+                    applicant_block: {
+                      applicant_select: {
+                        selected_option: { value: 'applicant-prospect-niel::job-open' },
+                      },
+                    },
+                  },
+                },
+              }
+              return { view: latestView }
+            }
+            if (updates.length === 2) {
+              const error = new Error('An API error occurred: hash_conflict')
+              error.data = {
+                error: 'hash_conflict',
+                view: {
+                  ...latestView,
+                  hash: 'hash-3',
+                },
+              }
+              throw error
+            }
+            return {
+              view: {
+                ...payload.view,
+                id: 'V1',
+                hash: 'hash-4',
+              },
+            }
           },
         },
         chat: {
@@ -136,9 +176,9 @@ test('cached candidate selection hydrates exact JazzHR application details and c
   }
 
   assert.equal(acked, true)
-  assert.equal(updates.length, 2)
+  assert.equal(updates.length, 3)
   assert.match(JSON.stringify(updates[0].view.blocks), /Updating form/)
-  const updatedView = updates[1].view
+  const updatedView = updates[2].view
   const emailBlock = updatedView.blocks.find((block) => block.block_id?.startsWith('applicant_email_block'))
   assert.equal(emailBlock.element.initial_value, 'niel@example.com')
   assert.match(JSON.stringify(updatedView.blocks), /0400000000/)
