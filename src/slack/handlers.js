@@ -468,9 +468,15 @@ export function registerSlackHandlers(app, context) {
     const eventType = getSelectedOptionValues(body.view?.state?.values, 'event_type_select')[0] || metadata.eventType || ''
     const roleMatch = resolveRoleAssignmentsForRole(roleId)
     const recruiters = mappedRecruitersForRole(roleId)
-    const recruiterIds = eventType === 'job-offer'
-      ? recruiters.map((person) => person.id).slice(0, 10)
-      : (recruiters.length === 1 ? [recruiters[0].id] : [])
+    const hiringManagers = mappedHiringManagersForRole(roleId)
+    const { recruiterIds, hiringManagerIds } = roleAutofillSelections(
+      eventType,
+      recruiters,
+      hiringManagers,
+    )
+    const selectedRecruiters = recruiters.filter((person) => recruiterIds.includes(person.id))
+    const selectedHiringManagers = hiringManagers.filter((person) => hiringManagerIds.includes(person.id))
+    const zoomLink = resolveZoomLinkForRecruiters(selectedRecruiters)
     logger.info('role_assignment_match_resolved', {
       roleId: role?.roleId || roleId,
       roleTitle: role?.title || '',
@@ -489,17 +495,17 @@ export function registerSlackHandlers(app, context) {
         roleTitle: role?.title || '',
         roleTitleInput: role?.title || '',
         recruiterIds,
-        recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
-        recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
-        hiringManagerIds: [],
-        hiringManagerName: '',
-        hiringManagerEmail: '',
+        recruiterName: selectedRecruiters[0]?.name || '',
+        recruiterEmail: selectedRecruiters[0]?.email || '',
+        hiringManagerIds,
+        hiringManagerName: selectedHiringManagers[0]?.name || '',
+        hiringManagerEmail: selectedHiringManagers[0]?.email || '',
         recruiterSearchQuery: '',
         hiringManagerSearchQuery: '',
         showAdditionalRecruiters: false,
         showAdditionalHiringManagers: false,
-        zoomLink: resolveZoomLinkForRecruiters(recruiters.filter((person) => recruiterIds.includes(person.id))),
-        zoomLinkAuto: recruiterIds.length === 1,
+        zoomLink,
+        zoomLinkAuto: Boolean(zoomLink),
         applicant: '',
         candidateSearchQuery: '',
         candidateSearchSessionId: '',
@@ -534,10 +540,10 @@ export function registerSlackHandlers(app, context) {
       templates: await loadSchedulingTemplates(),
       draftOverrides: {
         roleTitleInput: role?.title || '',
-        recruiterName: recruiterIds.length > 0 ? recruiters[0]?.name || '' : '',
-        recruiterEmail: recruiterIds.length > 0 ? recruiters[0]?.email || '' : '',
-        hiringManagerName: '',
-        hiringManagerEmail: '',
+        recruiterName: selectedRecruiters[0]?.name || '',
+        recruiterEmail: selectedRecruiters[0]?.email || '',
+        hiringManagerName: selectedHiringManagers[0]?.name || '',
+        hiringManagerEmail: selectedHiringManagers[0]?.email || '',
         remoteUpdateStatus: remoteUpdateError ? 'error' : '',
         remoteUpdateMessage: remoteUpdateError,
       },
@@ -4468,6 +4474,14 @@ function roleCandidateFilters(draftOrMetadata = {}) {
 export function resolveZoomLinkForRecruiters(recruiters = []) {
   const uniqueLinks = [...new Set((recruiters || []).map((recruiter) => String(recruiter?.zoomLink || '').trim()).filter(Boolean))]
   return uniqueLinks.length === 1 ? uniqueLinks[0] : ''
+}
+
+export function roleAutofillSelections(eventType, recruiters = [], hiringManagers = []) {
+  const recruiterIds = normalizeIdList(recruiters.map((person) => person?.id)).slice(0, 10)
+  const hiringManagerIds = ['2nd-interview', 'final-interview'].includes(eventType)
+    ? normalizeIdList(hiringManagers.map((person) => person?.id)).slice(0, 10)
+    : []
+  return { recruiterIds, hiringManagerIds }
 }
 
 function nextRecruiterZoomState(body, metadata, recruiters) {

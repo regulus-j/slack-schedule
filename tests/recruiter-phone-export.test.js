@@ -40,6 +40,23 @@ test('normalizeRecruiterPhoneRow accepts Aircall header without trailing space',
   assert.equal(row.phone, '+63 900 111 2222')
 })
 
+test('normalizeRecruiterPhoneRow accepts recruiter detail header variants and normalizes email keys', () => {
+  const row = normalizeRecruiterPhoneRow({
+    'Given Name': 'Mara',
+    Surname: 'Santos',
+    Nickname: 'Mars',
+    'Position Title': 'Recruitment Lead',
+    'Aircall Number': '0400 111 222',
+    'Email Address': ' Mara.Santos@Example.COM ',
+    'Zoom Link': 'https://zoom.us/j/mara',
+  })
+
+  assert.equal(row.name, 'Mars Santos')
+  assert.equal(row.email, 'mara.santos@example.com')
+  assert.equal(row.phone, '0400 111 222')
+  assert.equal(row.zoomLink, 'https://zoom.us/j/mara')
+})
+
 test('fetchRecruiterPhoneRows sends file id and accepts xlsx export payload shape', async () => {
   const originalFetch = globalThis.fetch
   const requestedUrls = []
@@ -195,6 +212,42 @@ test('recruiterRowsToPeople maps Apps Script rows into primary recruiter records
   assert.equal(people[0].positionTitle, 'Senior Recruiter')
   assert.equal(people[0].phone, '0480002413/ 0489275966')
   assert.equal(people[0].zoomLink, 'https://freedompropertyinvestors-au.zoom.us/my/armi.escamilla')
+})
+
+test('recruiterRowsToPeople preserves multiple recruiter detail records', () => {
+  const people = recruiterRowsToPeople([
+    normalizeRecruiterPhoneRow({
+      'First Name': 'Mara',
+      'Last Name': 'Santos',
+      'Work Email': 'mara@example.com',
+      Aircall: '0400000001',
+      'Personal Zoom Link': 'https://zoom.us/j/mara',
+    }),
+    normalizeRecruiterPhoneRow({
+      'First Name': 'Jamal',
+      'Last Name': 'Al Badi',
+      'Work Email': 'jamal@example.com',
+      Mobile: '0400000002',
+      'Zoom Link': 'https://zoom.us/j/jamal',
+    }),
+  ])
+
+  assert.deepEqual(people.map((person) => ({
+    email: person.email,
+    phone: person.phone,
+    zoomLink: person.zoomLink,
+  })), [
+    {
+      email: 'mara@example.com',
+      phone: '0400000001',
+      zoomLink: 'https://zoom.us/j/mara',
+    },
+    {
+      email: 'jamal@example.com',
+      phone: '0400000002',
+      zoomLink: 'https://zoom.us/j/jamal',
+    },
+  ])
 })
 
 function testLogger() {

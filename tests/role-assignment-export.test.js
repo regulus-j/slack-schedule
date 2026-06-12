@@ -61,6 +61,66 @@ test('normalizeRoleAssignmentRows supports current open roles tab shape', () => 
   assert.equal(isOpenRoleStatus(rows[2].status), false)
 })
 
+test('normalizeRoleAssignmentRows expands multiple recruiters and hiring managers with normalized emails', () => {
+  const rows = normalizeRoleAssignmentRows([
+    {
+      'JazzHR Job ID': 'job-456',
+      'Role Title': 'Loan Specialist',
+      'Recruiter(s)': 'Mara Santos, Jamal Al Badi',
+      'Recruiter Email(s)': ' MARA@EXAMPLE.COM ; jamal@example.com ',
+      'Hiring Manager(s)': 'Ana Cruz | Lee Morgan',
+      'Hiring Manager Emails': 'ANA@EXAMPLE.COM\nlee@example.com',
+    },
+  ])
+
+  assert.deepEqual(rows.map((row) => ({
+    recruiterName: row.recruiterName,
+    recruiterEmail: row.recruiterEmail,
+    hiringManagerName: row.hiringManagerName,
+    hiringManagerEmail: row.hiringManagerEmail,
+  })), [
+    {
+      recruiterName: 'Mara Santos',
+      recruiterEmail: 'mara@example.com',
+      hiringManagerName: 'Ana Cruz',
+      hiringManagerEmail: 'ana@example.com',
+    },
+    {
+      recruiterName: 'Jamal Al Badi',
+      recruiterEmail: 'jamal@example.com',
+      hiringManagerName: 'Lee Morgan',
+      hiringManagerEmail: 'lee@example.com',
+    },
+  ])
+
+  const assignments = resolveRoleAssignments(rows, {
+    recruiters: [
+      {
+        id: 'rec-mara',
+        name: 'Mara Santos',
+        email: 'mara@example.com',
+        phone: '0400000001',
+        zoomLink: 'https://zoom.us/j/mara',
+      },
+      {
+        id: 'rec-jamal',
+        name: 'Jamal Al Badi',
+        email: 'jamal@example.com',
+        phone: '0400000002',
+        zoomLink: 'https://zoom.us/j/jamal',
+      },
+    ],
+    hiringManagers: [
+      { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com' },
+      { id: 'hm-lee', name: 'Lee Morgan', email: 'lee@example.com' },
+    ],
+  })
+
+  assert.deepEqual(assignments.map((assignment) => assignment.recruiter.id), ['rec-mara', 'rec-jamal'])
+  assert.deepEqual(assignments.map((assignment) => assignment.recruiter.phone), ['0400000001', '0400000002'])
+  assert.deepEqual(assignments.map((assignment) => assignment.hiringManager.id), ['hm-ana', 'hm-lee'])
+})
+
 test('isOpenRoleStatus excludes closed inactive roles only', () => {
   assert.equal(isOpenRoleStatus('Open'), true)
   assert.equal(isOpenRoleStatus(''), true)
@@ -88,6 +148,45 @@ test('resolveRoleAssignments matches mapped people by email and creates sheet fa
   assert.equal(assignments[0].recruiter.id, 'rec-mara')
   assert.equal(assignments[0].recruiter.zoomLink, 'https://zoom.us/j/mara')
   assert.equal(assignments[0].hiringManager.id, 'sheet-role-hm-unknown-hm-example-com')
+})
+
+test('resolveRoleAssignments keeps a mapped recruiter when contact details are missing', () => {
+  const assignments = resolveRoleAssignments(normalizeRoleAssignmentRows([
+    {
+      'Job ID': 'job-missing-details',
+      'Job Title': 'Support Specialist',
+      Recruiter: 'Unknown Recruiter',
+      'Recruiter Email': 'UNKNOWN.RECRUITER@EXAMPLE.COM',
+      'Hiring Manager': 'Ana Cruz',
+    },
+  ]), {
+    recruiters: [],
+    hiringManagers: [{ id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com' }],
+  })
+
+  assert.equal(assignments[0].recruiter.name, 'Unknown Recruiter')
+  assert.equal(assignments[0].recruiter.email, 'unknown.recruiter@example.com')
+  assert.equal(assignments[0].recruiter.phone, undefined)
+  assert.equal(assignments[0].recruiter.zoomLink, undefined)
+})
+
+test('resolveRoleAssignments returns a null hiring manager when the mapping is blank', () => {
+  const assignments = resolveRoleAssignments(normalizeRoleAssignmentRows([
+    {
+      'Job ID': 'job-no-hm',
+      'Job Title': 'Support Specialist',
+      Recruiter: 'Mara Santos',
+      'Recruiter Email': 'mara@example.com',
+      'Hiring Manager': '',
+    },
+  ]), {
+    recruiters: [{ id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com' }],
+    hiringManagers: [],
+  })
+
+  assert.equal(assignments.length, 1)
+  assert.equal(assignments[0].recruiter.id, 'rec-mara')
+  assert.equal(assignments[0].hiringManager, null)
 })
 
 test('fetchRoleAssignmentRows sends file id and sheet name', async () => {

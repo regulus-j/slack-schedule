@@ -72,32 +72,51 @@ export function normalizeRoleAssignmentRow(row) {
     'Open Role',
   ])
   const status = firstClean(row, ['Status', 'Job Status', 'Role Status', 'Opening Status', 'Recruiters  to manage', 'Recruiters to manage'])
-  const recruiterName = firstClean(row, [
+  const recruiterName = allClean(row, [
     'Recruiter',
+    'Recruiters',
+    'Recruiter(s)',
     'Recruiter Name',
+    'Recruiter Names',
     'Assigned Recruiter',
+    'Assigned Recruiters',
     'Talent Recruiter',
-  ])
-  const recruiterEmail = firstClean(row, [
+  ]).join('\n')
+  const recruiterEmail = normalizeEmailList(allClean(row, [
     'Recruiter Email',
+    'Recruiter Emails',
+    'Recruiter Email(s)',
     'Recruiter Work Email',
+    'Recruiter Work Emails',
     'Recruiter Email Address',
+    'Recruiter Email Addresses',
     'Talent Recruiter Email',
-  ]).toLowerCase()
-  const hiringManagerName = firstClean(row, [
+  ]).join('\n'))
+  const hiringManagerName = allClean(row, [
     'For Automation',
     'Hiring Manager',
+    'Hiring Managers',
+    'Hiring Manager(s)',
     'Hiring Manager Name',
+    'Hiring Manager Names',
     'HM',
     'HM Name',
+    'HM Names',
     'Manager',
-  ])
-  const hiringManagerEmail = firstClean(row, [
+    'Second/Final Interviewer',
+    'Second/Final Interviewers',
+  ]).join('\n')
+  const hiringManagerEmail = normalizeEmailList(allClean(row, [
     'Hiring Manager Email',
+    'Hiring Manager Emails',
+    'Hiring Manager Email(s)',
     'HM Email',
+    'HM Emails',
     'HM Work Email',
+    'HM Work Emails',
     'Manager Email',
-  ]).toLowerCase()
+    'Manager Emails',
+  ]).join('\n'))
 
   if (!roleId && !roleTitle) return null
 
@@ -131,20 +150,23 @@ export function normalizeRoleAssignmentRows(rows) {
       base.status = [base.status, sectionStatus].filter(Boolean).join(' ')
     }
 
-    const hiringManagerNames = splitPeople(base.hiringManagerName).filter(isLikelyPersonName)
-    if (hiringManagerNames.length === 0) {
-      normalized.push({
-        ...base,
-        hiringManagerName: '',
-      })
-      continue
-    }
+    const recruiters = splitPersonReferences(base.recruiterName, base.recruiterEmail)
+    const hiringManagers = splitPersonReferences(
+      base.hiringManagerName,
+      base.hiringManagerEmail,
+      { filterName: isLikelyPersonName },
+    )
+    const count = Math.max(recruiters.length, hiringManagers.length, 1)
 
-    for (const name of hiringManagerNames) {
+    for (let index = 0; index < count; index += 1) {
+      const recruiter = recruiters[index] || {}
+      const hiringManager = hiringManagers[index] || {}
       normalized.push({
         ...base,
-        hiringManagerName: name,
-        hiringManagerEmail: '',
+        recruiterName: recruiter.name || '',
+        recruiterEmail: recruiter.email || '',
+        hiringManagerName: hiringManager.name || '',
+        hiringManagerEmail: hiringManager.email || '',
       })
     }
   }
@@ -185,11 +207,11 @@ export function isOpenRoleStatus(status) {
 }
 
 function resolvePerson({ name, email, role, prefix, people }) {
-  const normalizedEmail = clean(email).toLowerCase()
+  const normalizedEmail = normalizeEmail(email)
   const normalizedName = normalizeName(name)
   const matched = people.find((person) =>
     normalizedEmail
-      ? clean(person.email).toLowerCase() === normalizedEmail
+      ? normalizeEmail(person.email) === normalizedEmail
       : normalizeName(person.name) === normalizedName
   )
   if (matched) return { ...matched, role }
@@ -212,11 +234,76 @@ function extractRowsPayload(payload) {
 }
 
 function firstClean(row, keys) {
-  for (const key of keys) {
-    const value = clean(row?.[key])
-    if (value) return value
+  const values = allClean(row, keys)
+  return values[0] || ''
+}
+
+function allClean(row, keys) {
+  const aliases = new Set(keys.map(normalizeHeader))
+  const values = []
+
+  for (const [key, rawValue] of Object.entries(row || {})) {
+    const normalizedKey = normalizeHeader(key)
+    const matches = aliases.has(normalizedKey) ||
+      [...aliases].some((alias) => normalizedKey.startsWith(alias) && /^\d+$/.test(normalizedKey.slice(alias.length)))
+    if (!matches) continue
+    const value = clean(rawValue)
+    if (value && !values.includes(value)) values.push(value)
   }
-  return ''
+
+  return values
+}
+
+function normalizeHeader(value) {
+  return clean(value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+function splitPersonReferences(nameValue, emailValue, { filterName = Boolean } = {}) {
+  const names = splitPeople(nameValue)
+    .map(stripEmailFromName)
+    .filter(filterName)
+  const emails = uniqueValues([
+    ...extractEmails(emailValue),
+    ...extractEmails(nameValue),
+  ])
+  const count = Math.max(names.length, emails.length)
+
+  return Array.from({ length: count }, (_, index) => ({
+    name: names[index] || '',
+    email: emails[index] || '',
+  }))
+}
+
+function stripEmailFromName(value) {
+  return clean(value)
+    .replace(EMAIL_PATTERN, ' ')
+    .replace(/[<>()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[-,:;]+$/g, '')
+    .trim()
+}
+
+function normalizeEmailList(value) {
+  return extractEmails(value).join('\n')
+}
+
+function extractEmails(value) {
+  const matches = String(value || '').match(EMAIL_PATTERN) || []
+  return uniqueValues(matches.map(normalizeEmail).filter(Boolean))
+}
+
+function normalizeEmail(value) {
+  const text = clean(value).toLowerCase()
+  const match = text.match(EMAIL_PATTERN)
+  return match?.[0] || text
+}
+
+function uniqueValues(values) {
+  return [...new Set(values)]
 }
 
 function normalizeName(value) {
@@ -229,7 +316,7 @@ function clean(value) {
 
 function splitPeople(value) {
   return clean(value)
-    .split(/[,;\n]+/)
+    .split(/[,;\n|]+|\s+(?:&|and|\/)\s+/i)
     .map(clean)
     .filter(Boolean)
 }
@@ -246,10 +333,20 @@ function isLikelyPersonName(value) {
   const text = clean(value)
   if (!text) return false
   const lower = text.toLowerCase()
-  if (['second/final interviewer', 'cancelled', 'canceled'].includes(lower)) return false
+  if ([
+    'second/final interviewer',
+    'cancelled',
+    'canceled',
+    'tba',
+    'tbc',
+    'n/a',
+    'na',
+    'none',
+    'to be confirmed',
+  ].includes(lower)) return false
   if (lower.includes('job letter') || lower.includes('replacement') || lower.includes('replcement')) return false
   if (/\d/.test(text)) return false
-  return text.split(/\s+/).length >= 2
+  return /[a-z]/i.test(text)
 }
 
 function stableId(value) {
@@ -276,3 +373,5 @@ const CLOSED_SECTION_TERMS = [
   'cancelled',
   'canceled',
 ]
+
+const EMAIL_PATTERN = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi

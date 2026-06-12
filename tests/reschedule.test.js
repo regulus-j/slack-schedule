@@ -28,6 +28,7 @@ import {
   registerSlackHandlers,
   resolveRoleAssignmentsForRole,
   selectableHiringManagersForRole,
+  roleAutofillSelections,
 } from '../src/slack/handlers.js';
 import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
@@ -564,8 +565,8 @@ test('standard intake modal uses unified recruiter and hiring manager checkboxes
       showAdditionalRecruiters: true,
       showAdditionalHiringManagers: true,
       selectedRecruiters: [
-        { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', zoomLink: 'https://zoom.us/j/mara' },
-        { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jam@example.com', zoomLink: 'https://zoom.us/j/jam' },
+        { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', phone: '0400000001', zoomLink: 'https://zoom.us/j/mara' },
+        { id: 'rec-jam', name: 'Jamal Al Badi', email: 'jam@example.com', phone: '0400000002', zoomLink: 'https://zoom.us/j/jam' },
       ],
       selectedHiringManagers: [
         { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com' },
@@ -594,6 +595,9 @@ test('standard intake modal uses unified recruiter and hiring manager checkboxes
   assert.equal(view.blocks.some((block) => block.block_id === 'additional_hms_block'), false)
   assert.equal(view.blocks.find((block) => block.block_id === 'zoom_choice_block').element.options.length, 2)
   assert.equal(view.blocks.find((block) => block.block_id?.startsWith('zoom_block')).element.initial_value, 'https://zoom.us/j/mara')
+  assert.match(JSON.stringify(view.blocks), /Role recruiter details/)
+  assert.match(JSON.stringify(view.blocks), /0400000001/)
+  assert.match(JSON.stringify(view.blocks), /https:\/\/zoom\.us\/j\/jam/)
   assert.equal(inputBlockIds.includes('stage_block'), false)
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
 })
@@ -823,6 +827,30 @@ test('recruiter Zoom resolution auto-fills one unique link and requires a choice
   assert.equal(resolveZoomLinkForRecruiters([{ zoomLink: '' }]), '')
 })
 
+test('role autofill selects all mapped recruiters and applicable hiring managers', () => {
+  const recruiters = [
+    { id: 'rec-mara' },
+    { id: 'rec-jam' },
+  ]
+  const hiringManagers = [
+    { id: 'hm-ana' },
+    { id: 'hm-lee' },
+  ]
+
+  assert.deepEqual(roleAutofillSelections('1st-interview', recruiters, hiringManagers), {
+    recruiterIds: ['rec-mara', 'rec-jam'],
+    hiringManagerIds: [],
+  })
+  assert.deepEqual(roleAutofillSelections('2nd-interview', recruiters, hiringManagers), {
+    recruiterIds: ['rec-mara', 'rec-jam'],
+    hiringManagerIds: ['hm-ana', 'hm-lee'],
+  })
+  assert.deepEqual(roleAutofillSelections('final-interview', recruiters, []), {
+    recruiterIds: ['rec-mara', 'rec-jam'],
+    hiringManagerIds: [],
+  })
+})
+
 test('role mapping uses exact JazzHR job and enriches its hiring lead from recruiter contact data', () => {
   setRoleAssignments([
     {
@@ -956,7 +984,7 @@ test('unmatched roles keep the full manager directory available for manual selec
   setJazzhrJobs([])
 })
 
-test('second and final interviews show mapped manager suggestions without selecting them', () => {
+test('second and final interviews show and select mapped manager suggestions', () => {
   const suggestions = [
     { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
     { id: 'hm-lee', name: 'Lee Morgan', email: 'lee@example.com', role: 'hiring_manager' },
@@ -972,7 +1000,8 @@ test('second and final interviews show mapped manager suggestions without select
         roleId: 'job-1',
         roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
         suggestedHiringManagers: suggestions,
-        selectedHiringManagers: [],
+        selectedHiringManagers: suggestions,
+        hiringManagerIds: suggestions.map((person) => person.id),
       },
     })
     const viewText = JSON.stringify(view.blocks)
@@ -981,9 +1010,9 @@ test('second and final interviews show mapped manager suggestions without select
     assert.match(viewText, /Suggested hiring managers for this role/)
     assert.match(viewText, /Ana Cruz/)
     assert.match(viewText, /Lee Morgan/)
-    assert.match(viewText, /not invited automatically/)
+    assert.match(viewText, /selected automatically/)
     assert.equal(hmBlock.optional, false)
-    assert.equal('initial_options' in hmBlock.element, false)
+    assert.deepEqual(hmBlock.element.initial_options.map((option) => option.value), ['hm-ana', 'hm-lee'])
   }
 })
 

@@ -187,6 +187,9 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Edit the role title if needed'),
           ...(draft.roleTitle ? { initial_value: draft.roleTitle } : {}),
         }),
+        ...(availableRecruiters.length > 0
+          ? [section(recruiterContactSummary(availableRecruiters))]
+          : []),
         ...peopleCheckboxBlocks({
           label: 'Recruiters',
           blockId: 'recruiters_block',
@@ -215,7 +218,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             ? [
                 '*Suggested hiring managers for this role*',
                 ...draft.suggestedHiringManagers.map((person) => `• ${personLabel(person)}`),
-                '_Select at least one manager below. Suggestions are not invited automatically._',
+                '_Mapped managers are selected automatically. Review the selection before submitting._',
               ].join('\n')
             : '*Suggested hiring managers for this role*\nNo confident Open Roles match was found. Select a manager manually.'),
           ...peopleCheckboxBlocks({
@@ -1735,6 +1738,20 @@ function recruiterZoomOptions(recruiters = []) {
     })
   }
   return options.slice(0, 100)
+}
+
+function recruiterContactSummary(recruiters = []) {
+  const lines = ['*Role recruiter details*']
+  for (const recruiter of recruiters.slice(0, 10)) {
+    const phone = String(recruiter?.phone || '').trim()
+    const details = [
+      `Email: ${recruiter?.email || 'not available'}`,
+      `Aircall/mobile: ${phone && phone !== '-' ? phone : 'not available'}`,
+      `Zoom: ${recruiter?.zoomLink || 'not available'}`,
+    ]
+    lines.push(`- *${recruiter?.name || recruiter?.email || 'Unknown recruiter'}*\n${details.join(' | ')}`)
+  }
+  return truncateSlackPreservingWhitespace(escapeSlackText(lines.join('\n')), 2900)
 }
 
 function intakeEventTypeOptions() {

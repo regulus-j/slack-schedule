@@ -56,13 +56,31 @@ function extractRowsPayload(payload) {
 }
 
 export function normalizeRecruiterPhoneRow(row) {
-  const firstName = clean(row['First Name'])
-  const lastName = clean(row['Last Name'])
-  const preferredName = clean(row['Preferred Name'])
-  const designation = clean(row.Designation)
-  const phone = firstClean(row, ['Aircall ', 'Aircall', 'Mobile', 'Mobile Number', 'Phone', 'Phone Number'])
-  const email = clean(row['Work Email']).toLowerCase()
-  const zoomLink = clean(row['Personal Zoom Link'])
+  const firstName = firstClean(row, ['First Name', 'Given Name'])
+  const lastName = firstClean(row, ['Last Name', 'Surname', 'Family Name'])
+  const preferredName = firstClean(row, ['Preferred Name', 'PreferredName', 'Nickname'])
+  const designation = firstClean(row, ['Designation', 'Position Title', 'Job Title', 'Title'])
+  const phone = firstClean(row, [
+    'Aircall',
+    'Aircall Number',
+    'Aircall/Mobile',
+    'Mobile',
+    'Mobile Number',
+    'Phone',
+    'Phone Number',
+  ])
+  const email = normalizeEmail(firstClean(row, [
+    'Work Email',
+    'Work Email Address',
+    'Email',
+    'Email Address',
+  ]))
+  const zoomLink = firstClean(row, [
+    'Personal Zoom Link',
+    'Zoom Link',
+    'Personal Zoom',
+    'Zoom URL',
+  ])
   const legalName = [firstName, lastName].filter(Boolean).join(' ').trim()
   const displayName = [preferredName || firstName, lastName].filter(Boolean).join(' ').trim() || legalName
 
@@ -85,13 +103,13 @@ export function mergeRecruiterPhones(recruiters, phoneRows) {
   const byName = new Map()
 
   for (const row of phoneRows) {
-    if (row.email) byEmail.set(row.email, row)
+    if (row.email) byEmail.set(normalizeEmail(row.email), row)
     if (row.legalName) byName.set(normalizeName(row.legalName), row)
     if (row.name) byName.set(normalizeName(row.name), row)
   }
 
   return recruiters.map((recruiter) => {
-    const match = byEmail.get(clean(recruiter.email).toLowerCase()) || byName.get(normalizeName(recruiter.name))
+    const match = byEmail.get(normalizeEmail(recruiter.email)) || byName.get(normalizeName(recruiter.name))
     if (!match) return recruiter
     return {
       ...recruiter,
@@ -132,11 +150,27 @@ function clean(value) {
 }
 
 function firstClean(row, keys) {
-  for (const key of keys) {
-    const value = clean(row?.[key])
+  const aliases = new Set(keys.map(normalizeHeader))
+  for (const [key, rawValue] of Object.entries(row || {})) {
+    if (!aliases.has(normalizeHeader(key))) continue
+    const value = clean(rawValue)
     if (value) return value
   }
   return ''
+}
+
+function normalizeHeader(value) {
+  return clean(value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+}
+
+function normalizeEmail(value) {
+  const text = clean(value).toLowerCase()
+  const match = text.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/)
+  return match?.[0] || text
 }
 
 function cleanPhone(value) {
