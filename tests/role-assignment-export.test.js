@@ -136,6 +136,39 @@ test('fetchRoleAssignmentRows sends file id and sheet name', async () => {
   }
 })
 
+test('fetchRoleAssignmentRows explains an Apps Script deployment missing doGet', async () => {
+  const warnings = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(
+    '<!DOCTYPE html><html><body>Cannot find script function: doGet</body></html>',
+    { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+  )
+
+  try {
+    const rows = await fetchRoleAssignmentRows({
+      config: {
+        roleAssignmentExport: {
+          url: 'https://script.google.com/macros/s/demo/exec',
+          token: 'test-token',
+          fileId: 'mapping-file-id',
+        },
+      },
+      logger: {
+        info() {},
+        warn(event, details) {
+          warnings.push({ event, details })
+        },
+      },
+    })
+
+    assert.deepEqual(rows, [])
+    assert.equal(warnings[0].event, 'role_assignment_export_invalid_response')
+    assert.match(warnings[0].details.error, /could not find doGet/i)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 function testLogger() {
   return {
     info() {},

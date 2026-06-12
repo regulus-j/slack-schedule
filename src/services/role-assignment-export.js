@@ -1,3 +1,5 @@
+import { readAppsScriptJson } from './apps-script-response.js'
+
 export async function fetchRoleAssignmentRows({ config, logger }) {
   const url = config?.roleAssignmentExport?.url
   const token = config?.roleAssignmentExport?.token
@@ -19,7 +21,15 @@ export async function fetchRoleAssignmentRows({ config, logger }) {
       return []
     }
 
-    const payload = await response.json()
+    const parsed = await readAppsScriptJson(response)
+    if (parsed.error) {
+      logger.warn('role_assignment_export_invalid_response', {
+        contentType: parsed.contentType,
+        error: parsed.error,
+      })
+      return []
+    }
+    const payload = parsed.payload
     const rowsPayload = extractRowsPayload(payload)
     if (!Array.isArray(rowsPayload)) {
       logger.warn('role_assignment_export_invalid_payload', {

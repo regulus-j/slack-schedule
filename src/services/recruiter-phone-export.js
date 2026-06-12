@@ -1,3 +1,5 @@
+import { readAppsScriptJson } from './apps-script-response.js'
+
 export async function fetchRecruiterPhoneRows({ config, logger }) {
   const url = config?.recruiterPhoneExport?.url
   const token = config?.recruiterPhoneExport?.token
@@ -18,7 +20,15 @@ export async function fetchRecruiterPhoneRows({ config, logger }) {
       return []
     }
 
-    const payload = await response.json()
+    const parsed = await readAppsScriptJson(response)
+    if (parsed.error) {
+      logger.warn('recruiter_phone_export_invalid_response', {
+        contentType: parsed.contentType,
+        error: parsed.error,
+      })
+      return []
+    }
+    const payload = parsed.payload
     const rowsPayload = extractRowsPayload(payload)
     if (!Array.isArray(rowsPayload)) {
       logger.warn('recruiter_phone_export_invalid_payload', {

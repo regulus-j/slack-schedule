@@ -92,6 +92,39 @@ test('fetchRecruiterPhoneRows sends file id and accepts xlsx export payload shap
   }
 })
 
+test('fetchRecruiterPhoneRows explains an Apps Script deployment missing doGet', async () => {
+  const warnings = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(
+    '<!DOCTYPE html><html><body>Cannot find script function: doGet</body></html>',
+    { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } },
+  )
+
+  try {
+    const rows = await fetchRecruiterPhoneRows({
+      config: {
+        recruiterPhoneExport: {
+          url: 'https://script.google.com/macros/s/demo/exec',
+          token: 'test-token',
+          fileId: 'sheet-file-id',
+        },
+      },
+      logger: {
+        info() {},
+        warn(event, details) {
+          warnings.push({ event, details })
+        },
+      },
+    })
+
+    assert.deepEqual(rows, [])
+    assert.equal(warnings[0].event, 'recruiter_phone_export_invalid_response')
+    assert.match(warnings[0].details.error, /could not find doGet/i)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('mergeRecruiterPhones matches by work email first', () => {
   const recruiters = [
     {
