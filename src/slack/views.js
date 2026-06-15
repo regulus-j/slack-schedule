@@ -1240,8 +1240,8 @@ function caseSummary(caseRecord) {
   }
 
   const applicant = caseRecord.applicant;
-  const recruiter = caseRecord.recruiter;
-  const hiringManager = caseRecord.hiringManager;
+  const recruiter = casePeopleSummary(caseRecord, 'recruiter');
+  const hiringManager = casePeopleSummary(caseRecord, 'hiring_manager');
   return [
     `*${caseTitle(caseRecord)}*`,
     `Status: *${displayStatus(caseRecord.status)}*`,
@@ -1251,6 +1251,26 @@ function caseSummary(caseRecord) {
     ...scheduleSummary(caseRecord),
     ...resumeSummary(caseRecord),
   ].join('\n');
+}
+
+function casePeopleSummary(caseRecord, role) {
+  const primary = role === 'recruiter' ? caseRecord.recruiter : caseRecord.hiringManager
+  const additional = (Array.isArray(caseRecord.externalAttendees) ? caseRecord.externalAttendees : [])
+    .filter((person) => person?.role === role)
+  const seen = new Set()
+  const people = [primary, ...additional].filter((person) => {
+    if (!person) return false
+    const key = String(person.email || person.id || person.name || '').trim().toLowerCase()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (people.length === 0) return null
+  if (people.length === 1) return people[0]
+  return {
+    name: people.map(personLabel).join(', '),
+    email: '',
+  }
 }
 
 export function actionButtonsForCase(caseRecord, compact = false) {

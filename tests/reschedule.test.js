@@ -30,7 +30,7 @@ import {
   selectableHiringManagersForRole,
   roleAutofillSelections,
 } from '../src/slack/handlers.js';
-import { actionButtonsForCase, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { actionButtonsForCase, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -1336,6 +1336,52 @@ test('builds standard intake draft from mapped role recruiters HMs and Zoom', ()
   assert.equal(draft.applicant.jobTitle, 'Customer Success Specialist')
   assert.equal(draft.zoomLink, 'https://zoom.us/j/manual')
   assert.deepEqual(draft.extraAttendees.map((attendee) => attendee.email), ['jamal@example.com', 'lee@example.com'])
+})
+
+test('standard intake does not overwrite a mapped recruiter with the applicant email', () => {
+  setTalentRecruiters([
+    { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter' },
+    { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter' },
+  ])
+  setJazzhrJobs([{ id: 'job-loan', roleId: 'job-loan', title: 'Loan Associate', status: 'Open' }])
+
+  const draft = buildIntakeDraft({
+    event_type_block: { event_type_select: { selected_option: { value: '1st-interview' } } },
+    role_block: { role_select: { selected_option: { value: 'job-loan' } } },
+    recruiter_email_block: { recruiter_email_override: { value: 'candidate@example.com' } },
+  }, [], {
+    roleId: 'job-loan',
+    roleTitle: 'Loan Associate',
+    recruiterIds: ['rec-hanna', 'rec-tiana'],
+    applicantRecord: {
+      id: 'candidate-loan',
+      firstName: 'Lokesh',
+      lastName: 'Madaka',
+      email: 'candidate@example.com',
+      jobTitle: 'Loan Associate',
+    },
+  })
+
+  assert.equal(draft.recruiter.email, 'hanna@example.com')
+  assert.deepEqual(draft.extraAttendees.map((person) => person.email), ['tiana@example.com'])
+  setJazzhrJobs([])
+})
+
+test('case summary displays every selected recruiter', () => {
+  const blocks = caseMessageBlocks({
+    ...baseCase,
+    recruiter: { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com' },
+    hiringManager: null,
+    externalAttendees: [
+      { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter' },
+    ],
+  })
+  const text = JSON.stringify(blocks)
+
+  assert.match(text, /Hanna Marino/)
+  assert.match(text, /hanna@example\.com/)
+  assert.match(text, /Tiana Dela Cruz/)
+  assert.match(text, /tiana@example\.com/)
 })
 
 test('builds intake draft emails from selected people and overrides', () => {

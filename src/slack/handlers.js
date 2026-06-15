@@ -3916,9 +3916,15 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       : ''
   const hiringManagerNameOverride =
     overrides.hiringManagerName !== undefined ? overrides.hiringManagerName : getInputValue(values, 'hm_name_override')
+  const selectedRecruiter = overrides.recruiterPerson || findMappedPersonById(recruiterId)
+  const safeRecruiterEmailOverride = standardEventType &&
+    normalizeEmail(recruiterEmailOverride) === normalizeEmail(applicant?.email) &&
+    normalizeEmail(selectedRecruiter?.email) !== normalizeEmail(applicant?.email)
+    ? ''
+    : recruiterEmailOverride
   const recruiter = applyPersonOverrides(
-    overrides.recruiterPerson || findMappedPersonById(recruiterId),
-    { name: recruiterNameOverride, email: recruiterEmailOverride },
+    selectedRecruiter,
+    { name: recruiterNameOverride, email: safeRecruiterEmailOverride },
   );
   const hiringManager = requiresHiringManager
     ? applyPersonOverrides(
