@@ -33,7 +33,7 @@ import {
 import { createJazzhrLiveSearchManager } from '../services/jazzhr-live-search.js'
 import { loadTalentDirectory } from '../services/talent-directory.js'
 import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
-import { recruiterPhoneLine } from '../services/recruiter-phone-export.js'
+import { personIdentityMatches, recruiterPhoneLine } from '../services/recruiter-phone-export.js'
 import { resumeHtmlLink, resumePlainLink, resumeSlackLink } from '../resume-display.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
 import {
@@ -4402,10 +4402,7 @@ export function mappedRecruitersForRole(roleId) {
     person.id === role?.hiringLeadId
   )
   if (jazzhrLead) {
-    const enriched = getTalentRecruiters().find((person) =>
-      normalizeEmail(person.email) === normalizeEmail(jazzhrLead.email) ||
-      normalizeRoleTitle(person.name) === normalizeRoleTitle(jazzhrLead.name)
-    )
+    const enriched = getTalentRecruiters().find((person) => personIdentityMatches(person, jazzhrLead))
     return [asRecruiter(enriched || jazzhrLead)]
   }
 
@@ -4414,11 +4411,7 @@ export function mappedRecruitersForRole(roleId) {
 
 function enrichRecruiterFromDirectory(recruiter) {
   if (!recruiter) return recruiter
-  const directoryRecruiter = getTalentRecruiters().find((person) =>
-    (normalizeEmail(recruiter.email) &&
-      normalizeEmail(person.email) === normalizeEmail(recruiter.email)) ||
-    normalizeRoleTitle(person.name) === normalizeRoleTitle(recruiter.name)
-  )
+  const directoryRecruiter = getTalentRecruiters().find((person) => personIdentityMatches(person, recruiter))
   if (!directoryRecruiter) return recruiter
   return {
     ...directoryRecruiter,

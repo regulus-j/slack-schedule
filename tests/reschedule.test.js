@@ -901,6 +901,65 @@ test('role mapping uses exact JazzHR job and enriches its hiring lead from recru
   setJazzhrJobs([])
 })
 
+test('Loan Associate maps Hanna across fuzzy role title and dual company emails', () => {
+  setRoleAssignments([
+    {
+      roleId: '',
+      roleKey: 'loan-associate-global',
+      roleTitle: 'Loan Associate - Global',
+      recruiter: null,
+      hiringManager: null,
+    },
+  ])
+  setJazzhrJobs([
+    {
+      id: 'job-loan-associate',
+      title: 'Loan Associate',
+      status: 'Open',
+      hiringLeadId: 'usr-hanna',
+    },
+  ])
+  setRecruiters([
+    {
+      id: 'rec-usr-hanna',
+      name: 'Hanna Mae Marino',
+      email: 'hanna.marino@opglobal.com.hk',
+      role: 'recruiter',
+    },
+  ])
+  setTalentRecruiters([
+    {
+      id: 'sheet-hanna',
+      name: 'Hanna Marino',
+      legalName: 'Hanna Mae Marino',
+      preferredName: 'Hanna',
+      email: 'hanna.marino@freedompropertyinvestors.com.au',
+      phone: '0400000000',
+      zoomLink: 'https://zoom.us/j/hanna',
+      role: 'recruiter',
+    },
+  ])
+
+  const match = resolveRoleAssignmentsForRole('job-loan-associate')
+  assert.equal(match.matchType, 'fuzzy')
+  assert.equal(match.matchedTitle, 'Loan Associate - Global')
+  assert.deepEqual(mappedRecruitersForRole('job-loan-associate').map((person) => ({
+    id: person.id,
+    name: person.name,
+    email: person.email,
+    phone: person.phone,
+    zoomLink: person.zoomLink,
+  })), [{
+    id: 'sheet-hanna',
+    name: 'Hanna Marino',
+    email: 'hanna.marino@freedompropertyinvestors.com.au',
+    phone: '0400000000',
+    zoomLink: 'https://zoom.us/j/hanna',
+  }])
+
+  setJazzhrJobs([])
+})
+
 test('mapped recruiters inherit Zoom links from the recruiter directory', () => {
   setRoleAssignments([
     {

@@ -99,20 +99,13 @@ export function normalizeRecruiterPhoneRow(row) {
 }
 
 export function mergeRecruiterPhones(recruiters, phoneRows) {
-  const byEmail = new Map()
-  const byName = new Map()
-
-  for (const row of phoneRows) {
-    if (row.email) byEmail.set(normalizeEmail(row.email), row)
-    if (row.legalName) byName.set(normalizeName(row.legalName), row)
-    if (row.name) byName.set(normalizeName(row.name), row)
-  }
-
   return recruiters.map((recruiter) => {
-    const match = byEmail.get(normalizeEmail(recruiter.email)) || byName.get(normalizeName(recruiter.name))
+    const match = phoneRows.find((row) => personIdentityMatches(row, recruiter))
     if (!match) return recruiter
     return {
       ...recruiter,
+      legalName: recruiter.legalName || match.legalName || '',
+      preferredName: recruiter.preferredName || match.preferredName || '',
       phone: match.phone || recruiter.phone || '',
       zoomLink: match.zoomLink || recruiter.zoomLink || '',
       positionTitle: recruiter.positionTitle || match.designation || '',
@@ -124,6 +117,8 @@ export function recruiterRowsToPeople(phoneRows) {
   return phoneRows.map((row) => ({
     id: `sheet-rec-${stableId(row.email || row.legalName || row.name)}`,
     name: row.name || row.legalName || row.email,
+    legalName: row.legalName || '',
+    preferredName: row.preferredName || '',
     email: row.email || '',
     role: 'recruiter',
     slackUserId: '',
@@ -141,8 +136,35 @@ export function recruiterPhoneLine(recruiter) {
   return name && phone ? `${name}: ${phone}` : ''
 }
 
+export function personIdentityMatches(person, identity = {}) {
+  const expectedEmail = normalizeEmail(identity.email)
+  const personEmails = uniqueNormalized([
+    person?.email,
+    ...(Array.isArray(person?.emailAliases) ? person.emailAliases : []),
+  ], normalizeEmail)
+  if (expectedEmail && personEmails.includes(expectedEmail)) return true
+
+  const expectedNames = identityNames(identity)
+  const personNames = identityNames(person)
+  if (expectedNames.some((name) => personNames.includes(name))) return true
+
+  const expectedMailbox = emailMailbox(expectedEmail)
+  return Boolean(
+    expectedMailbox &&
+    expectedMailbox.length >= 6 &&
+    !GENERIC_MAILBOXES.has(expectedMailbox) &&
+    personEmails.some((email) => emailMailbox(email) === expectedMailbox),
+  )
+}
+
 function normalizeName(value) {
-  return clean(value).toLowerCase()
+  return clean(value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function clean(value) {
@@ -173,10 +195,38 @@ function normalizeEmail(value) {
   return match?.[0] || text
 }
 
+function identityNames(person) {
+  return uniqueNormalized([
+    person?.name,
+    person?.legalName,
+    person?.preferredName,
+    ...(Array.isArray(person?.nameAliases) ? person.nameAliases : []),
+  ], normalizeName)
+}
+
+function uniqueNormalized(values, normalize) {
+  return [...new Set(values.map(normalize).filter(Boolean))]
+}
+
+function emailMailbox(value) {
+  return normalizeEmail(value).split('@')[0] || ''
+}
+
 function cleanPhone(value) {
   const cleaned = clean(value)
   return cleaned === '-' ? '' : cleaned
 }
+
+const GENERIC_MAILBOXES = new Set([
+  'admin',
+  'careers',
+  'hello',
+  'hr',
+  'info',
+  'recruitment',
+  'support',
+  'talent',
+])
 
 function stableId(value) {
   return clean(value)

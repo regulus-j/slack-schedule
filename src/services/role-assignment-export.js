@@ -1,4 +1,5 @@
 import { readAppsScriptJson } from './apps-script-response.js'
+import { personIdentityMatches } from './recruiter-phone-export.js'
 
 export async function fetchRoleAssignmentRows({ config, logger }) {
   const url = config?.roleAssignmentExport?.url
@@ -209,11 +210,10 @@ export function isOpenRoleStatus(status) {
 function resolvePerson({ name, email, role, prefix, people }) {
   const normalizedEmail = normalizeEmail(email)
   const normalizedName = normalizeName(name)
-  const matched = people.find((person) =>
-    normalizedEmail
-      ? normalizeEmail(person.email) === normalizedEmail
-      : normalizeName(person.name) === normalizedName
-  )
+  const matched = people.find((person) => personIdentityMatches(person, {
+    name: normalizedName,
+    email: normalizedEmail,
+  }))
   if (matched) return { ...matched, role }
   if (!normalizedEmail && !normalizedName) return null
 

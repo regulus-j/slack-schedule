@@ -150,6 +150,30 @@ test('resolveRoleAssignments matches mapped people by email and creates sheet fa
   assert.equal(assignments[0].hiringManager.id, 'sheet-role-hm-unknown-hm-example-com')
 })
 
+test('resolveRoleAssignments falls back to recruiter identity when company email domains differ', () => {
+  const assignments = resolveRoleAssignments(normalizeRoleAssignmentRows([
+    {
+      'Job Title': 'Loan Associate - Global',
+      'Recruiter Name': 'Hanna Mae Marino',
+      'Recruiter Email': 'hanna.marino@opglobal.com.hk',
+    },
+  ]), {
+    recruiters: [{
+      id: 'sheet-hanna',
+      name: 'Hanna Marino',
+      legalName: 'Hanna Mae Marino',
+      email: 'hanna.marino@freedompropertyinvestors.com.au',
+      phone: '0400000000',
+      zoomLink: 'https://zoom.us/j/hanna',
+    }],
+    hiringManagers: [],
+  })
+
+  assert.equal(assignments[0].recruiter.id, 'sheet-hanna')
+  assert.equal(assignments[0].recruiter.email, 'hanna.marino@freedompropertyinvestors.com.au')
+  assert.equal(assignments[0].recruiter.zoomLink, 'https://zoom.us/j/hanna')
+})
+
 test('resolveRoleAssignments keeps a mapped recruiter when contact details are missing', () => {
   const assignments = resolveRoleAssignments(normalizeRoleAssignmentRows([
     {

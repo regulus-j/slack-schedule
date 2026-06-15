@@ -4,6 +4,7 @@ import {
   fetchRecruiterPhoneRows,
   mergeRecruiterPhones,
   normalizeRecruiterPhoneRow,
+  personIdentityMatches,
   recruiterPhoneLine,
   recruiterRowsToPeople,
 } from '../src/services/recruiter-phone-export.js'
@@ -182,6 +183,29 @@ test('mergeRecruiterPhones falls back to normalized full name', () => {
   ])
 
   assert.equal(merged[0].phone, '+63 900 111 2222')
+})
+
+test('personIdentityMatches connects preferred, legal, and cross-domain recruiter identities', () => {
+  const trackerRecruiter = recruiterRowsToPeople([
+    normalizeRecruiterPhoneRow({
+      'First Name': 'Hanna Mae',
+      'Last Name': 'Marino',
+      'Preferred Name': 'Hanna',
+      'Work Email': 'hanna.marino@freedompropertyinvestors.com.au',
+      Aircall: '0400000000',
+      'Personal Zoom Link': 'https://zoom.us/j/hanna',
+    }),
+  ])[0]
+
+  assert.equal(trackerRecruiter.name, 'Hanna Marino')
+  assert.equal(trackerRecruiter.legalName, 'Hanna Mae Marino')
+  assert.equal(personIdentityMatches(trackerRecruiter, {
+    name: 'Hanna Mae Marino',
+    email: 'hanna.marino@opglobal.com.hk',
+  }), true)
+  assert.equal(personIdentityMatches(trackerRecruiter, {
+    email: 'hanna.marino@opglobal.com.hk',
+  }), true)
 })
 
 test('recruiterPhoneLine renders exact email format', () => {
