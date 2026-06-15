@@ -309,6 +309,7 @@ export function registerSlackHandlers(app, context) {
           channelId: caseRecord.channelId || body.channel?.id || body.user.id,
           editCaseId: caseRecord.id,
           eventType: draft.eventType,
+          customInviteSlackRecipientIds: draft.customInviteSlackRecipientIds,
           roleId: draft.roleId,
           roleTitle: draft.roleTitle,
           recruiterIds: draft.recruiterIds,
@@ -1114,6 +1115,9 @@ export function registerSlackHandlers(app, context) {
 
   app.view('schedule_intake_submit', async ({ ack, body, view, client }) => {
     const values = view.state.values;
+    for (const userId of getSelectedUserValues(values, 'custom_slack_recipients')) {
+      await resolveSlackUser({ client, userId, logger })
+    }
     const templates = await loadSchedulingTemplates();
     const metadata = parsePrivateMetadata(view.private_metadata) || {}
     const editCase = metadata.editCaseId ? await store.getCase(metadata.editCaseId) : null
@@ -2954,8 +2958,15 @@ export function buildEditCaseDraft(caseRecord, templates) {
       editCaseId: caseRecord.id,
       eventType: 'custom-invite',
       customInviteTitle: customInvite.title,
+      customInviteSlackRecipientIds: customInvite.recipients
+        .map((recipient) => recipient.slackUserId || findSlackUserByEmail(recipient.email)?.id)
+        .filter(Boolean),
+      customInviteSlackRecipients: customInvite.recipients
+        .map((recipient) => recipient.slackUserId ? recipient : findSlackUserByEmail(recipient.email))
+        .filter(Boolean),
       customInviteRecipientsRaw: customInvite.recipients
-        .map((recipient) => recipient.name ? `${recipient.name} <${recipient.email}>` : recipient.email)
+        .filter((recipient) => !recipient.slackUserId && !findSlackUserByEmail(recipient.email))
+        .map((recipient) => recipient.name ? `${recipient.name} - ${recipient.email}` : recipient.email)
         .join('\n'),
       customInviteSubject: customInvite.subject,
       customInviteBody: customInvite.body,
@@ -3066,6 +3077,9 @@ function buildPrivateMetadata(view, overrides = {}) {
     : Boolean(parsed.manualCandidateMode)
   const eventType = 'eventType' in overrides ? overrides.eventType : parsed.eventType || ''
   const editCaseId = 'editCaseId' in overrides ? overrides.editCaseId : parsed.editCaseId || ''
+  const customInviteSlackRecipientIds = 'customInviteSlackRecipientIds' in overrides
+    ? overrides.customInviteSlackRecipientIds
+    : parsed.customInviteSlackRecipientIds || []
   const roleId = 'roleId' in overrides ? overrides.roleId : parsed.roleId || ''
   const roleTitle = 'roleTitle' in overrides ? overrides.roleTitle : parsed.roleTitle || ''
   const recruiterIds = 'recruiterIds' in overrides ? overrides.recruiterIds : parsed.recruiterIds || []
@@ -3099,6 +3113,7 @@ function buildPrivateMetadata(view, overrides = {}) {
     manualCandidateMode,
     eventType,
     editCaseId,
+    customInviteSlackRecipientIds,
     roleId,
     roleTitle,
     recruiterIds,
@@ -3166,6 +3181,7 @@ async function refreshIntakeModal({
   for (const key of [
     'eventType',
     'editCaseId',
+    'customInviteSlackRecipientIds',
     'roleId',
     'roleTitle',
     'recruiterIds',
@@ -3250,6 +3266,7 @@ async function refreshIntakeModal({
     manualCandidateMode: draft.manualCandidateMode,
     eventType: draft.eventType,
     editCaseId: draft.editCaseId,
+    customInviteSlackRecipientIds: draft.customInviteSlackRecipientIds,
     roleId: draft.roleId,
     roleTitle: draft.roleTitle,
     recruiterIds: draft.recruiterIds,
@@ -3950,12 +3967,27 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   )
   const customInvite = eventType === 'custom-invite'
   if (customInvite) {
+    const customInviteSlackRecipientIds = normalizeIdList(
+      overrides.customInviteSlackRecipientIds ??
+      getSelectedUserValues(values, 'custom_slack_recipients')
+    )
+    const customInviteSlackRecipients = (overrides.customInviteSlackRecipients ||
+      customInviteSlackRecipientIds
+        .map((id) => getSlackUsers().find((person) => person.id === id || person.slackUserId === id))
+    )
+      .filter((person) => person?.email)
+      .map((person) => ({
+        id: person.id || person.slackUserId,
+        name: person.name || '',
+        email: normalizeEmail(person.email),
+        slackUserId: person.slackUserId || person.id,
+      }))
     const customInviteTitle = overrides.customInviteTitle !== undefined
       ? overrides.customInviteTitle
       : getInputValue(values, 'custom_title')
     const customInviteRecipientsRaw = overrides.customInviteRecipientsRaw !== undefined
       ? overrides.customInviteRecipientsRaw
-      : getInputValue(values, 'custom_recipients')
+      : getInputValue(values, 'custom_external_guests')
     const customInviteSubject = overrides.customInviteSubject !== undefined
       ? overrides.customInviteSubject
       : getInputValue(values, 'custom_subject')
@@ -3967,13 +3999,19 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       : getInputValue(values, 'custom_meeting_link')
     const interviewTimezone = overrides.interviewTimezone ??
       (values.timezone_block?.timezone_select?.selected_option?.value || '')
-    let customInviteRecipients = []
+    let customInviteExternalRecipients = []
     let customInviteRecipientError = ''
-    try {
-      customInviteRecipients = parseCustomInviteRecipients(customInviteRecipientsRaw)
-    } catch (error) {
-      customInviteRecipientError = error.message
+    if (String(customInviteRecipientsRaw || '').trim()) {
+      try {
+        customInviteExternalRecipients = parseCustomInviteRecipients(customInviteRecipientsRaw)
+      } catch (error) {
+        customInviteRecipientError = error.message
+      }
     }
+    const customInviteRecipients = mergeCustomInviteRecipients(
+      customInviteSlackRecipients,
+      customInviteExternalRecipients,
+    )
 
     return {
       editCaseId,
@@ -3981,6 +4019,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       eventTypeOption: toSlackOption(eventTypeLabel(eventType), eventType),
       standardEventType: false,
       customInviteTitle,
+      customInviteSlackRecipientIds,
       customInviteRecipientsRaw,
       customInviteRecipients,
       customInviteRecipientError,
@@ -4222,6 +4261,14 @@ function getSelectedOptionValues(values, actionId) {
       return element.selected_options.map((option) => option.value).filter(Boolean)
     }
     if (element?.selected_option?.value) return [element.selected_option.value]
+  }
+  return []
+}
+
+function getSelectedUserValues(values, actionId) {
+  for (const block of Object.values(values || {})) {
+    const element = findElementByActionId(block, actionId)
+    if (Array.isArray(element?.selected_users)) return element.selected_users.filter(Boolean)
   }
   return []
 }
@@ -4722,6 +4769,29 @@ function eventTypeLabel(eventType) {
     'job-offer': 'Job Offer',
     'custom-invite': 'Custom Invite',
   }[eventType] || ''
+}
+
+function findSlackUserByEmail(email) {
+  const expected = normalizeEmail(email)
+  return getSlackUsers().find((person) => normalizeEmail(person.email) === expected)
+}
+
+function mergeCustomInviteRecipients(...groups) {
+  const recipients = []
+  const seen = new Set()
+  for (const group of groups) {
+    for (const recipient of group || []) {
+      const email = normalizeEmail(recipient?.email)
+      if (!email || seen.has(email)) continue
+      seen.add(email)
+      recipients.push({
+        name: String(recipient?.name || '').replace(/\s+/g, ' ').trim(),
+        email,
+        ...(recipient?.slackUserId ? { slackUserId: recipient.slackUserId } : {}),
+      })
+    }
+  }
+  return recipients
 }
 
 function buildAttendeeDraft(person) {

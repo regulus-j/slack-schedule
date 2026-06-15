@@ -477,19 +477,25 @@ function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
         ...(draft.customInviteTitle ? { initial_value: draft.customInviteTitle } : {}),
       }),
       section([
-        '*Add one recipient per line*',
-        'Use either `Name <email>` or just `email`:',
-        '```Alex Reyes <alex@example.com>',
-        'guest@example.com```',
+        '*Choose Slack members or add external guests*',
+        'Bots, app users, and deactivated accounts are excluded from Slack member search.',
         '_All recipients are guests on one shared calendar event and can see each other._',
       ].join('\n')),
-      input('Recipient email addresses', 'custom_recipients_block', {
+      input('Slack members', 'custom_slack_recipients_block', {
+        type: 'multi_users_select',
+        action_id: 'custom_slack_recipients',
+        placeholder: plain('Search active Slack members'),
+        ...(draft.customInviteSlackRecipientIds?.length
+          ? { initial_users: draft.customInviteSlackRecipientIds }
+          : {}),
+      }, true),
+      input('Other guests', 'custom_external_guests_block', {
         type: 'plain_text_input',
-        action_id: 'custom_recipients',
+        action_id: 'custom_external_guests',
         multiline: true,
-        placeholder: plain('Enter one recipient per line'),
+        placeholder: plain('Name - email, one guest per line'),
         ...(draft.customInviteRecipientsRaw ? { initial_value: draft.customInviteRecipientsRaw } : {}),
-      }, false, false, 'Names are optional. Every line must contain a valid email address.'),
+      }, true, false, 'Example: Alex Reyes - alex@example.com'),
       input('Email subject', 'custom_subject_block', {
         type: 'plain_text_input',
         action_id: 'custom_subject',

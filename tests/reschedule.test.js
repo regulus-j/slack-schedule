@@ -33,7 +33,7 @@ import {
   roleAutofillSelections,
 } from '../src/slack/handlers.js';
 import { actionButtonsForCase, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
-import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setTalentRecruiters } from '../src/data/cache.js';
+import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
 const baseCase = {
@@ -393,7 +393,7 @@ test('custom invite intake contains only generic event fields', () => {
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       customInviteTitle: 'Client intro',
-      customInviteRecipientsRaw: 'Alex <alex@example.com>\nteam@example.com',
+      customInviteRecipientsRaw: 'Alex - alex@example.com\nteam@example.com',
       customInviteSubject: 'Invitation: Client intro',
       customInviteBody: '[greeting]\n\nJoin [event_title].',
     },
@@ -405,7 +405,8 @@ test('custom invite intake contains only generic event fields', () => {
   assert.deepEqual(blockIds, [
     'event_type_block',
     'custom_title_block',
-    'custom_recipients_block',
+    'custom_slack_recipients_block',
+    'custom_external_guests_block',
     'custom_subject_block',
     'custom_body_block',
     'custom_meeting_link_block',
@@ -435,13 +436,14 @@ test('custom invite intake starts with event type and supports multiple recipien
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       customInviteTitle: 'Client intro',
-      customInviteRecipientsRaw: 'Alex <alex@example.com>\nteam@example.com',
+      customInviteRecipientsRaw: 'Alex - alex@example.com\nteam@example.com',
     },
   });
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
   const eventTypeBlock = inputBlocks[0];
   const titleBlock = inputBlocks.find((block) => block.block_id === 'custom_title_block');
-  const recipientsBlock = inputBlocks.find((block) => block.block_id === 'custom_recipients_block');
+  const slackRecipientsBlock = inputBlocks.find((block) => block.block_id === 'custom_slack_recipients_block');
+  const recipientsBlock = inputBlocks.find((block) => block.block_id === 'custom_external_guests_block');
 
   assert.equal(eventTypeBlock.block_id, 'event_type_block');
   assert.deepEqual(eventTypeBlock.element.options.map((option) => option.text.text), [
@@ -452,6 +454,7 @@ test('custom invite intake starts with event type and supports multiple recipien
     'Custom Invite',
   ]);
   assert.equal(titleBlock.element.initial_value, 'Client intro');
+  assert.equal(slackRecipientsBlock.element.type, 'multi_users_select');
   assert.equal(recipientsBlock.element.multiline, true);
   assert.match(recipientsBlock.element.initial_value, /team@example\.com/);
 });
@@ -1558,8 +1561,8 @@ test('builds generic custom invite draft without applicant or recruiter records'
     {
       event_type_block: { event_type_select: { selected_option: { value: 'custom-invite' } } },
       custom_title_block: { custom_title: { value: 'Client introduction' } },
-      custom_recipients_block: {
-        custom_recipients: { value: 'Maria Santos <MARIA@example.com>\nteam@example.com' },
+      custom_external_guests_block: {
+        custom_external_guests: { value: 'Maria Santos - MARIA@example.com\nteam@example.com' },
       },
       custom_subject_block: { custom_subject: { value: 'Invitation: [event_title]' } },
       custom_body_block: { custom_body: { value: '[greeting]\n\nJoin us on [date].' } },
@@ -1579,6 +1582,43 @@ test('builds generic custom invite draft without applicant or recruiter records'
   ]);
   assert.equal(draft.customInviteMeetingLink, '');
 });
+
+test('custom invite merges Slack members with external guests and deduplicates email', () => {
+  setSlackUsers([
+    { id: 'U1', slackUserId: 'U1', name: 'Alex Slack', email: 'alex@example.com', role: 'slack_user' },
+    { id: 'U2', slackUserId: 'U2', name: 'Casey Slack', email: 'casey@example.com', role: 'slack_user' },
+  ])
+
+  const draft = buildIntakeDraft({
+    event_type_block: { event_type_select: { selected_option: { value: 'custom-invite' } } },
+    custom_title_block: { custom_title: { value: 'Client introduction' } },
+    custom_slack_recipients_block: {
+      custom_slack_recipients: {
+        selected_users: ['U1', 'U2'],
+      },
+    },
+    custom_external_guests_block: {
+      custom_external_guests: {
+        value: 'External Guest - guest@example.com\nDuplicate Alex - ALEX@example.com',
+      },
+    },
+    custom_subject_block: { custom_subject: { value: 'Invitation' } },
+    custom_body_block: { custom_body: { value: 'Join us.' } },
+  }, [])
+
+  assert.deepEqual(draft.customInviteSlackRecipientIds, ['U1', 'U2'])
+  assert.deepEqual(draft.customInviteRecipients, [
+    { name: 'Alex Slack', email: 'alex@example.com', slackUserId: 'U1' },
+    { name: 'Casey Slack', email: 'casey@example.com', slackUserId: 'U2' },
+    { name: 'External Guest', email: 'guest@example.com' },
+  ])
+  const view = intakeModal({ templates: [], draft })
+  assert.deepEqual(
+    view.blocks.find((block) => block.block_id === 'custom_slack_recipients_block').element.initial_users,
+    ['U1', 'U2'],
+  )
+  setSlackUsers([])
+})
 
 test('builds intake draft recruiter from the selected applicant', () => {
   setApplicants([

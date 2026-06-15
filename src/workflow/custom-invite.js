@@ -12,13 +12,15 @@ export function parseCustomInviteRecipients(value) {
     const line = lines[index].trim()
     if (!line) continue
 
-    const namedMatch = line.match(/^(.+?)\s*<([^<>]+)>$/)
+    const angleMatch = line.match(/^(.+?)\s*<([^<>]+)>$/)
+    const dashMatch = line.match(/^(.+?)\s+-\s+([^\s]+@[^\s]+)$/)
+    const namedMatch = angleMatch || dashMatch
     const name = namedMatch ? normalizeName(namedMatch[1]) : ''
     const rawEmail = namedMatch ? namedMatch[2].trim() : line
     const email = normalizeEmail(rawEmail)
 
     if ((line.includes('<') || line.includes('>')) && !namedMatch) {
-      throw new Error(`Line ${index + 1} must use Name <email> or email.`)
+      throw new Error(`Line ${index + 1} must use Name - email.`)
     }
     if (!EMAIL_PATTERN.test(email)) {
       throw new Error(`Line ${index + 1} has an invalid email address.`)
@@ -56,9 +58,9 @@ export function validateCustomInviteDraft(draft) {
     errors.custom_meeting_link_block = 'Enter a valid http or https meeting URL.'
   }
   if (draft?.customInviteRecipientError) {
-    errors.custom_recipients_block = draft.customInviteRecipientError
+    errors.custom_external_guests_block = draft.customInviteRecipientError
   } else if (!Array.isArray(draft?.customInviteRecipients) || draft.customInviteRecipients.length === 0) {
-    errors.custom_recipients_block = 'Enter at least one recipient.'
+    errors.custom_slack_recipients_block = 'Select a Slack member or add an external guest.'
   }
   return errors
 }
@@ -121,13 +123,14 @@ export function normalizeCustomInviteMetadata(caseRecord) {
 
 export function customInviteExternalAttendees(recipients) {
   return (recipients || []).map((recipient) => ({
-    id: `recipient-${normalizeEmail(recipient.email)}`,
+    id: recipient.slackUserId || `recipient-${normalizeEmail(recipient.email)}`,
     name: normalizeName(recipient.name) || normalizeEmail(recipient.email),
     email: normalizeEmail(recipient.email),
     role: 'recipient',
     required: true,
     included: true,
-    source: 'custom_invite',
+    slackUserId: recipient.slackUserId || null,
+    source: recipient.slackUserId ? 'slack' : 'custom_invite',
   }))
 }
 
@@ -197,6 +200,7 @@ function dedupeRecipients(recipients) {
     byEmail.set(email, {
       name: normalizeName(recipient?.name),
       email,
+      ...(recipient?.slackUserId ? { slackUserId: recipient.slackUserId } : {}),
     })
   }
   return [...byEmail.values()]

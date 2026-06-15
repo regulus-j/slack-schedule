@@ -19,9 +19,9 @@ import {
   validateCustomInviteDraft,
 } from '../src/workflow/custom-invite.js'
 
-test('parses named and email-only custom invite recipients', () => {
+test('parses named external custom invite recipients', () => {
   assert.deepEqual(
-    parseCustomInviteRecipients('  Alex Reyes   <ALEX@example.com> \n\n guest@example.com  '),
+    parseCustomInviteRecipients('  Alex Reyes - ALEX@example.com \n\n guest@example.com  '),
     [
       { name: 'Alex Reyes', email: 'alex@example.com' },
       { name: '', email: 'guest@example.com' },
@@ -58,8 +58,8 @@ test('custom invite validation requires generic fields and allows no meeting lin
   })
   assert.deepEqual(Object.keys(invalid).sort(), [
     'custom_body_block',
+    'custom_external_guests_block',
     'custom_meeting_link_block',
-    'custom_recipients_block',
     'custom_subject_block',
     'custom_title_block',
   ])
@@ -128,8 +128,8 @@ test('custom invite submission creates a generic case without interview records'
             event_type_select: { selected_option: { value: 'custom-invite' } },
           },
           custom_title_block: { custom_title: { value: 'Client introduction' } },
-          custom_recipients_block: {
-            custom_recipients: { value: 'Alex <ALEX@example.com>\nguest@example.com' },
+          custom_external_guests_block: {
+            custom_external_guests: { value: 'Alex - ALEX@example.com\nguest@example.com' },
           },
           custom_subject_block: { custom_subject: { value: 'Invitation: [event_title]' } },
           custom_body_block: { custom_body: { value: '[greeting]\n\nJoin us on [date].' } },
@@ -232,10 +232,11 @@ test('custom invite intake and scheduling views use generic terminology', () => 
   })
   const intakeText = JSON.stringify(intake.blocks)
   assert.match(intakeText, /Event purpose \/ title/)
-  assert.match(intakeText, /Recipient email addresses/)
-  assert.match(intakeText, /Alex Reyes <alex@example\.com>/)
-  assert.match(intakeText, /Add one recipient per line/)
-  assert.match(intakeText, /Names are optional/)
+  assert.match(intakeText, /Slack members/)
+  assert.match(intakeText, /Search active Slack members/)
+  assert.match(intakeText, /Other guests/)
+  assert.match(intakeText, /Alex Reyes - alex@example\.com/)
+  assert.match(intakeText, /Bots, app users, and deactivated accounts are excluded/)
   assert.match(intakeText, /one shared calendar event/)
   assert.doesNotMatch(intakeText, /Candidate|JazzHR|Recruiter|Hiring Manager|Resume/)
 
