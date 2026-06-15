@@ -1318,6 +1318,7 @@ export function registerSlackHandlers(app, context) {
     const coordinator = await resolveSlackUser({ client, userId: body.user.id, logger })
     if (editCase) {
       const updated = await store.updateCase(editCase.id, {
+        eventType: intakeDraft.eventType,
         applicant,
         recruiter,
         hiringManager,
@@ -1333,6 +1334,7 @@ export function registerSlackHandlers(app, context) {
           ...(editCase.autofill || {}),
           zoomLink,
           signature: recruiter?.signature || 'Recruitment Team',
+          eventType: intakeDraft.eventType,
           roleId: intakeDraft.roleId,
           roleTitle: intakeDraft.roleTitle,
         },
@@ -1351,6 +1353,7 @@ export function registerSlackHandlers(app, context) {
     const caseRecord = await store.createCase({
       ownerSlackUserId: body.user.id,
       channelId: getChannelId(body.view) || body.user.id,
+      eventType: intakeDraft.eventType,
       applicant,
       recruiter,
       hiringManager,
@@ -1367,6 +1370,7 @@ export function registerSlackHandlers(app, context) {
       autofill: {
         zoomLink,
         signature: recruiter?.signature || 'Recruitment Team',
+        eventType: intakeDraft.eventType,
         coordinatorEmail: coordinator?.email || '',
         coordinatorName: coordinator?.name || '',
         roleId: intakeDraft.roleId,
@@ -2943,7 +2947,7 @@ async function openIntakeModal({
   });
 }
 
-function buildEditCaseDraft(caseRecord, templates) {
+export function buildEditCaseDraft(caseRecord, templates) {
   if (isCustomInviteCase(caseRecord)) {
     const customInvite = normalizeCustomInviteMetadata(caseRecord)
     return buildIntakeDraft({}, templates, {
@@ -2970,12 +2974,13 @@ function buildEditCaseDraft(caseRecord, templates) {
     caseRecord.hiringManager?.id,
     ...additional.filter((person) => person?.role === 'hiring_manager').map((person) => person.id),
   ])
-  const eventType = eventTypeForStageKey(caseRecord.stageKey)
+  const eventType = caseRecord.eventType || caseRecord.autofill?.eventType || eventTypeForStageKey(caseRecord.stageKey)
   return buildIntakeDraft({}, templates, {
     editCaseId: caseRecord.id,
     eventType,
     roleId: caseRecord.autofill?.roleId || '',
     roleTitle: caseRecord.autofill?.roleTitle || caseRecord.applicant?.jobTitle || '',
+    applicant: caseRecord.applicant?.id || '',
     applicantRecord: caseRecord.applicant,
     recruiterIds,
     hiringManagerIds,

@@ -16,6 +16,7 @@ import {
   buildAttendeeInviteEmail,
   buildCancellationEmail,
   buildIntakeDraft,
+  buildEditCaseDraft,
   recoverLiveCandidateSearchSession,
   resolveZoomLinkForRecruiters,
   buildScheduledCandidateEmail,
@@ -621,6 +622,50 @@ test('draft cases can be edited until a calendar event is created', () => {
   assert.equal(visibleCaseActions(scheduledCase).includes('edit_schedule_case'), false)
   assert.ok(actionButtonsForCase(draftCase).some((item) => item.action_id === 'edit_schedule_case'))
   assert.equal(actionButtonsForCase(scheduledCase).some((item) => item.action_id === 'edit_schedule_case'), false)
+})
+
+test('legacy case edit draft preserves saved applicant and multi-recruiter information', () => {
+  setTalentRecruiters([
+    { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter' },
+    { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter' },
+  ])
+  setJazzhrJobs([{ id: 'job-loan', roleId: 'job-loan', title: 'Loan Associate', status: 'Open' }])
+
+  const draft = buildEditCaseDraft({
+    id: 'case-loan',
+    status: 'Draft',
+    stageKey: '',
+    applicant: {
+      id: 'applicant-lokesh',
+      firstName: 'Lokesh',
+      lastName: 'Madaka',
+      email: 'lokesh@example.com',
+      phone: '0400000000',
+      jobTitle: 'Loan Associate',
+    },
+    recruiter: { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter' },
+    hiringManager: null,
+    externalAttendees: [
+      { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter' },
+    ],
+    interviewTimezone: 'Australia/Sydney',
+    autofill: {
+      eventType: '1st-interview',
+      roleId: 'job-loan',
+      roleTitle: 'Loan Associate',
+      zoomLink: 'https://zoom.example.com/hanna',
+    },
+  }, [])
+
+  assert.equal(draft.editCaseId, 'case-loan')
+  assert.equal(draft.eventType, '1st-interview')
+  assert.equal(draft.applicantId, 'applicant-lokesh')
+  assert.equal(draft.applicant.email, 'lokesh@example.com')
+  assert.deepEqual(draft.recruiterIds, ['rec-hanna', 'rec-tiana'])
+  assert.equal(draft.recruiter.email, 'hanna@example.com')
+  assert.equal(draft.zoomLink, 'https://zoom.example.com/hanna')
+  assert.equal(draft.interviewTimezone, 'Australia/Sydney')
+  setJazzhrJobs([])
 })
 
 test('standard intake shows role recruiter Zoom choices before recruiters are selected', () => {
