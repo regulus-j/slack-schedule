@@ -74,6 +74,8 @@ export function normalizeRoleAssignmentRow(row) {
   ])
   const status = firstClean(row, ['Status', 'Job Status', 'Role Status', 'Opening Status', 'Recruiters  to manage', 'Recruiters to manage'])
   const recruiterName = allClean(row, [
+    'Recruiters  to manage 5',
+    'Recruiters to manage 5',
     'Recruiter',
     'Recruiters',
     'Recruiter(s)',
@@ -84,6 +86,7 @@ export function normalizeRoleAssignmentRow(row) {
     'Talent Recruiter',
   ]).join('\n')
   const recruiterEmail = normalizeEmailList(allClean(row, [
+    'Column W',
     'Recruiter Email',
     'Recruiter Emails',
     'Recruiter Email(s)',
@@ -108,6 +111,7 @@ export function normalizeRoleAssignmentRow(row) {
     'Second/Final Interviewers',
   ]).join('\n')
   const hiringManagerEmail = normalizeEmailList(allClean(row, [
+    'Column V',
     'Hiring Manager Email',
     'Hiring Manager Emails',
     'Hiring Manager Email(s)',

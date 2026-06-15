@@ -61,6 +61,51 @@ test('normalizeRoleAssignmentRows supports current open roles tab shape', () => 
   assert.equal(isOpenRoleStatus(rows[2].status), false)
 })
 
+test('normalizeRoleAssignmentRows reads people from the live role sheet columns', () => {
+  const rows = normalizeRoleAssignmentRows([
+    {
+      '4': 'Loan Associate - Global',
+      'Recruiters  to manage': 'IL',
+      'Recruiters  to manage 5': 'Hanna and Tiana',
+      'For Automation': 'Arvind Tamilarasan, Crisielle Manalastas, Damian Power, Peter Bassilios',
+      'Column V': 'arvind@example.com, crisielle@example.com, damian@example.com, peter@example.com',
+      'Column W': 'hanna@example.com, tiana@example.com',
+    },
+  ])
+
+  assert.deepEqual(rows.map((row) => ({
+    recruiterName: row.recruiterName,
+    recruiterEmail: row.recruiterEmail,
+    hiringManagerName: row.hiringManagerName,
+    hiringManagerEmail: row.hiringManagerEmail,
+  })), [
+    {
+      recruiterName: 'Hanna',
+      recruiterEmail: 'hanna@example.com',
+      hiringManagerName: 'Arvind Tamilarasan',
+      hiringManagerEmail: 'arvind@example.com',
+    },
+    {
+      recruiterName: 'Tiana',
+      recruiterEmail: 'tiana@example.com',
+      hiringManagerName: 'Crisielle Manalastas',
+      hiringManagerEmail: 'crisielle@example.com',
+    },
+    {
+      recruiterName: '',
+      recruiterEmail: '',
+      hiringManagerName: 'Damian Power',
+      hiringManagerEmail: 'damian@example.com',
+    },
+    {
+      recruiterName: '',
+      recruiterEmail: '',
+      hiringManagerName: 'Peter Bassilios',
+      hiringManagerEmail: 'peter@example.com',
+    },
+  ])
+})
+
 test('normalizeRoleAssignmentRows expands multiple recruiters and hiring managers with normalized emails', () => {
   const rows = normalizeRoleAssignmentRows([
     {
