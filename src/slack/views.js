@@ -251,8 +251,8 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   return {
     type: 'modal',
     callback_id: 'schedule_intake_submit',
-    title: plain('📅 Schedule Interview'),
-    submit: plain('➕ Create'),
+    title: plain(draft.editCaseId ? 'Edit Schedule Case' : '📅 Schedule Interview'),
+    submit: plain(draft.editCaseId ? 'Save' : '➕ Create'),
     close: plain('Cancel'),
     blocks: [
       input('Event type', 'event_type_block', {
@@ -459,8 +459,8 @@ function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
   return {
     type: 'modal',
     callback_id: 'schedule_intake_submit',
-    title: plain('Schedule Event'),
-    submit: plain('Create'),
+    title: plain(draft.editCaseId ? 'Edit Event Case' : 'Schedule Event'),
+    submit: plain(draft.editCaseId ? 'Save' : 'Create'),
     close: plain('Cancel'),
     blocks: [
       input('Event type', 'event_type_block', {
@@ -1275,6 +1275,12 @@ function casePeopleSummary(caseRecord, role) {
 
 export function actionButtonsForCase(caseRecord, compact = false) {
   const actionMap = {
+    edit_schedule_case: button(
+      compact ? 'Edit' : 'Edit case',
+      'edit_schedule_case',
+      undefined,
+      caseRecord.id,
+    ),
     open_candidate_message_modal: button(
       compact ? '✉️ Candidate' : '✉️ Prepare candidate message',
       'open_candidate_message_modal',
@@ -1946,6 +1952,7 @@ function conflictSummary(slot) {
 
 const ACTION_LABELS = {
   case_created: 'Case created',
+  case_updated: 'Case updated',
   hm_message_approved: 'Legacy HM review sent',
   hm_availability_saved: 'Legacy availability saved',
   candidate_email_approved: 'Candidate email approved',

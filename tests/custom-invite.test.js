@@ -176,6 +176,49 @@ test('custom invite submission creates a generic case without interview records'
   ])
 })
 
+test('edit submission is rejected if a calendar event was created after the modal opened', async () => {
+  const views = new Map()
+  const app = {
+    action() {},
+    command() {},
+    event() {},
+    options() {},
+    message() {},
+    view(id, handler) {
+      views.set(id, handler)
+    },
+  }
+  registerSlackHandlers(app, {
+    config: {
+      slack: {},
+      google: {},
+      jazzhr: { liveSearch: {} },
+      scheduling: { timeZones: ['Asia/Manila'] },
+    },
+    store: {
+      async getCase() {
+        return { id: 'case-1', status: 'Scheduled', calendarEventId: 'event-1' }
+      },
+    },
+    logger: { info() {}, warn() {}, error() {} },
+  })
+
+  let ackPayload
+  await views.get('schedule_intake_submit')({
+    ack: async (payload) => {
+      ackPayload = payload
+    },
+    body: { user: { id: 'U1' } },
+    view: {
+      private_metadata: JSON.stringify({ editCaseId: 'case-1' }),
+      state: { values: {} },
+    },
+    client: {},
+  })
+
+  assert.match(ackPayload.errors.event_type_block, /calendar event has already been created/i)
+})
+
 test('custom invite intake and scheduling views use generic terminology', () => {
   const intake = intakeModal({
     templates: [],

@@ -51,6 +51,7 @@ import {
   applyRescheduleRequest,
   applyScheduledEvent,
   buildScheduleSnapshot,
+  canEditScheduleCase,
   canFinalizeSchedule,
   canStartReschedule,
   isScheduledCase,
@@ -278,6 +279,46 @@ export function registerSlackHandlers(app, context) {
       defaultTimeZone,
     });
   });
+
+  app.action('edit_schedule_case', async ({ ack, body, client }) => {
+    await ack()
+    const caseRecord = await requireCase(store, body.actions[0].value)
+    if (!canEditScheduleCase(caseRecord)) {
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+        user: body.user.id,
+        text: 'This case can no longer be edited because its calendar event has already been created.',
+      })
+      return
+    }
+
+    const templates = await loadSchedulingTemplates()
+    const draft = buildEditCaseDraft(caseRecord, templates)
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: {
+        ...intakeModal({
+          templates,
+          draft,
+          timeZones: schedulingTimeZones,
+          defaultTimeZone,
+          recruiters: getTalentRecruiters(),
+          roles: getOpenRoles(),
+        }),
+        private_metadata: buildPrivateMetadata(null, {
+          channelId: caseRecord.channelId || body.channel?.id || body.user.id,
+          editCaseId: caseRecord.id,
+          eventType: draft.eventType,
+          roleId: draft.roleId,
+          roleTitle: draft.roleTitle,
+          recruiterIds: draft.recruiterIds,
+          hiringManagerIds: draft.hiringManagerIds,
+          zoomLink: draft.zoomLink,
+          zoomLinkAuto: false,
+        }),
+      },
+    })
+  })
 
   app.action('candidate_search_submit', async ({ ack, body, client }) => {
     await ack();
@@ -1075,7 +1116,18 @@ export function registerSlackHandlers(app, context) {
     const values = view.state.values;
     const templates = await loadSchedulingTemplates();
     const metadata = parsePrivateMetadata(view.private_metadata) || {}
+    const editCase = metadata.editCaseId ? await store.getCase(metadata.editCaseId) : null
+    if (metadata.editCaseId && !canEditScheduleCase(editCase)) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          event_type_block: 'This case can no longer be edited because its calendar event has already been created.',
+        },
+      })
+      return
+    }
     const intakeDraft = buildIntakeDraft(values, templates, {
+      editCaseId: metadata.editCaseId || '',
       remoteUpdateStatus: metadata.remoteUpdateStatus || '',
       remoteUpdateMessage: metadata.remoteUpdateMessage || '',
     });
@@ -1084,8 +1136,8 @@ export function registerSlackHandlers(app, context) {
     const stageKey = intakeDraft.stageKey;
     const recruiterId = intakeDraft.recruiterId;
     const notes = intakeDraft.notes;
-    const resumeLink = intakeDraft.resumeLink;
-    const resumeFile = intakeDraft.resumeFile;
+    const resumeLink = intakeDraft.resumeLink || editCase?.resumeLink || null;
+    const resumeFile = intakeDraft.resumeFile || editCase?.resumeFile || null;
     const zoomLink = intakeDraft.zoomLink;
     const interviewTimezone = intakeDraft.interviewTimezone || defaultTimeZone;
     const requiresHiringManager = stageRequiresHiringManager(stageKey)
@@ -1109,6 +1161,28 @@ export function registerSlackHandlers(app, context) {
         recipients: intakeDraft.customInviteRecipients,
         meetingLink: intakeDraft.customInviteMeetingLink,
         deliveryStatus: {},
+      }
+      if (editCase) {
+        const updated = await store.updateCase(editCase.id, {
+          eventType: 'custom-invite',
+          externalAttendees: customInviteExternalAttendees(customInvite.recipients),
+          notes,
+          interviewTimezone,
+          customInvite,
+          autofill: {
+            ...(editCase.autofill || {}),
+            zoomLink: customInvite.meetingLink,
+            customInvitePurpose: customInvite.title,
+          },
+        })
+        await store.addAudit({
+          caseId: updated.id,
+          actorSlackUserId: body.user.id,
+          action: 'case_updated',
+        })
+        await updateCaseSlackMessage({ client, caseRecord: updated })
+        await publishHome({ client, userId: body.user.id, store, logger, config })
+        return
       }
       const caseRecord = await store.createCase({
         ownerSlackUserId: body.user.id,
@@ -1242,6 +1316,38 @@ export function registerSlackHandlers(app, context) {
     const recruiter = intakeDraft.recruiter;
     const hiringManager = intakeDraft.hiringManager;
     const coordinator = await resolveSlackUser({ client, userId: body.user.id, logger })
+    if (editCase) {
+      const updated = await store.updateCase(editCase.id, {
+        applicant,
+        recruiter,
+        hiringManager,
+        externalAttendees: intakeDraft.extraAttendees,
+        attendanceOverrides: hiringManager ? { hiringManagerIncluded: true } : {},
+        templateId,
+        stageKey,
+        notes,
+        resumeLink,
+        resumeFile,
+        interviewTimezone,
+        autofill: {
+          ...(editCase.autofill || {}),
+          zoomLink,
+          signature: recruiter?.signature || 'Recruitment Team',
+          roleId: intakeDraft.roleId,
+          roleTitle: intakeDraft.roleTitle,
+        },
+      })
+      await store.addAudit({
+        caseId: updated.id,
+        actorSlackUserId: body.user.id,
+        action: 'case_updated',
+        templateId,
+        stageKey,
+      })
+      await updateCaseSlackMessage({ client, caseRecord: updated })
+      await publishHome({ client, userId: body.user.id, store, logger, config })
+      return
+    }
     const caseRecord = await store.createCase({
       ownerSlackUserId: body.user.id,
       channelId: getChannelId(body.view) || body.user.id,
@@ -2837,6 +2943,66 @@ async function openIntakeModal({
   });
 }
 
+function buildEditCaseDraft(caseRecord, templates) {
+  if (isCustomInviteCase(caseRecord)) {
+    const customInvite = normalizeCustomInviteMetadata(caseRecord)
+    return buildIntakeDraft({}, templates, {
+      editCaseId: caseRecord.id,
+      eventType: 'custom-invite',
+      customInviteTitle: customInvite.title,
+      customInviteRecipientsRaw: customInvite.recipients
+        .map((recipient) => recipient.name ? `${recipient.name} <${recipient.email}>` : recipient.email)
+        .join('\n'),
+      customInviteSubject: customInvite.subject,
+      customInviteBody: customInvite.body,
+      customInviteMeetingLink: customInvite.meetingLink,
+      notes: caseRecord.notes || '',
+      interviewTimezone: caseRecord.interviewTimezone || '',
+    })
+  }
+
+  const additional = Array.isArray(caseRecord.externalAttendees) ? caseRecord.externalAttendees : []
+  const recruiterIds = normalizeIdList([
+    caseRecord.recruiter?.id,
+    ...additional.filter((person) => person?.role === 'recruiter').map((person) => person.id),
+  ])
+  const hiringManagerIds = normalizeIdList([
+    caseRecord.hiringManager?.id,
+    ...additional.filter((person) => person?.role === 'hiring_manager').map((person) => person.id),
+  ])
+  const eventType = eventTypeForStageKey(caseRecord.stageKey)
+  return buildIntakeDraft({}, templates, {
+    editCaseId: caseRecord.id,
+    eventType,
+    roleId: caseRecord.autofill?.roleId || '',
+    roleTitle: caseRecord.autofill?.roleTitle || caseRecord.applicant?.jobTitle || '',
+    applicantRecord: caseRecord.applicant,
+    recruiterIds,
+    hiringManagerIds,
+    recruiterPerson: caseRecord.recruiter,
+    recruiterName: caseRecord.recruiter?.name || '',
+    recruiterEmail: caseRecord.recruiter?.email || '',
+    hiringManagerPerson: caseRecord.hiringManager,
+    hiringManagerName: caseRecord.hiringManager?.name || '',
+    hiringManagerEmail: caseRecord.hiringManager?.email || '',
+    notes: caseRecord.notes || '',
+    zoomLink: caseRecord.autofill?.zoomLink || '',
+    interviewTimezone: caseRecord.interviewTimezone || '',
+  })
+}
+
+async function updateCaseSlackMessage({ client, caseRecord }) {
+  const channel = caseRecord.autofill?.caseMessageChannel
+  const ts = caseRecord.autofill?.caseMessageTs
+  if (!channel || !ts) return
+  await client.chat.update({
+    channel,
+    ts,
+    text: 'Scheduling case updated',
+    blocks: caseMessageBlocks(caseRecord),
+  })
+}
+
 function parsePrivateMetadata(raw) {
   try {
     const parsed = JSON.parse(raw || '');
@@ -2894,6 +3060,7 @@ function buildPrivateMetadata(view, overrides = {}) {
     ? Boolean(overrides.manualCandidateMode)
     : Boolean(parsed.manualCandidateMode)
   const eventType = 'eventType' in overrides ? overrides.eventType : parsed.eventType || ''
+  const editCaseId = 'editCaseId' in overrides ? overrides.editCaseId : parsed.editCaseId || ''
   const roleId = 'roleId' in overrides ? overrides.roleId : parsed.roleId || ''
   const roleTitle = 'roleTitle' in overrides ? overrides.roleTitle : parsed.roleTitle || ''
   const recruiterIds = 'recruiterIds' in overrides ? overrides.recruiterIds : parsed.recruiterIds || []
@@ -2926,6 +3093,7 @@ function buildPrivateMetadata(view, overrides = {}) {
     showDetails,
     manualCandidateMode,
     eventType,
+    editCaseId,
     roleId,
     roleTitle,
     recruiterIds,
@@ -2992,6 +3160,7 @@ async function refreshIntakeModal({
   }
   for (const key of [
     'eventType',
+    'editCaseId',
     'roleId',
     'roleTitle',
     'recruiterIds',
@@ -3075,6 +3244,7 @@ async function refreshIntakeModal({
     candidateSearchError: draft.candidateSearchError,
     manualCandidateMode: draft.manualCandidateMode,
     eventType: draft.eventType,
+    editCaseId: draft.editCaseId,
     roleId: draft.roleId,
     roleTitle: draft.roleTitle,
     recruiterIds: draft.recruiterIds,
@@ -3761,6 +3931,7 @@ function resolveCoordinatorEmail(caseRecord) {
 }
 
 export function buildIntakeDraft(values, templates, overrides = {}) {
+  const editCaseId = overrides.editCaseId || ''
   const selectedEventType = overrides.eventType ?? (values.event_type_block?.event_type_select?.selected_option?.value || '')
   const eventType = selectedEventType || ''
   const standardEventType = isStandardIntakeEvent(eventType)
@@ -3800,6 +3971,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     }
 
     return {
+      editCaseId,
       eventType,
       eventTypeOption: toSlackOption(eventTypeLabel(eventType), eventType),
       standardEventType: false,
@@ -3810,7 +3982,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       customInviteSubject,
       customInviteBody,
       customInviteMeetingLink,
-      notes: getInputValue(values, 'notes'),
+      notes: overrides.notes !== undefined ? overrides.notes : getInputValue(values, 'notes'),
       interviewTimezone,
       applicant: null,
       recruiter: null,
@@ -3960,6 +4132,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     : hasInputElement(values, 'additional_hm_select')
 
   return {
+    editCaseId,
     eventType,
     eventTypeOption,
     standardEventType,
@@ -4014,7 +4187,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     recruiterEmail: recruiter?.email || '',
     hiringManagerName: hiringManager?.name || '',
     hiringManagerEmail: hiringManager?.email || '',
-    notes: getInputValue(values, 'notes'),
+    notes: overrides.notes !== undefined ? overrides.notes : getInputValue(values, 'notes'),
     resumeLink: extractResumeFileReference(values),
     resumeFile: extractResumeFile(values),
     zoomLink,
@@ -4528,6 +4701,12 @@ function isStandardIntakeEvent(eventType) {
 function stageKeyForEventType(eventType) {
   if (eventType === 'job-offer') return 'job-offer-discussion'
   return isStandardIntakeEvent(eventType) ? eventType : ''
+}
+
+function eventTypeForStageKey(stageKey) {
+  const normalized = normalizeStageKey(stageKey)
+  if (normalized === 'job-offer-discussion' || normalized === 'final-offer') return 'job-offer'
+  return ['1st-interview', '2nd-interview', 'final-interview'].includes(normalized) ? normalized : '1st-interview'
 }
 
 function eventTypeLabel(eventType) {

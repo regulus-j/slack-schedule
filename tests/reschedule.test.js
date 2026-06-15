@@ -5,6 +5,7 @@ import {
   applyRescheduleRequest,
   applyScheduledEvent,
   buildScheduleSnapshot,
+  canEditScheduleCase,
   canFinalizeSchedule,
   canStartReschedule,
   visibleCaseActions,
@@ -600,6 +601,26 @@ test('standard intake modal uses unified recruiter and hiring manager checkboxes
   assert.match(JSON.stringify(view.blocks), /https:\/\/zoom\.us\/j\/jam/)
   assert.equal(inputBlockIds.includes('stage_block'), false)
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
+})
+
+test('draft cases can be edited until a calendar event is created', () => {
+  const draftCase = {
+    ...baseCase,
+    status: 'Draft',
+    calendarEventId: null,
+  }
+  const scheduledCase = {
+    ...draftCase,
+    status: 'Scheduled',
+    calendarEventId: 'event-1',
+  }
+
+  assert.equal(canEditScheduleCase(draftCase), true)
+  assert.equal(canEditScheduleCase(scheduledCase), false)
+  assert.ok(visibleCaseActions(draftCase).includes('edit_schedule_case'))
+  assert.equal(visibleCaseActions(scheduledCase).includes('edit_schedule_case'), false)
+  assert.ok(actionButtonsForCase(draftCase).some((item) => item.action_id === 'edit_schedule_case'))
+  assert.equal(actionButtonsForCase(scheduledCase).some((item) => item.action_id === 'edit_schedule_case'), false)
 })
 
 test('standard intake shows role recruiter Zoom choices before recruiters are selected', () => {

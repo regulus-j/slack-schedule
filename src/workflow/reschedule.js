@@ -28,6 +28,10 @@ export function canFinalizeSchedule(caseRecord) {
   return !caseRecord.calendarEventId && caseRecord.status !== 'Scheduled';
 }
 
+export function canEditScheduleCase(caseRecord) {
+  return Boolean(caseRecord) && !caseRecord.calendarEventId && caseRecord.status !== 'Scheduled'
+}
+
 export function canStartReschedule(caseRecord) {
   const normalized = normalizeCaseSchedule(caseRecord);
   return (
@@ -46,7 +50,7 @@ export function visibleCaseActions(caseRecord) {
         ...(caseRecord.calendarEventId ? ['view_calendar_details'] : []),
       ]
     }
-    return ['open_finalize_modal']
+    return ['edit_schedule_case', 'open_finalize_modal']
   }
 
   if (caseRecord.rescheduleStatus === RESCHEDULE_STATUSES.CANCELLED) {
@@ -76,6 +80,7 @@ export function visibleCaseActions(caseRecord) {
   }
 
   const actions = [
+    'edit_schedule_case',
     'open_candidate_message_modal',
     'scheduling_open',
     'open_finalize_modal',
