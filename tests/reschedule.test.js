@@ -885,14 +885,16 @@ test('standard first interview intake omits hiring manager selector', () => {
     'role_block',
     'role_title_block_job-1',
     'recruiters_block',
-    'recruiter_name_block_rec-mara',
-    'recruiter_email_block_rec-mara',
     'candidate_search_block',
+    'applicant_block_job-1',
+    'applicant_name_block',
   ])
   assert.equal(inputBlockIds.includes('hm_block'), false)
+  assert.equal(JSON.stringify(view.blocks).includes('recruiter_name_override'), false)
+  assert.equal(JSON.stringify(view.blocks).includes('recruiter_email_override'), false)
 })
 
-test('intake modal shows remote loading state and editable autofill fields', () => {
+test('intake modal shows remote loading state without recruiter or HM override fields', () => {
   const view = intakeModal({
     templates: [],
     draft: {
@@ -918,10 +920,11 @@ test('intake modal shows remote loading state and editable autofill fields', () 
   assert.match(JSON.stringify(view.blocks), /Updating form/)
   assert.match(JSON.stringify(view.blocks), /Loading candidates from JazzHR/)
   assert.equal(view.blocks.find((block) => block.block_id === 'role_title_block_job-1').element.initial_value, 'Support Specialist')
-  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_name_block_rec-mara').element.initial_value, 'Mara Santos')
-  assert.equal(view.blocks.find((block) => block.block_id === 'recruiter_email_block_rec-mara').element.initial_value, 'mara@example.com')
-  assert.equal(view.blocks.find((block) => block.block_id === 'hm_name_block_hm-ana').element.initial_value, 'Ana Cruz')
-  assert.equal(view.blocks.find((block) => block.block_id === 'hm_email_block_hm-ana').element.initial_value, 'ana@example.com')
+  const serialized = JSON.stringify(view.blocks)
+  assert.equal(serialized.includes('recruiter_name_override'), false)
+  assert.equal(serialized.includes('recruiter_email_override'), false)
+  assert.equal(serialized.includes('hm_name_override'), false)
+  assert.equal(serialized.includes('hm_email_override'), false)
 })
 
 test('recruiter Zoom resolution auto-fills one unique link and requires a choice for different links', () => {
@@ -1264,7 +1267,6 @@ test('role changes clear stale managers while preserving unrelated typed values'
       event_type_block: { event_type_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Keep this scheduling note.' } },
       hm_block_old: { hm_select: { selected_option: { value: 'hm-old' } } },
-      hm_email_block_old: { hm_email_override: { value: 'old@example.com' } },
     },
     [],
     {
@@ -1411,12 +1413,8 @@ test('builds standard intake draft from mapped role recruiters HMs and Zoom', ()
       role_block: { role_select: { selected_option: { value: 'job-1' } } },
       role_title_block: { role_title_override: { value: 'Customer Success Specialist' } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'rec-mara' } } },
-      recruiter_name_block: { recruiter_name_override: { value: 'Mara S.' } },
-      recruiter_email_block: { recruiter_email_override: { value: 'mara.override@example.com' } },
       additional_recruiters_block: { additional_recruiter_select: { selected_options: [{ value: 'rec-jam' }] } },
       hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
-      hm_name_block: { hm_name_override: { value: 'Ana C.' } },
-      hm_email_block: { hm_email_override: { value: 'ana.override@example.com' } },
       additional_hms_block: { additional_hm_select: { selected_options: [{ value: 'hm-lee' }] } },
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
       applicant_name_block: { applicant_name_override: { value: 'Edited Candidate' } },
@@ -1434,10 +1432,10 @@ test('builds standard intake draft from mapped role recruiters HMs and Zoom', ()
   assert.equal(draft.roleTitle, 'Customer Success Specialist')
   assert.deepEqual(draft.recruiterIds, ['rec-mara', 'rec-jam'])
   assert.deepEqual(draft.hiringManagerIds, ['hm-ana', 'hm-lee'])
-  assert.equal(draft.recruiter.name, 'Mara S.')
-  assert.equal(draft.recruiter.email, 'mara.override@example.com')
-  assert.equal(draft.hiringManager.name, 'Ana C.')
-  assert.equal(draft.hiringManager.email, 'ana.override@example.com')
+  assert.equal(draft.recruiter.name, 'Mara Santos')
+  assert.equal(draft.recruiter.email, 'mara@example.com')
+  assert.equal(draft.hiringManager.name, 'Ana Cruz')
+  assert.equal(draft.hiringManager.email, 'ana@example.com')
   assert.equal(draft.applicant.firstName, 'Edited')
   assert.equal(draft.applicant.lastName, 'Candidate')
   assert.equal(draft.applicant.email, 'edited.candidate@example.com')
@@ -1457,7 +1455,6 @@ test('standard intake does not overwrite a mapped recruiter with the applicant e
   const draft = buildIntakeDraft({
     event_type_block: { event_type_select: { selected_option: { value: '1st-interview' } } },
     role_block: { role_select: { selected_option: { value: 'job-loan' } } },
-    recruiter_email_block: { recruiter_email_override: { value: 'candidate@example.com' } },
   }, [], {
     roleId: 'job-loan',
     roleTitle: 'Loan Associate',
@@ -1493,7 +1490,7 @@ test('case summary displays every selected recruiter', () => {
   assert.match(text, /tiana@example\.com/)
 })
 
-test('builds intake draft emails from selected people and overrides', () => {
+test('builds intake draft emails from selected people and applicant override', () => {
   setApplicants(SAMPLE_APPLICANTS);
   const recruiters = SAMPLE_PEOPLE.filter((p) => p.role === 'recruiter');
   const managers = SAMPLE_PEOPLE.filter((p) => p.role === 'hiring_manager');
@@ -1505,9 +1502,7 @@ test('builds intake draft emails from selected people and overrides', () => {
       applicant_block: { applicant_select: { selected_option: { value: 'applicant-demo-1' } } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'rec-jam' } } },
       applicant_email_block: { applicant_email: { value: 'custom-applicant@example.com' } },
-      'recruiter_email_block_rec-jam': { 'recruiter_email_rec-jam': { value: 'custom-recruiter@example.com' } },
       hm_block: { hm_select: { selected_option: { value: 'hm-ana' } } },
-      'hm_email_block_hm-ana': { 'hm_email_hm-ana': { value: 'custom-hm@example.com' } },
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       notes_block: { notes: { value: 'Notes' } },
       resume_block: {
@@ -1533,11 +1528,11 @@ test('builds intake draft emails from selected people and overrides', () => {
   );
 
   assert.equal(draft.applicantEmail, 'custom-applicant@example.com');
-  assert.equal(draft.recruiterEmail, 'custom-recruiter@example.com');
-  assert.equal(draft.hiringManagerEmail, 'custom-hm@example.com');
+  assert.equal(draft.recruiterEmail, 'jamal@example.com');
+  assert.equal(draft.hiringManagerEmail, 'ana.cruz@example.com');
   assert.equal(draft.applicant.email, 'custom-applicant@example.com');
-  assert.equal(draft.recruiter.email, 'custom-recruiter@example.com');
-  assert.equal(draft.hiringManager.email, 'custom-hm@example.com');
+  assert.equal(draft.recruiter.email, 'jamal@example.com');
+  assert.equal(draft.hiringManager.email, 'ana.cruz@example.com');
   assert.equal(draft.stageKey, 'final-interview');
   assert.equal(draft.templateId, '2nd-or-Final-invite');
   assert.equal(draft.notes, 'Notes');
@@ -1687,7 +1682,6 @@ test('builds intake draft recruiter from the selected applicant', () => {
       manual_applicant_name_block: { manual_applicant_name: { value: 'Stale Manual Name' } },
       manual_applicant_role_block: { manual_applicant_role: { value: 'Stale Role' } },
       applicant_email_block: { applicant_email: { value: '' } },
-      recruiter_email_block: { recruiter_email: { value: '' } },
     },
     [],
   );
@@ -1729,8 +1723,6 @@ test('builds intake draft selection email from Slack profile override', () => {
       stage_block: { stage_select: { selected_option: { value: 'final-interview' } } },
       recruiter_block: { recruiter_select: { selected_option: { value: 'U-REC' } } },
       hm_block: { hm_select: { selected_option: { value: 'U-HM' } } },
-      recruiter_email_block: { recruiter_email: { value: 'stale-recruiter@example.com' } },
-      hm_email_block: { hm_email: { value: 'stale-hm@example.com' } },
     },
     [],
     {
@@ -1778,7 +1770,6 @@ test('builds intake draft ignores stale hidden HM values for 1st interviews', ()
     {
       stage_block: { stage_select: { selected_option: { value: '1st-interview' } } },
       hm_block: { hm_select: { selected_option: { value: 'U-HM' } } },
-      hm_email_block: { hm_email: { value: 'stale-hm@example.com' } },
     },
     [],
   );

@@ -18,6 +18,8 @@ Required production variables:
 
 Local development can run the Slack workflow with only Slack tokens. Google and JazzHR calls are safely mocked until credentials are present.
 
+Set `EMAIL_TEST_MODE=true` while testing with live Google credentials to redirect Gmail sends to `EMAIL_TEST_RECIPIENT` and suppress Google Calendar attendee update emails with `sendUpdates: none`. Calendar events are still created with the real stored attendees; only the outbound attendee notification emails are disabled.
+
 ## Deployment
 
 For production on an Azure VM with Docker Compose, follow the deployment guide in [docs/azure-vm-docker.md](docs/azure-vm-docker.md).

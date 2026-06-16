@@ -252,8 +252,6 @@ test('recruiter checkboxes promote the next primary and preserve a manual Zoom l
           values: {
             event_type_block: { event_type_select: { selected_option: { value: '1st-interview' } } },
             role_block: { role_select: { selected_option: { value: 'job-1' } } },
-            recruiter_name_block: { recruiter_name_override: { value: 'Edited Mara' } },
-            recruiter_email_block: { recruiter_email_override: { value: 'edited.mara@example.com' } },
             zoom_block: { zoom_link: { value: 'https://manual.example.com/meeting' } },
           },
         },
@@ -270,10 +268,12 @@ test('recruiter checkboxes promote the next primary and preserve a manual Zoom l
   })
 
   const metadata = JSON.parse(updated.private_metadata)
-  const nameBlock = updated.blocks.find((block) => block.block_id === 'recruiter_name_block_rec-jam')
+  const recruiterBlock = updated.blocks.find((block) => block.block_id === 'recruiters_block')
   assert.deepEqual(metadata.recruiterIds, ['rec-jam'])
   assert.equal(metadata.zoomLink, 'https://manual.example.com/meeting')
-  assert.equal(nameBlock.element.initial_value, 'Jamal Al Badi')
+  assert.deepEqual(recruiterBlock.element.initial_options.map((option) => option.value), ['rec-jam'])
+  assert.equal(JSON.stringify(updated.blocks).includes('recruiter_name_override'), false)
+  assert.equal(JSON.stringify(updated.blocks).includes('recruiter_email_override'), false)
   setJazzhrJobs([])
 })
 
@@ -538,12 +538,12 @@ test('newly checked recruiter and hiring manager become primary selections', asy
 
   const recruiterMetadata = JSON.parse(updates[0].private_metadata)
   const hmMetadata = JSON.parse(updates[1].private_metadata)
-  const recruiterNameBlock = updates[0].blocks.find((block) => block.block_id === 'recruiter_name_block_rec-jam')
-  const hmNameBlock = updates[1].blocks.find((block) => block.block_id === 'hm_name_block_hm-lee')
+  const recruiterBlock = updates[0].blocks.find((block) => block.block_id === 'recruiters_block')
+  const hmBlock = updates[1].blocks.find((block) => block.block_id === 'hiring_managers_block')
   assert.deepEqual(recruiterMetadata.recruiterIds, ['rec-jam', 'rec-mara'])
-  assert.equal(recruiterNameBlock.element.initial_value, 'Jamal Al Badi')
+  assert.deepEqual(recruiterBlock.element.initial_options.map((option) => option.value), ['rec-jam', 'rec-mara'])
   assert.deepEqual(hmMetadata.hiringManagerIds, ['hm-lee', 'hm-ana'])
-  assert.equal(hmNameBlock.element.initial_value, 'Lee Morgan')
+  assert.deepEqual(hmBlock.element.initial_options.map((option) => option.value), ['hm-lee', 'hm-ana'])
   setJazzhrJobs([])
 })
 

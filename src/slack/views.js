@@ -124,12 +124,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       selectedTimeZoneOption,
     })
   }
-  const recruiterSelect = recruiterSelectElement({ recruiters, draft })
   const manualCandidateMode = customInvite && Boolean(draft.manualCandidateMode)
-  const recruiterEmailBlockId = dynamicBlockId('recruiter_email_block', draft.recruiterId)
-  const hiringManagerEmailBlockId = dynamicBlockId('hm_email_block', draft.hiringManagerId)
-  const recruiterEmailActionId = dynamicBlockId('recruiter_email', draft.recruiterId)
-  const hiringManagerEmailActionId = dynamicBlockId('hm_email', draft.hiringManagerId)
   const hmRequired = stageRequiresHiringManager(draft.stageKey)
   const resumeRequired = stageRequiresResumeLink(draft.stageKey)
   const showStandardHiringManagers = standardEvent &&
@@ -151,28 +146,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         section(draft.remoteUpdateStatus === 'loading'
           ? `:hourglass_flowing_sand: *Updating form*\n${draft.remoteUpdateMessage || 'Loading remote data. This can take a few seconds.'}`
           : `:warning: *Automatic update failed*\n${draft.remoteUpdateMessage || 'Remote data could not be loaded. Review and edit the fields below.'}`),
-      ]
-    : []
-  const hiringManagerBlocks = hmRequired
-    ? [
-        input('Hiring Manager name', 'hm_block', {
-          type: 'external_select',
-          action_id: 'hm_select',
-          min_query_length: 0,
-          placeholder: plain('Search active users'),
-          ...(draft.hiringManagerOption ? { initial_option: draft.hiringManagerOption } : {}),
-        }, false, true),
-        input(
-          'Hiring Manager email',
-          hiringManagerEmailBlockId,
-          {
-            type: 'plain_text_input',
-            action_id: hiringManagerEmailActionId,
-            placeholder: plain('Autofills from the selected hiring manager'),
-            ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
-          },
-          false,
-        ),
       ]
     : []
   const standardRoleBlocks = standardEvent
@@ -204,18 +177,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           selectedIds: draft.recruiterIds,
           required: true,
         }),
-        input('Recruiter name', dynamicBlockId('recruiter_name_block', draft.recruiterId || draft.roleId), {
-          type: 'plain_text_input',
-          action_id: 'recruiter_name_override',
-          placeholder: plain('Edit the recruiter name if needed'),
-          ...(draft.recruiterName ? { initial_value: draft.recruiterName } : {}),
-        }),
-        input('Recruiter email', dynamicBlockId('recruiter_email_block', draft.recruiterId || draft.roleId), {
-          type: 'plain_text_input',
-          action_id: 'recruiter_email_override',
-          placeholder: plain('Edit the recruiter email if needed'),
-          ...(draft.recruiterEmail ? { initial_value: draft.recruiterEmail } : {}),
-        }),
         ...(showStandardHiringManagers ? [
           section(draft.suggestedHiringManagers?.length
             ? [
@@ -235,18 +196,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             selectedIds: draft.hiringManagerIds,
             required: hmRequired,
           }),
-          input('Hiring manager name', dynamicBlockId('hm_name_block', draft.hiringManagerId || draft.roleId), {
-            type: 'plain_text_input',
-            action_id: 'hm_name_override',
-            placeholder: plain('Edit the hiring manager name if needed'),
-            ...(draft.hiringManagerName ? { initial_value: draft.hiringManagerName } : {}),
-          }, !hmRequired),
-          input('Hiring manager email', dynamicBlockId('hm_email_block', draft.hiringManagerId || draft.roleId), {
-            type: 'plain_text_input',
-            action_id: 'hm_email_override',
-            placeholder: plain('Edit the hiring manager email if needed'),
-            ...(draft.hiringManagerEmail ? { initial_value: draft.hiringManagerEmail } : {}),
-          }, !hmRequired),
         ] : []),
       ]
     : []
@@ -376,21 +325,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ),
       ]),
       ...applicantDetailBlocks(draft),
-      ...(customInvite ? [
-      input('Recruiter name', 'recruiter_block', recruiterSelect, false, true),
-      input(
-        'Recruiter email',
-        recruiterEmailBlockId,
-        {
-          type: 'plain_text_input',
-          action_id: recruiterEmailActionId,
-          placeholder: plain('Autofills from the selected recruiter'),
-          ...(draft.recruiterEmail ? { initial_value: draft.recruiterEmail } : {}),
-        },
-        true,
-      ),
-      ...hiringManagerBlocks,
-      ] : []),
       ...((standardEvent || customInvite) ? [
       ...(standardEvent && zoomLinkOptions.length > 0 ? [
         input('Recruiter Zoom link', 'zoom_choice_block', {
@@ -1485,16 +1419,6 @@ function resolveCaseZoomLink(caseRecord) {
     caseRecord.autofill?.zoomLink ||
     caseRecord.recruiter?.zoomLink ||
     ''
-}
-
-function recruiterSelectElement({ recruiters, draft }) {
-  return {
-    type: 'external_select',
-    action_id: 'recruiter_select',
-    min_query_length: 0,
-    placeholder: plain('Search recruiter'),
-    ...(draft.recruiterOption ? { initial_option: draft.recruiterOption } : {}),
-  }
 }
 
 function manualCandidateModeCheckbox(draft) {

@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGmailRawMessage, buildGoogleOAuthUrl, checkFreeBusy, createCalendarEvent, getGoogleTokenOwner, getRecruiterId } from '../src/services/google.js';
+import {
+  buildGmailRawMessage,
+  buildGoogleOAuthUrl,
+  checkFreeBusy,
+  createCalendarEvent,
+  getGoogleTokenOwner,
+  getRecruiterId,
+  sendRecruiterEmail,
+  updateCalendarEvent,
+} from '../src/services/google.js';
 import { homeView } from '../src/slack/views.js';
 
 test('builds a recruiter-scoped google oauth url', () => {
@@ -174,6 +183,234 @@ test('createCalendarEvent explains missing shared calendar access', async () => 
       }),
       /Calendar ID "bad-calendar@example\.com" was not found or is not shared/,
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('createCalendarEvent uses sendUpdates all normally and none in email test mode', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestBodies = [];
+  globalThis.fetch = async (_url, options) => {
+    requestBodies.push(JSON.parse(options.body));
+    return {
+      ok: true,
+      async json() {
+        return { id: `event-${requestBodies.length}` };
+      },
+    };
+  };
+
+  const baseArgs = {
+    logger: { warn() {} },
+    caseRecord: { id: 'case-1', ownerSlackUserId: 'U123' },
+    eventInput: {
+      candidateName: 'Alex Reyes',
+      jobTitle: 'Support Specialist',
+      startDate: '2026-06-01',
+      startTime: '09:00',
+      durationMinutes: 30,
+      attendees: ['alex@example.com'],
+      timeZone: 'Asia/Manila',
+    },
+    store: {
+      async getGoogleToken() {
+        return { access_token: 'token' };
+      },
+    },
+  };
+  const baseConfig = {
+    google: {
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://example.com/oauth',
+      sharedCalendarId: 'primary',
+    },
+  };
+
+  try {
+    await createCalendarEvent({
+      ...baseArgs,
+      config: { ...baseConfig, email: { testMode: false } },
+    });
+    await createCalendarEvent({
+      ...baseArgs,
+      config: { ...baseConfig, email: { testMode: true } },
+    });
+
+    assert.equal(requestBodies[0].sendUpdates, 'all');
+    assert.equal(requestBodies[1].sendUpdates, 'none');
+    assert.deepEqual(requestBodies[1].attendees.map((attendee) => attendee.email), ['alex@example.com']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('updateCalendarEvent disables attendee emails in email test mode', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody;
+  globalThis.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      async json() {
+        return { id: 'event-1' };
+      },
+    };
+  };
+
+  try {
+    await updateCalendarEvent({
+      config: {
+        google: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          redirectUri: 'https://example.com/oauth',
+          sharedCalendarId: 'primary',
+        },
+        email: { testMode: true },
+      },
+      logger: { warn() {} },
+      caseRecord: { id: 'case-1', ownerSlackUserId: 'U123', calendarEventId: 'event-1' },
+      eventInput: {
+        candidateName: 'Alex Reyes',
+        jobTitle: 'Support Specialist',
+        startDate: '2026-06-01',
+        startTime: '09:00',
+        durationMinutes: 30,
+        attendees: ['alex@example.com'],
+        timeZone: 'Asia/Manila',
+      },
+      store: {
+        async getGoogleToken() {
+          return { access_token: 'token' };
+        },
+      },
+    });
+
+    assert.equal(requestBody.sendUpdates, 'none');
+    assert.deepEqual(requestBody.attendees.map((attendee) => attendee.email), ['alex@example.com']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('sendRecruiterEmail redirects recipients in email test mode', async () => {
+  const originalFetch = globalThis.fetch;
+  let sentRaw;
+  globalThis.fetch = async (_url, options) => {
+    sentRaw = JSON.parse(options.body).raw;
+    return {
+      ok: true,
+      async json() {
+        return { id: 'message-1' };
+      },
+    };
+  };
+  const infos = [];
+
+  try {
+    const result = await sendRecruiterEmail({
+      config: {
+        google: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          redirectUri: 'https://example.com/oauth',
+          sharedCalendarId: 'primary',
+        },
+        email: {
+          testMode: true,
+          testRecipient: 'jamalalbadi03@gmail.com',
+        },
+      },
+      logger: {
+        warn() {},
+        info(event, payload) {
+          infos.push({ event, payload });
+        },
+      },
+      caseRecord: { id: 'case-1', ownerSlackUserId: 'U123' },
+      email: {
+        to: 'candidate@example.com',
+        cc: ['recruiter@example.com'],
+        bcc: ['hidden@example.com'],
+        from: 'sender@example.com',
+        subject: 'Interview',
+        htmlBody: '<p>Hello</p>',
+        plainBody: 'Hello',
+      },
+      store: {
+        async getGoogleToken() {
+          return { access_token: 'token' };
+        },
+      },
+    });
+
+    const decoded = Buffer.from(sentRaw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    assert.match(decoded, /^To: jamalalbadi03@gmail\.com/m);
+    assert.doesNotMatch(decoded, /candidate@example\.com/);
+    assert.doesNotMatch(decoded, /^Cc:/m);
+    assert.equal(result.email.to, 'jamalalbadi03@gmail.com');
+    assert.deepEqual(result.email.cc, []);
+    assert.deepEqual(result.email.bcc, []);
+    assert.deepEqual(result.email.testMode.originalRecipients, {
+      to: 'candidate@example.com',
+      cc: 'recruiter@example.com',
+      bcc: 'hidden@example.com',
+    });
+    assert.equal(infos[0].event, 'gmail_send_test_redirected');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('sendRecruiterEmail keeps recipients unchanged when email test mode is off', async () => {
+  const originalFetch = globalThis.fetch;
+  let sentRaw;
+  globalThis.fetch = async (_url, options) => {
+    sentRaw = JSON.parse(options.body).raw;
+    return {
+      ok: true,
+      async json() {
+        return { id: 'message-1' };
+      },
+    };
+  };
+
+  try {
+    const result = await sendRecruiterEmail({
+      config: {
+        google: {
+          clientId: 'client-id',
+          clientSecret: 'client-secret',
+          redirectUri: 'https://example.com/oauth',
+          sharedCalendarId: 'primary',
+        },
+        email: { testMode: false },
+      },
+      logger: { warn() {} },
+      caseRecord: { id: 'case-1', ownerSlackUserId: 'U123' },
+      email: {
+        to: 'candidate@example.com',
+        cc: ['recruiter@example.com'],
+        from: 'sender@example.com',
+        subject: 'Interview',
+        htmlBody: '<p>Hello</p>',
+        plainBody: 'Hello',
+      },
+      store: {
+        async getGoogleToken() {
+          return { access_token: 'token' };
+        },
+      },
+    });
+
+    const decoded = Buffer.from(sentRaw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    assert.match(decoded, /^To: candidate@example\.com/m);
+    assert.match(decoded, /^Cc: recruiter@example\.com/m);
+    assert.equal(result.email.to, 'candidate@example.com');
+    assert.deepEqual(result.email.cc, ['recruiter@example.com']);
+    assert.equal(result.email.testMode, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

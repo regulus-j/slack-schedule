@@ -10,6 +10,7 @@ const DEFAULT_TIME_ZONES = [
   'America/New_York',
   'Europe/London',
 ];
+const DEFAULT_EMAIL_TEST_RECIPIENT = 'jamalalbadi03@gmail.com';
 
 export function loadConfig(env = process.env) {
   const mergedEnv = { ...loadLocalEnvFile(), ...env };
@@ -42,6 +43,10 @@ export function loadConfig(env = process.env) {
       redirectUri: mergedEnv.GOOGLE_REDIRECT_URI,
       sharedCalendarId: mergedEnv.GOOGLE_SHARED_CALENDAR_ID,
       authSlackUserId: mergedEnv.GOOGLE_AUTH_SLACK_USER_ID || '',
+    },
+    email: {
+      testMode: parseBoolean(mergedEnv.EMAIL_TEST_MODE, false),
+      testRecipient: cleanString(mergedEnv.EMAIL_TEST_RECIPIENT) || DEFAULT_EMAIL_TEST_RECIPIENT,
     },
     recruiterPhoneExport: {
       url: mergedEnv.RECRUITER_PHONE_EXPORT_URL || null,
@@ -98,6 +103,10 @@ function resolveTimeZoneList(value) {
     .map((item) => item.trim())
     .filter(Boolean);
   return list.length > 0 ? list : DEFAULT_TIME_ZONES;
+}
+
+function cleanString(value) {
+  return String(value || '').trim()
 }
 
 function positiveInteger(value, fallback) {

@@ -49,6 +49,8 @@ npm start
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | No | OAuth callback URL |
 | `GOOGLE_SHARED_CALENDAR_ID` | No | Calendar ID for event creation |
+| `EMAIL_TEST_MODE` | No | Redirect Gmail sends to the test recipient and disable Calendar attendee emails |
+| `EMAIL_TEST_RECIPIENT` | No | Test-mode Gmail recipient; defaults to `jamalalbadi03@gmail.com` |
 | `APP_ENCRYPTION_KEY` | No | AES-256-GCM key for encrypting OAuth tokens at rest |
 | `DATABASE_URL` | No | PostgreSQL connection string (falls back to JSON store) |
 

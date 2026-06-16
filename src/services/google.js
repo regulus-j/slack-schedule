@@ -5,6 +5,7 @@ import { logoAttachment } from '../signature.js';
 const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_CALENDAR_BASE_URL = 'https://www.googleapis.com/calendar/v3';
 const GOOGLE_GMAIL_BASE_URL = 'https://gmail.googleapis.com/gmail/v1';
+const DEFAULT_EMAIL_TEST_RECIPIENT = 'jamalalbadi03@gmail.com'
 
 export function buildGoogleOAuthUrl(config, state) {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -102,7 +103,7 @@ export async function createCalendarEvent({ config, logger, caseRecord, eventInp
     headers: buildAuthHeaders(accessToken),
     body: JSON.stringify({
       ...eventDraft,
-      sendUpdates: 'all',
+      sendUpdates: calendarSendUpdates(config),
     }),
   });
 
@@ -146,7 +147,7 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
       headers: buildAuthHeaders(accessToken),
       body: JSON.stringify({
         ...eventDraft,
-        sendUpdates: 'all',
+        sendUpdates: calendarSendUpdates(config),
       }),
     },
   );
@@ -165,19 +166,21 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
 }
 
 export async function sendRecruiterEmail({ config, logger, caseRecord, email, store }) {
+  const deliveryEmail = emailForDelivery({ config, logger, caseRecord, email })
+
   if (!googleReady(config)) {
     logger.warn('gmail_send_mocked', { caseId: caseRecord.id });
-    return { mocked: true, messageId: `mock-email-${caseRecord.id}`, email };
+    return { mocked: true, messageId: `mock-email-${caseRecord.id}`, email: deliveryEmail };
   }
 
   const recruiterId = getGoogleTokenOwner(config, getRecruiterId(caseRecord));
   const accessToken = await resolveAccessToken({ config, store, recruiterId });
   if (!accessToken) {
     logger.warn('gmail_send_skipped', { caseId: caseRecord.id, reason: 'missing_google_token' });
-    return { mocked: true, messageId: `pending-gmail-${caseRecord.id}`, email };
+    return { mocked: true, messageId: `pending-gmail-${caseRecord.id}`, email: deliveryEmail };
   }
 
-  const raw = buildGmailRawMessage(email);
+  const raw = buildGmailRawMessage(deliveryEmail);
   const response = await fetch(`${GOOGLE_GMAIL_BASE_URL}/users/me/messages/send`, {
     method: 'POST',
     headers: buildAuthHeaders(accessToken),
@@ -189,7 +192,46 @@ export async function sendRecruiterEmail({ config, logger, caseRecord, email, st
     throw new Error(payload.error?.message || payload.error_description || 'Gmail send failed');
   }
 
-  return { mocked: false, messageId: payload.id, email };
+  return { mocked: false, messageId: payload.id, email: deliveryEmail };
+}
+
+function calendarSendUpdates(config) {
+  return config?.email?.testMode ? 'none' : 'all'
+}
+
+function emailForDelivery({ config, logger, caseRecord, email }) {
+  if (!config?.email?.testMode) return email
+
+  const testRecipient = normalizeTestRecipient(config)
+  const originalRecipients = {
+    to: normalizeEmailHeaderList(email?.to),
+    cc: normalizeEmailHeaderList(email?.cc),
+    bcc: normalizeEmailHeaderList(email?.bcc),
+  }
+
+  logger.info?.('gmail_send_test_redirected', {
+    caseId: caseRecord?.id,
+    originalTo: originalRecipients.to,
+    originalCc: originalRecipients.cc,
+    originalBcc: originalRecipients.bcc,
+    redirectedTo: testRecipient,
+  })
+
+  return {
+    ...email,
+    to: testRecipient,
+    cc: [],
+    bcc: [],
+    testMode: {
+      enabled: true,
+      originalRecipients,
+      redirectedTo: testRecipient,
+    },
+  }
+}
+
+function normalizeTestRecipient(config) {
+  return String(config?.email?.testRecipient || '').trim() || DEFAULT_EMAIL_TEST_RECIPIENT
 }
 
 async function resolveAccessToken({ config, store, recruiterId }) {

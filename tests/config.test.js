@@ -35,3 +35,25 @@ test('automated notification configuration uses safe defaults and explicit overr
   assert.equal(configured.notifications.feedbackFormUrl, 'https://example.com/feedback')
   assert.equal(configured.notifications.resumeAttachmentMaxBytes, 1024)
 })
+
+test('email test mode defaults off and supports a safe test recipient', () => {
+  const defaults = loadConfig({
+    EMAIL_TEST_MODE: '',
+    EMAIL_TEST_RECIPIENT: '',
+  })
+  assert.equal(defaults.email.testMode, false)
+  assert.equal(defaults.email.testRecipient, 'jamalalbadi03@gmail.com')
+
+  const configured = loadConfig({
+    EMAIL_TEST_MODE: 'true',
+    EMAIL_TEST_RECIPIENT: ' test-recipient@example.com ',
+  })
+  assert.equal(configured.email.testMode, true)
+  assert.equal(configured.email.testRecipient, 'test-recipient@example.com')
+
+  const fallbackRecipient = loadConfig({
+    EMAIL_TEST_MODE: 'true',
+    EMAIL_TEST_RECIPIENT: '',
+  })
+  assert.equal(fallbackRecipient.email.testRecipient, 'jamalalbadi03@gmail.com')
+})

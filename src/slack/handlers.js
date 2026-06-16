@@ -1287,7 +1287,7 @@ export function registerSlackHandlers(app, context) {
       errors[findInputBlockId(values, 'applicant_email', 'applicant_email_block')] = 'Enter a valid applicant email.';
     }
     if (intakeDraft.recruiterEmail && !isValidEmail(intakeDraft.recruiterEmail)) {
-      errors[findInputBlockId(values, standardEventType ? 'recruiter_email_override' : 'recruiter_email', 'recruiter_email_block')] = 'Enter a valid recruiter email.';
+      errors[findInputBlockId(values, standardEventType ? 'recruiter_checkboxes' : 'recruiter_select', standardEventType ? 'recruiters_block' : 'recruiter_block')] = 'Selected recruiter has an invalid email.';
     }
     if (requiresHiringManager && intakeDraft.roleId && !intakeDraft.hiringManagerId) {
       errors[findInputBlockId(values, 'hiring_manager_checkboxes', 'hiring_managers_block')] = 'Choose a hiring manager.';
@@ -1295,10 +1295,10 @@ export function registerSlackHandlers(app, context) {
     if (requiresHiringManager && intakeDraft.hiringManagerIds.length > 10) {
       errors[findInputBlockId(values, 'hiring_manager_checkboxes', 'hiring_managers_block')] = 'Choose no more than 10 hiring managers.';
     }
-    if (requiresHiringManager && !intakeDraft.hiringManagerEmail) {
-      errors[findInputBlockId(values, standardEventType ? 'hm_email_override' : 'hm_email', 'hm_email_block')] = 'Enter hiring manager email.';
+    if (requiresHiringManager && intakeDraft.hiringManagerId && !intakeDraft.hiringManagerEmail) {
+      errors[findInputBlockId(values, standardEventType ? 'hiring_manager_checkboxes' : 'hm_select', standardEventType ? 'hiring_managers_block' : 'hm_block')] = 'Selected hiring manager is missing an email.';
     } else if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
-      errors[findInputBlockId(values, standardEventType ? 'hm_email_override' : 'hm_email', 'hm_email_block')] = 'Enter a valid hiring manager email.';
+      errors[findInputBlockId(values, standardEventType ? 'hiring_manager_checkboxes' : 'hm_select', standardEventType ? 'hiring_managers_block' : 'hm_block')] = 'Selected hiring manager has an invalid email.';
     }
     if (Object.keys(errors).length > 0) {
       await ack({ response_action: 'errors', errors });
@@ -4245,35 +4245,10 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const selectedRecruiterId = recruiterIds[0] || '';
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
   const hiringManagerId = hiringManagerIds[0] || ''
-  const recruiterEmailOverride =
-    overrides.recruiterEmail !== undefined
-      ? overrides.recruiterEmail
-      : (getInputValue(values, 'recruiter_email_override') || getInputValue(values, 'recruiter_email'))
-  const recruiterNameOverride =
-    overrides.recruiterName !== undefined ? overrides.recruiterName : getInputValue(values, 'recruiter_name_override')
-  const hiringManagerEmailOverride =
-    requiresHiringManager
-      ? (overrides.hiringManagerEmail !== undefined
-          ? overrides.hiringManagerEmail
-          : (getInputValue(values, 'hm_email_override') || getInputValue(values, 'hm_email')))
-      : ''
-  const hiringManagerNameOverride =
-    overrides.hiringManagerName !== undefined ? overrides.hiringManagerName : getInputValue(values, 'hm_name_override')
   const selectedRecruiter = overrides.recruiterPerson || findMappedPersonById(recruiterId)
-  const safeRecruiterEmailOverride = standardEventType &&
-    normalizeEmail(recruiterEmailOverride) === normalizeEmail(applicant?.email) &&
-    normalizeEmail(selectedRecruiter?.email) !== normalizeEmail(applicant?.email)
-    ? ''
-    : recruiterEmailOverride
-  const recruiter = applyPersonOverrides(
-    selectedRecruiter,
-    { name: recruiterNameOverride, email: safeRecruiterEmailOverride },
-  );
+  const recruiter = selectedRecruiter ? asRecruiter(selectedRecruiter) : null
   const hiringManager = requiresHiringManager
-    ? applyPersonOverrides(
-        overrides.hiringManagerPerson || findMappedPersonById(hiringManagerId),
-        { name: hiringManagerNameOverride, email: hiringManagerEmailOverride },
-      )
+    ? asHiringManager(overrides.hiringManagerPerson || findMappedPersonById(hiringManagerId))
     : null
   const selectedRecruiters = standardEventType ? recruiterIds.map(findMappedPersonById).filter(Boolean).map(asRecruiter) : (recruiter ? [recruiter] : [])
   const selectedHiringManagers = standardHiringManagersAllowed ? hiringManagerIds.map(findMappedPersonById).filter(Boolean).map(asHiringManager) : (hiringManager ? [hiringManager] : [])
@@ -4657,15 +4632,6 @@ function applyEmailOverride(person, emailOverride) {
     ...person,
     email,
   };
-}
-
-function applyPersonOverrides(person, { name = '', email = '' } = {}) {
-  if (!person) return null
-  return {
-    ...person,
-    ...(String(name || '').trim() ? { name: String(name).replace(/\s+/g, ' ').trim() } : {}),
-    ...(String(email || '').trim() ? { email: String(email).trim() } : {}),
-  }
 }
 
 function applyApplicantOverrides(applicant, { name = '', email = '', phone = '', jobTitle = '' } = {}) {
