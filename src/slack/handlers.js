@@ -197,8 +197,10 @@ export function registerSlackHandlers(app, context) {
       const recruiters = getRecruiters();
       await loadTalentDirectory(config, store)
       const talentRecruiters = getTalentRecruiters()
-      await client.chat.postMessage({
+      await postSharedActionMessage({
+        client,
         channel: command.channel_id,
+        actorSlackUserId: command.user_id,
         text: result.refreshed
           ? `JazzHR cache refreshed: ${result.records} applicants, ${result.indexedCandidates || 0} candidate index records, and ${recruiters.length} JazzHR users loaded. Talent recruiters refreshed: ${talentRecruiters.length}.`
           : 'JazzHR refresh completed with warnings (check logs for details).',
@@ -209,8 +211,10 @@ export function registerSlackHandlers(app, context) {
     if (text === 'refresh-directory') {
       await loadTalentDirectory(config, store)
       const talentRecruiters = getTalentRecruiters()
-      await client.chat.postMessage({
+      await postSharedActionMessage({
+        client,
         channel: command.channel_id,
+        actorSlackUserId: command.user_id,
         text: `Talent directory refreshed: ${talentRecruiters.length} recruitment records loaded.`,
       });
       return;
@@ -316,6 +320,9 @@ export function registerSlackHandlers(app, context) {
           hiringManagerIds: draft.hiringManagerIds,
           zoomLink: draft.zoomLink,
           zoomLinkAuto: false,
+          zoomLinkRevision: 0,
+          resumeLink: draft.resumeLink,
+          resumeFile: draft.resumeFile,
         }),
       },
     })
@@ -971,6 +978,7 @@ export function registerSlackHandlers(app, context) {
 
   app.action('zoom_link_select', async ({ ack, body, client }) => {
     await ack()
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
     await refreshIntakeModal({
       client,
       body,
@@ -978,6 +986,7 @@ export function registerSlackHandlers(app, context) {
       draftOverrides: {
         zoomLink: selectedOptionValue(body),
         zoomLinkAuto: false,
+        zoomLinkRevision: Number(metadata.zoomLinkRevision || 0) + 1,
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
@@ -1221,8 +1230,10 @@ export function registerSlackHandlers(app, context) {
         recipientCount: customInvite.recipients.length,
       })
 
-      const caseMessage = await client.chat.postMessage({
+      const caseMessage = await postSharedActionMessage({
+        client,
         channel: resolvePostingChannel(config, body.user.id),
+        actorSlackUserId: body.user.id,
         text: 'Event scheduling case created',
         blocks: caseMessageBlocks(caseRecord),
       })
@@ -1391,8 +1402,10 @@ export function registerSlackHandlers(app, context) {
       stageKey,
     });
 
-    const caseMessage = await client.chat.postMessage({
+    const caseMessage = await postSharedActionMessage({
+      client,
       channel: resolvePostingChannel(config, body.user.id),
+      actorSlackUserId: body.user.id,
       text: 'Scheduling case created',
       blocks: caseMessageBlocks(caseRecord),
     });
@@ -1459,8 +1472,10 @@ export function registerSlackHandlers(app, context) {
     await ack();
     const caseRecord = await requireCase(store, body.actions[0].value);
     if (!caseRecord.resumeLink) {
-      await client.chat.postMessage({
+      await postSharedActionMessage({
+        client,
         channel: resolvePostingChannel(config, body.user.id),
+        actorSlackUserId: body.user.id,
         text: `📄 No resume has been uploaded for ${caseRecord.id} yet.`,
       });
       return;
@@ -1470,8 +1485,10 @@ export function registerSlackHandlers(app, context) {
       ? [`📄 Resume for ${caseRecord.id}:`, resumeSlackLink(caseRecord)].join('\n')
       : [`📄 Resume for ${caseRecord.id}:`, resumePlainLink(caseRecord)].join('\n');
 
-    await client.chat.postMessage({
+    await postSharedActionMessage({
+      client,
       channel: resolvePostingChannel(config, body.user.id),
+      actorSlackUserId: body.user.id,
       text: details,
     });
     await store.addAudit({
@@ -1518,8 +1535,10 @@ export function registerSlackHandlers(app, context) {
     }
     if (hasBlockingEmailStatus(caseRecord.gmailSendStatus) && isSameEmail(caseRecord.candidateEmail, email)) {
       await ack();
-      await client.chat.postMessage({
+      await postSharedActionMessage({
+        client,
         channel: resolvePostingChannel(config, body.user.id),
+        actorSlackUserId: body.user.id,
         text: `⚠️ This candidate email has already been sent for ${caseId}.`,
       });
       return
@@ -1544,8 +1563,10 @@ export function registerSlackHandlers(app, context) {
       templateId: caseRecord.templateId,
     });
     await publishHome({ client, userId: body.user.id, store, logger, config });
-    await client.chat.postMessage({
+    await postSharedActionMessage({
+      client,
       channel: resolvePostingChannel(config, body.user.id),
+      actorSlackUserId: body.user.id,
       text: `Candidate message approved for ${caseId}.`,
       blocks: caseMessageBlocks(updated),
     });
@@ -1560,8 +1581,10 @@ export function registerSlackHandlers(app, context) {
       caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion
     ) {
       await ack();
-      await client.chat.postMessage({
+      await postSharedActionMessage({
+        client,
         channel: resolvePostingChannel(config, body.user.id),
+        actorSlackUserId: body.user.id,
         text: `⚠️ A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
       });
       return;
@@ -1605,8 +1628,10 @@ export function registerSlackHandlers(app, context) {
       scheduleVersion: updated.reminderScheduleVersion,
     });
     await publishHome({ client, userId: body.user.id, store, logger, config });
-    await client.chat.postMessage({
+    await postSharedActionMessage({
+      client,
       channel: resolvePostingChannel(config, body.user.id),
+      actorSlackUserId: body.user.id,
       text: `🔔 Reminder sent for ${caseId}.`,
       blocks: caseMessageBlocks(updated),
     });
@@ -2707,7 +2732,12 @@ export function registerSlackHandlers(app, context) {
           ? 'This event was already marked complete. No duplicate feedback email was queued.'
           : 'Event marked complete. The candidate feedback request has been queued.')
     const channel = body.channel?.id || await openDm(client, body.user.id)
-    await client.chat.postMessage({ channel, text: message })
+    await postSharedActionMessage({
+      client,
+      channel,
+      actorSlackUserId: body.user.id,
+      text: message,
+    })
     if (!result.alreadyCompleted && !result.stale) {
       await store.addAudit({
         caseId,
@@ -2907,8 +2937,10 @@ async function postCaseThreadMessage({
     ? null
     : (caseRecord.autofill?.scheduledMessageTs || caseRecord.autofill?.caseMessageTs || body.message?.ts || null)
 
-  const result = await client.chat.postMessage({
+  const result = await postSharedActionMessage({
+    client,
     channel,
+    actorSlackUserId: body.user?.id || body.user_id || '',
     text,
     blocks,
     ...(threadTs ? { thread_ts: threadTs } : {}),
@@ -2925,6 +2957,68 @@ async function postCaseThreadMessage({
   }
 
   return result
+}
+
+async function postSharedActionMessage({
+  client,
+  channel,
+  actorSlackUserId = '',
+  text = '',
+  blocks,
+  ...rest
+}) {
+  const payload = sharedActionMessagePayload({
+    channel,
+    actorSlackUserId,
+    text,
+    blocks,
+  })
+  return client.chat.postMessage({
+    channel,
+    ...payload,
+    ...rest,
+  })
+}
+
+function sharedActionMessagePayload({ channel, actorSlackUserId = '', text = '', blocks }) {
+  const mention = slackUserMention(actorSlackUserId)
+  if (!mention || isDirectSlackTarget(channel, actorSlackUserId)) {
+    return blocks ? { text, blocks } : { text }
+  }
+
+  return {
+    text: prefixSlackMention(text, mention),
+    ...(blocks ? { blocks: actorMentionBlocks(blocks, mention) } : {}),
+  }
+}
+
+function actorMentionBlocks(blocks, mention) {
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `Action by ${mention}`,
+      },
+    },
+    ...blocks,
+  ]
+}
+
+function prefixSlackMention(text, mention) {
+  const value = String(text || '').trim()
+  if (!value) return mention
+  return value.includes(mention) ? value : `${mention} ${value}`
+}
+
+function slackUserMention(userId) {
+  const value = String(userId || '').trim()
+  return /^U[A-Z0-9]+$/i.test(value) ? `<@${value}>` : ''
+}
+
+function isDirectSlackTarget(channel, actorSlackUserId = '') {
+  const value = String(channel || '')
+  return /^D[A-Z0-9]+$/i.test(value) || (actorSlackUserId && value === actorSlackUserId)
 }
 
 async function openIntakeModal({
@@ -3002,7 +3096,10 @@ export function buildEditCaseDraft(caseRecord, templates) {
     hiringManagerName: caseRecord.hiringManager?.name || '',
     hiringManagerEmail: caseRecord.hiringManager?.email || '',
     notes: caseRecord.notes || '',
+    resumeLink: caseRecord.resumeLink || '',
+    resumeFile: caseRecord.resumeFile || null,
     zoomLink: caseRecord.autofill?.zoomLink || '',
+    zoomLinkRevision: 0,
     interviewTimezone: caseRecord.interviewTimezone || '',
   })
 }
@@ -3098,6 +3195,11 @@ function buildPrivateMetadata(view, overrides = {}) {
     : Boolean(parsed.showAdditionalHiringManagers)
   const zoomLink = 'zoomLink' in overrides ? overrides.zoomLink : parsed.zoomLink || ''
   const zoomLinkAuto = 'zoomLinkAuto' in overrides ? Boolean(overrides.zoomLinkAuto) : Boolean(parsed.zoomLinkAuto)
+  const zoomLinkRevision = 'zoomLinkRevision' in overrides
+    ? Number(overrides.zoomLinkRevision || 0)
+    : Number(parsed.zoomLinkRevision || 0)
+  const resumeLink = 'resumeLink' in overrides ? overrides.resumeLink : parsed.resumeLink || ''
+  const resumeFile = 'resumeFile' in overrides ? overrides.resumeFile : parsed.resumeFile || null
   const customInvitePurpose = 'customInvitePurpose' in overrides
     ? overrides.customInvitePurpose
     : parsed.customInvitePurpose || ''
@@ -3124,6 +3226,9 @@ function buildPrivateMetadata(view, overrides = {}) {
     showAdditionalHiringManagers,
     zoomLink,
     zoomLinkAuto,
+    zoomLinkRevision,
+    resumeLink,
+    resumeFile,
     customInvitePurpose,
     remoteUpdateStatus,
     remoteUpdateMessage,
@@ -3192,11 +3297,30 @@ async function refreshIntakeModal({
     'showAdditionalHiringManagers',
     'zoomLink',
     'zoomLinkAuto',
+    'zoomLinkRevision',
+    'resumeLink',
+    'resumeFile',
     'customInvitePurpose',
     'remoteUpdateStatus',
     'remoteUpdateMessage',
   ]) {
     if (!(key in overrides) && key in metadata) overrides[key] = metadata[key]
+  }
+  const stateValues = body.view?.state?.values
+  if (!('zoomLink' in draftOverrides)) {
+    if (hasInputElement(stateValues, 'zoom_link')) {
+      overrides.zoomLink = getInputValue(stateValues, 'zoom_link')
+    } else if ('zoomLink' in metadata) {
+      overrides.zoomLink = metadata.zoomLink
+    }
+  }
+  const uploadedResumeFile = extractResumeFile(stateValues)
+  if (uploadedResumeFile) {
+    overrides.resumeFile = uploadedResumeFile
+    overrides.resumeLink = resumeFileReference(uploadedResumeFile)
+  } else {
+    if (!('resumeLink' in overrides) && metadata.resumeLink) overrides.resumeLink = metadata.resumeLink
+    if (!('resumeFile' in overrides) && metadata.resumeFile) overrides.resumeFile = metadata.resumeFile
   }
   if (candidateSearchQuery !== undefined) {
     overrides.candidateSearchQuery = candidateSearchQuery
@@ -3277,6 +3401,9 @@ async function refreshIntakeModal({
     showAdditionalHiringManagers: draft.showAdditionalHiringManagers,
     zoomLink: draft.zoomLink,
     zoomLinkAuto: draft.zoomLinkAuto,
+    zoomLinkRevision: draft.zoomLinkRevision,
+    resumeLink: draft.resumeLink,
+    resumeFile: draft.resumeFile,
     remoteUpdateStatus: draft.remoteUpdateStatus,
     remoteUpdateMessage: draft.remoteUpdateMessage,
   });
@@ -4167,6 +4294,11 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const roleOption = role ? toSlackOption(role.title, role.id) : undefined
   const zoomLink = overrides.zoomLink !== undefined ? overrides.zoomLink : getInputValue(values, 'zoom_link')
   const zoomLinkAuto = Boolean(overrides.zoomLinkAuto)
+  const zoomLinkRevision = Number(overrides.zoomLinkRevision || 0)
+  const resumeFile = overrides.resumeFile !== undefined ? overrides.resumeFile : extractResumeFile(values)
+  const resumeLink = overrides.resumeLink !== undefined
+    ? overrides.resumeLink
+    : (resumeFile ? resumeFileReference(resumeFile) : extractResumeFileReference(values))
   const zoomLinkRecruiter = selectedRecruiters.find((person) => person.zoomLink === zoomLink)
   const showAdditionalRecruiters = overrides.showAdditionalRecruiters !== undefined
     ? Boolean(overrides.showAdditionalRecruiters)
@@ -4232,10 +4364,11 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     hiringManagerName: hiringManager?.name || '',
     hiringManagerEmail: hiringManager?.email || '',
     notes: overrides.notes !== undefined ? overrides.notes : getInputValue(values, 'notes'),
-    resumeLink: extractResumeFileReference(values),
-    resumeFile: extractResumeFile(values),
+    resumeLink,
+    resumeFile,
     zoomLink,
     zoomLinkAuto,
+    zoomLinkRevision,
     remoteUpdateStatus: overrides.remoteUpdateStatus || '',
     remoteUpdateMessage: overrides.remoteUpdateMessage || '',
     zoomLinkOption: zoomLinkRecruiter ? zoomLinkOption(zoomLinkRecruiter) : undefined,
@@ -4282,9 +4415,10 @@ export function orderedCheckboxSelection(previousIds = [], selectedIds = []) {
   const selected = normalizeIdList(selectedIds)
   const selectedSet = new Set(selected)
   const previousSet = new Set(previous)
+  const newlySelected = selected.filter((id) => !previousSet.has(id))
   return [
+    ...newlySelected,
     ...previous.filter((id) => selectedSet.has(id)),
-    ...selected.filter((id) => !previousSet.has(id)),
   ]
 }
 
@@ -4820,16 +4954,16 @@ function asHiringManager(person) {
 }
 
 function extractResumeFileReference(values) {
-  const resumeElement = values.resume_block?.resume_file
+  const resumeElement = values?.resume_block?.resume_file
   const file = Array.isArray(resumeElement?.files) ? resumeElement.files[0] : null
   if (file) return resumeFileReference(file)
 
-  const legacyLinkElement = values.resume_block?.resume_link
+  const legacyLinkElement = values?.resume_block?.resume_link
   return legacyLinkElement?.value?.trim() || ''
 }
 
 function extractResumeFile(values) {
-  const resumeElement = values.resume_block?.resume_file
+  const resumeElement = values?.resume_block?.resume_file
   const file = Array.isArray(resumeElement?.files) ? resumeElement.files[0] : null
   return file ? normalizeResumeFile(file) : null
 }
@@ -4837,6 +4971,7 @@ function extractResumeFile(values) {
 function resumeFileReference(file) {
   return String(
     file.permalink ||
+    file.downloadUrl ||
     file.url_private ||
     file.url_private_download ||
     file.id ||

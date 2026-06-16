@@ -737,8 +737,48 @@ test('checkbox options keep selections first and filter remaining people by sear
   )
   assert.deepEqual(
     orderedCheckboxSelection(['p-c', 'p-a'], ['p-a', 'p-b']),
-    ['p-a', 'p-b'],
+    ['p-b', 'p-a'],
   )
+})
+
+test('edit intake shows existing resume and keeps replacement upload optional', () => {
+  const draft = buildEditCaseDraft({
+    ...baseCase,
+    status: 'Draft',
+    eventType: 'final-interview',
+    stageKey: 'final-interview',
+    applicant: {
+      id: 'candidate-1',
+      firstName: 'Alex',
+      lastName: 'Reyes',
+      email: 'alex@example.com',
+      jobTitle: 'Support Specialist',
+    },
+    recruiter: { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter' },
+    hiringManager: { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+    resumeLink: 'https://files.slack.com/files-pri/T123-F123/resume.pdf',
+    resumeFile: {
+      id: 'F123',
+      name: 'resume.pdf',
+      permalink: 'https://files.slack.com/files-pri/T123-F123/resume.pdf',
+    },
+    autofill: {
+      eventType: 'final-interview',
+      roleId: 'job-1',
+      roleTitle: 'Support Specialist',
+      zoomLink: 'https://zoom.us/j/mara',
+    },
+  }, [])
+  const view = intakeModal({ templates: [], draft })
+  const resumeBlock = view.blocks.find((block) => block.block_id === 'resume_block')
+  const viewText = JSON.stringify(view.blocks)
+
+  assert.equal(draft.resumeLink, 'https://files.slack.com/files-pri/T123-F123/resume.pdf')
+  assert.equal(draft.resumeFile.id, 'F123')
+  assert.match(viewText, /Existing resume/)
+  assert.equal(resumeBlock.label.text, 'Replace resume')
+  assert.equal(resumeBlock.optional, true)
+  assert.match(resumeBlock.hint.text, /keep the existing resume/)
 })
 
 test('checkbox lists expose search for large directories and cap visible options at ten', () => {

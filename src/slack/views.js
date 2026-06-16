@@ -135,7 +135,10 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const showStandardHiringManagers = standardEvent &&
     (eventType === '2nd-interview' || eventType === 'final-interview')
   const applicantBlockId = dynamicBlockId('applicant_block', draft.applicantId || draft.roleId)
-  const zoomBlockId = dynamicBlockId('zoom_block', draft.zoomLink)
+  const zoomBlockId = dynamicBlockId(
+    'zoom_block',
+    `${draft.zoomLinkRevision || 0}_${draft.zoomLink || ''}`,
+  )
   const zoomLinkRecruiters = draft.selectedRecruiters?.length > 0
     ? draft.selectedRecruiters
     : draft.availableRecruiters
@@ -419,8 +422,11 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         },
         true,
       ),
+      ...(draft.resumeLink ? [
+        section(`*Existing resume:* ${resumeSlackLink(draft)}`),
+      ] : []),
       input(
-        'Resume',
+        draft.resumeLink ? 'Replace resume' : 'Resume',
         'resume_block',
         {
           type: 'file_input',
@@ -428,7 +434,9 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           max_files: 1,
           filetypes: ['pdf', 'doc', 'docx'],
         },
-        !resumeRequired,
+        Boolean(draft.resumeLink) || !resumeRequired,
+        false,
+        draft.resumeLink ? 'Leave this empty to keep the existing resume.' : '',
       ),
       input('Interview timezone', 'timezone_block', {
         type: 'external_select',
