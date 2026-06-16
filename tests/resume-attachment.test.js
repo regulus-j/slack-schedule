@@ -101,23 +101,79 @@ test('refreshes complete stored metadata through files.info before downloading',
   assert.equal(attachment.filename, 'candidate.pdf')
 })
 
-test('explains that missing files:read requires a Slack app reinstall', async () => {
-  await assert.rejects(
-    resolveResumeAttachment({
-      caseRecord: { resumeFile: { id: 'F456' } },
-      client: {
-        files: {
-          async info() {
-            const error = new Error('An API error occurred: missing_scope')
-            error.data = { error: 'missing_scope', needed: 'files:read' }
-            throw error
-          },
+test('falls back to stored download URL when files:read scope is missing', async () => {
+  const attachment = await resolveResumeAttachment({
+    caseRecord: {
+      resumeFile: {
+        id: 'F456',
+        name: 'candidate.pdf',
+        mimeType: 'application/pdf',
+        downloadUrl: 'https://files.slack.com/files-pri/T123-F456/candidate.pdf',
+      },
+    },
+    client: {
+      files: {
+        async info() {
+          const error = new Error('An API error occurred: missing_scope')
+          error.data = { error: 'missing_scope', needed: 'files:read' }
+          throw error
         },
       },
-      botToken: 'xoxb-test',
+    },
+    botToken: 'xoxb-test',
+    fetchImpl: async () => new Response(Buffer.from('%PDF-1.7\nresume bytes'), {
+      status: 200,
+      headers: { 'content-type': 'application/pdf' },
     }),
-    /missing the files:read scope.*Reinstall the app/i,
-  )
+  })
+
+  assert.equal(attachment.filename, 'candidate.pdf')
+  assert.equal(attachment.mimeType, 'application/pdf')
+  assert.equal(attachment.content.toString(), '%PDF-1.7\nresume bytes')
+})
+
+test('returns null when files:read is missing and no stored download URL', async () => {
+  const result = await resolveResumeAttachment({
+    caseRecord: { resumeFile: { id: 'F456' } },
+    client: {
+      files: {
+        async info() {
+          const error = new Error('An API error occurred: missing_scope')
+          error.data = { error: 'missing_scope', needed: 'files:read' }
+          throw error
+        },
+      },
+    },
+    botToken: 'xoxb-test',
+  })
+
+  assert.equal(result, null)
+})
+
+test('returns null when stored download URL has expired and files:read is missing', async () => {
+  const result = await resolveResumeAttachment({
+    caseRecord: {
+      resumeFile: {
+        id: 'F456',
+        name: 'candidate.pdf',
+        mimeType: 'application/pdf',
+        downloadUrl: 'https://files.slack.com/files-pri/T123-F456/expired.pdf',
+      },
+    },
+    client: {
+      files: {
+        async info() {
+          const error = new Error('An API error occurred: missing_scope')
+          error.data = { error: 'missing_scope', needed: 'files:read' }
+          throw error
+        },
+      },
+    },
+    botToken: 'xoxb-test',
+    fetchImpl: async () => new Response('Not found', { status: 404 }),
+  })
+
+  assert.equal(result, null)
 })
 
 test('rejects resumes larger than the configured source limit', async () => {

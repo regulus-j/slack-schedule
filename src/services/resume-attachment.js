@@ -14,22 +14,23 @@ export async function resolveResumeAttachment({
   }
 
   let file = stored
+  let hasFreshUrl = false
   if (file.id && client?.files?.info) {
     try {
       const result = await client.files.info({ file: file.id })
       file = normalizeResumeFile(result?.file, file.downloadUrl || caseRecord?.resumeLink)
+      hasFreshUrl = true
     } catch (error) {
       if (error?.data?.error === 'missing_scope') {
-        throw new Error('The Slack app is missing the files:read scope. Reinstall the app in the workspace, then retry scheduling.')
+        hasFreshUrl = false
+      } else {
+        throw error
       }
-      throw error
     }
-  } else if (file.id && !file.downloadUrl) {
-    throw new Error('Slack file metadata is unavailable. Upload the resume again before sending.')
   }
 
   if (!file.downloadUrl) {
-    throw new Error('Slack did not provide a downloadable resume URL. Check the app files:read scope.')
+    return null
   }
 
   const response = await fetchImpl(file.downloadUrl, {
@@ -38,6 +39,7 @@ export async function resolveResumeAttachment({
       : {},
   })
   if (!response.ok) {
+    if (!hasFreshUrl) return null
     throw new Error(`Resume download failed with HTTP ${response.status}. Check the Slack files:read scope.`)
   }
 

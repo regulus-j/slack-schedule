@@ -596,7 +596,7 @@ export function registerSlackHandlers(app, context) {
         hiringManagerEmail: selectedHiringManagers[0]?.email || '',
         applicant: '',
         zoomLink,
-        zoomLinkAuto,
+        zoomLinkAuto: Boolean(zoomLink),
         remoteUpdateStatus: remoteUpdateError ? 'error' : '',
         remoteUpdateMessage: remoteUpdateError,
       },
@@ -1529,7 +1529,7 @@ export function registerSlackHandlers(app, context) {
       from: caseRecord.recruiter?.email,
     };
     try {
-      await addRequiredResumeAttachment({ email, caseRecord, client, config })
+      await addRequiredResumeAttachment({ email, caseRecord, client, config, logger })
     } catch (error) {
       await ack({
         response_action: 'errors',
@@ -2002,6 +2002,7 @@ export function registerSlackHandlers(app, context) {
         caseRecord: previewCaseRecord,
         client,
         config,
+        logger,
       })
       const eventResult = await createCalendarEvent({
         config,
@@ -2389,6 +2390,7 @@ export function registerSlackHandlers(app, context) {
         caseRecord: previewCaseRecord,
         client,
         config,
+        logger,
       })
       scheduledCandidateEmail.body = scheduledCandidateEmail.htmlBody
       const eventResult = await createCalendarEvent({
@@ -4974,7 +4976,7 @@ function completionActionValue(value) {
   return { caseId: String(value || ''), scheduleVersion: undefined }
 }
 
-async function addRequiredResumeAttachment({ email, caseRecord, client, config }) {
+async function addRequiredResumeAttachment({ email, caseRecord, client, config, logger }) {
   if (!stageRequiresResumeLink(caseRecord.stageKey)) return email
   const attachment = await resolveResumeAttachment({
     caseRecord,
@@ -4982,7 +4984,15 @@ async function addRequiredResumeAttachment({ email, caseRecord, client, config }
     botToken: config.slack.botToken,
     maxBytes: config.notifications?.resumeAttachmentMaxBytes || 15 * 1024 * 1024,
   })
-  email.attachments = [attachment]
+  if (attachment) {
+    email.attachments = [attachment]
+  } else {
+    logger?.warn?.('resume_attachment_unavailable', {
+      caseId: caseRecord.id,
+      stageKey: caseRecord.stageKey,
+      message: 'Proceeding without resume attachment.',
+    })
+  }
   return email
 }
 
