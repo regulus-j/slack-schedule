@@ -65,6 +65,20 @@ function statusEmoji(status) {
   return labels[displayStatus(status)] || 'status';
 }
 
+function initialOption(option, allowedOptions = null) {
+  const value = String(option?.value || '').trim()
+  if (!value) return {}
+  if (Array.isArray(allowedOptions) && !allowedOptions.some((item) => String(item?.value || '').trim() === value)) {
+    return {}
+  }
+  return {
+    initial_option: {
+      ...option,
+      value,
+    },
+  }
+}
+
 export function homeView({
   myCases,
   teamCases,
@@ -138,6 +152,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     ? draft.selectedRecruiters
     : draft.availableRecruiters
   const zoomLinkOptions = recruiterZoomOptions(zoomLinkRecruiters)
+  const zoomLinkInitialOption = initialOption(draft.zoomLinkOption, zoomLinkOptions)
   const availableRecruiters = draft.availableRecruiters || draft.selectedRecruiters || []
   const availableHiringManagers = draft.availableHiringManagers ||
     uniquePeopleById([...(draft.selectedHiringManagers || []), ...(draft.suggestedHiringManagers || [])])
@@ -155,7 +170,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           action_id: 'role_select',
           min_query_length: 0,
           placeholder: plain('Search open role'),
-          ...(draft.roleOption ? { initial_option: draft.roleOption } : {}),
+          ...initialOption(draft.roleOption),
         }, false, true),
         input('Role title', dynamicBlockId('role_title_block', draft.roleId), {
           type: 'plain_text_input',
@@ -212,7 +227,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         action_id: 'event_type_select',
         placeholder: plain('Choose event type'),
         options: intakeEventTypeOptions(),
-        ...(draft.eventTypeOption ? { initial_option: draft.eventTypeOption } : {}),
+        ...initialOption(draft.eventTypeOption),
       }, false, true),
       ...remoteUpdateBlocks,
       ...standardRoleBlocks,
@@ -253,7 +268,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             action_id: 'applicant_select',
             min_query_length: 0,
             placeholder: plain('Select from search results'),
-            ...(draft.applicantOption ? { initial_option: draft.applicantOption } : {}),
+            ...initialOption(draft.applicantOption),
           },
         },
         input(
@@ -332,7 +347,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           action_id: 'zoom_link_select',
           placeholder: plain('Choose recruiter Zoom link'),
           options: zoomLinkOptions,
-          ...(draft.zoomLinkOption ? { initial_option: draft.zoomLinkOption } : {}),
+          ...zoomLinkInitialOption,
         }, true),
       ] : []),
       ...(standardEvent && zoomLinkOptions.length === 0 ? [
@@ -377,7 +392,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         action_id: 'timezone_select',
         min_query_length: 0,
         placeholder: plain('Search by country or timezone'),
-        ...(selectedTimeZoneOption ? { initial_option: selectedTimeZoneOption } : {}),
+        ...initialOption(selectedTimeZoneOption),
       }),
       section(`🕐 Interview timezone drives calendar invites. Times are shown in PH (${PH_TIME_ZONE}) with interview timezone equivalents.`),
       section('📝 Calendar descriptions are generated automatically from the schedule details. Add notes here only if you want extra intake context.'),
@@ -410,7 +425,7 @@ function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
         action_id: 'event_type_select',
         placeholder: plain('Choose event type'),
         options: intakeEventTypeOptions(),
-        ...(draft.eventTypeOption ? { initial_option: draft.eventTypeOption } : {}),
+        ...initialOption(draft.eventTypeOption),
       }, false, true),
       input('Event purpose / title', 'custom_title_block', {
         type: 'plain_text_input',
@@ -469,7 +484,7 @@ function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
         action_id: 'timezone_select',
         min_query_length: 0,
         placeholder: plain('Search by country or timezone'),
-        ...(selectedTimeZoneOption ? { initial_option: selectedTimeZoneOption } : {}),
+        ...initialOption(selectedTimeZoneOption),
       }),
       section('Available variables: [greeting], [name], [email], [event_title], [date], [time], [timezone], [meeting_link].'),
     ],
@@ -915,7 +930,7 @@ export function attendeeCheckboxes(attendees) {
 export function slotOptionBlocks(slots, timeZone) {
   if (!slots || slots.length === 0) return [section('❌ No slots available.')]
 
-  const { optionGroups, initialOption, truncated } = buildSlotOptionGroups(slots, timeZone)
+  const { optionGroups, initialOption: initialSlotOption, truncated } = buildSlotOptionGroups(slots, timeZone)
   const blocks = []
 
   if (truncated) {
@@ -931,7 +946,7 @@ export function slotOptionBlocks(slots, timeZone) {
       type: 'static_select',
       action_id: 'slot_select',
       option_groups: optionGroups,
-      ...(initialOption ? { initial_option: initialOption } : {})
+      ...initialOption(initialSlotOption)
     }
   })
 
@@ -973,7 +988,7 @@ export function externalAttendeeModal(caseRecord, recentAudits = [], draft = {})
         action_id: 'attendee_select',
         min_query_length: 0,
         placeholder: plain('Search active users'),
-        ...(draft.attendeeOption ? { initial_option: draft.attendeeOption } : {})
+        ...initialOption(draft.attendeeOption)
       }),
       input('Email', 'ext_email_block', {
         type: 'plain_text_input',
@@ -1121,7 +1136,7 @@ export function scheduleTrackerModal({ cases = [], filters = {}, scope = 'all', 
         action_id: 'tracker_scope',
         placeholder: plain('Choose scope'),
         options: trackerScopeOptions(),
-        ...(trackerScopeOption(scope) ? { initial_option: trackerScopeOption(scope) } : {}),
+        ...initialOption(trackerScopeOption(scope)),
       }),
       input('Candidate', 'tracker_candidate_block', {
         type: 'plain_text_input',

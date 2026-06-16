@@ -4266,7 +4266,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     ? toSlackOption(stageLabel(stageKey), stageKey)
     : undefined;
   const eventTypeOption = eventType ? toSlackOption(eventTypeLabel(eventType), eventType) : undefined
-  const roleOption = role ? toSlackOption(role.title, role.id) : undefined
+  const roleOption = role ? toSlackOption(role.title, canonicalRoleId(role)) : undefined
   const zoomLink = overrides.zoomLink !== undefined ? overrides.zoomLink : getInputValue(values, 'zoom_link')
   const zoomLinkAuto = Boolean(overrides.zoomLinkAuto)
   const zoomLinkRevision = Number(overrides.zoomLinkRevision || 0)
@@ -4274,7 +4274,9 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const resumeLink = overrides.resumeLink !== undefined
     ? overrides.resumeLink
     : (resumeFile ? resumeFileReference(resumeFile) : extractResumeFileReference(values))
-  const zoomLinkRecruiter = selectedRecruiters.find((person) => person.zoomLink === zoomLink)
+  const zoomLinkRecruiter = zoomLink
+    ? selectedRecruiters.find((person) => String(person?.zoomLink || '').trim() === zoomLink)
+    : null
   const showAdditionalRecruiters = overrides.showAdditionalRecruiters !== undefined
     ? Boolean(overrides.showAdditionalRecruiters)
     : hasInputElement(values, 'additional_recruiter_select')
@@ -4517,12 +4519,14 @@ function compactPersonOption(person) {
 }
 
 function zoomLinkOption(recruiter) {
+  const link = String(recruiter?.zoomLink || '').trim()
+  if (!link) return undefined
   return {
     text: {
       type: 'plain_text',
-      text: String(recruiter?.name || recruiter?.zoomLink || 'Zoom link').slice(0, 75),
+      text: String(recruiter?.name || link || 'Zoom link').slice(0, 75),
     },
-    value: recruiter.zoomLink,
+    value: link,
     ...(recruiter?.email ? {
       description: {
         type: 'plain_text',
@@ -4777,8 +4781,13 @@ function roleOptions(query = '') {
   const normalized = String(query || '').trim().toLowerCase()
   return getOpenRoles()
     .filter((role) => !normalized || [role.title, role.roleId, role.roleKey].join(' ').toLowerCase().includes(normalized))
+    .filter(canonicalRoleId)
     .slice(0, 100)
-    .map((role) => toSlackOption(role.title || role.roleId || role.id, role.id))
+    .map((role) => toSlackOption(role.title || role.roleId || role.id, canonicalRoleId(role)))
+}
+
+function canonicalRoleId(role) {
+  return String(role?.id || role?.roleId || role?.roleKey || '').trim()
 }
 
 function roleCandidateFilters(draftOrMetadata = {}) {
@@ -4801,9 +4810,9 @@ export function resolveZoomLinkForRecruiters(recruiters = []) {
 }
 
 export function roleAutofillSelections(eventType, recruiters = [], hiringManagers = []) {
-  const recruiterIds = normalizeIdList(recruiters.map((person) => person?.id)).slice(0, 10)
+  const recruiterIds = normalizeIdList(recruiters.map((person) => person?.id)).slice(0, 1)
   const hiringManagerIds = ['2nd-interview', 'final-interview'].includes(eventType)
-    ? normalizeIdList(hiringManagers.map((person) => person?.id)).slice(0, 10)
+    ? normalizeIdList(hiringManagers.map((person) => person?.id)).slice(0, 1)
     : []
   return { recruiterIds, hiringManagerIds }
 }

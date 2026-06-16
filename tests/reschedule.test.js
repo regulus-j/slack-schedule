@@ -58,6 +58,20 @@ const baseCase = {
   },
 };
 
+function assertNoEmptyInitialOptions(value, path = 'view') {
+  if (!value || typeof value !== 'object') return
+  if (value.initial_option) {
+    assert.notEqual(String(value.initial_option.value || ''), '', `${path}.initial_option.value must not be empty`)
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoEmptyInitialOptions(item, `${path}[${index}]`))
+    return
+  }
+  for (const [key, item] of Object.entries(value)) {
+    assertNoEmptyInitialOptions(item, `${path}.${key}`)
+  }
+}
+
 test('scheduled cases show reschedule actions instead of create invite', () => {
   const scheduledCase = {
     ...baseCase,
@@ -607,6 +621,108 @@ test('standard intake modal uses unified recruiter and hiring manager checkboxes
   assert.equal(inputBlockIds.includes('recruiter_email_block'), false)
 })
 
+test('standard intake omits Zoom initial option when selected recruiters have missing links and Zoom is blank', () => {
+  setJazzhrJobs([{ id: 'job-loan', roleId: 'job-loan', title: 'Loan Associate', status: 'Open' }])
+  setTalentRecruiters([
+    { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
+    { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter', zoomLink: '' },
+  ])
+  setHiringManagers([
+    { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+  ])
+  setRoleAssignments([
+    {
+      roleId: 'job-loan',
+      roleKey: 'job-loan',
+      roleTitle: 'Loan Associate',
+      recruiter: { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
+      hiringManager: { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+    },
+    {
+      roleId: 'job-loan',
+      roleKey: 'job-loan',
+      roleTitle: 'Loan Associate',
+      recruiter: { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter', zoomLink: '' },
+      hiringManager: { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+    },
+  ])
+
+  const draft = buildIntakeDraft({
+    event_type_block: { event_type_select: { selected_option: { value: '2nd-interview' } } },
+    role_block: { role_select: { selected_option: { value: 'job-loan' } } },
+    zoom_block: { zoom_link: { value: '' } },
+  }, [], {
+    roleId: 'job-loan',
+    recruiterIds: ['rec-hanna', 'rec-tiana'],
+    hiringManagerIds: ['hm-ana'],
+    zoomLink: '',
+  })
+  const view = intakeModal({ templates: [], draft })
+  const zoomChoiceBlock = view.blocks.find((block) => block.block_id === 'zoom_choice_block')
+
+  assert.equal(draft.zoomLink, '')
+  assert.equal(draft.zoomLinkOption, undefined)
+  assert.deepEqual(zoomChoiceBlock.element.options.map((option) => option.value), ['https://zoom.us/j/hanna'])
+  assert.equal('initial_option' in zoomChoiceBlock.element, false)
+  assertNoEmptyInitialOptions(view)
+  setJazzhrJobs([])
+  setTalentRecruiters([])
+  setHiringManagers([])
+  setRoleAssignments([])
+})
+
+test('standard intake keeps Zoom initial option when Zoom matches a dropdown option', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd Interview' }, value: '2nd-interview' },
+      stageKey: '2nd-interview',
+      roleId: 'job-loan',
+      roleOption: { text: { type: 'plain_text', text: 'Loan Associate' }, value: 'job-loan' },
+      selectedRecruiters: [
+        { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
+        { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter', zoomLink: '' },
+      ],
+      recruiterIds: ['rec-hanna', 'rec-tiana'],
+      zoomLink: 'https://zoom.us/j/hanna',
+      zoomLinkOption: { text: { type: 'plain_text', text: 'Hanna Marino' }, value: 'https://zoom.us/j/hanna' },
+    },
+  })
+  const zoomChoiceBlock = view.blocks.find((block) => block.block_id === 'zoom_choice_block')
+
+  assert.equal(zoomChoiceBlock.element.initial_option.value, 'https://zoom.us/j/hanna')
+  assertNoEmptyInitialOptions(view)
+})
+
+test('intake modal strips invalid blank initial options before rendering', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd Interview' }, value: '2nd-interview' },
+      stageKey: '2nd-interview',
+      roleId: 'job-loan',
+      roleOption: { text: { type: 'plain_text', text: 'Loan Associate' }, value: '' },
+      applicantOption: { text: { type: 'plain_text', text: 'Alex Reyes' }, value: '' },
+      selectedRecruiters: [
+        { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
+      ],
+      recruiterIds: ['rec-hanna'],
+      zoomLink: '',
+      zoomLinkOption: { text: { type: 'plain_text', text: 'Tiana Dela Cruz' }, value: '' },
+    },
+  })
+  const roleBlock = view.blocks.find((block) => block.block_id === 'role_block')
+  const applicantBlock = view.blocks.find((block) => block.block_id?.startsWith('applicant_block'))
+  const zoomChoiceBlock = view.blocks.find((block) => block.block_id === 'zoom_choice_block')
+
+  assert.equal('initial_option' in roleBlock.element, false)
+  assert.equal('initial_option' in applicantBlock.element, false)
+  assert.equal('initial_option' in zoomChoiceBlock.element, false)
+  assertNoEmptyInitialOptions(view)
+})
+
 test('draft cases can be edited until a calendar event is created', () => {
   const draftCase = {
     ...baseCase,
@@ -939,7 +1055,7 @@ test('recruiter Zoom resolution auto-fills one unique link and requires a choice
   assert.equal(resolveZoomLinkForRecruiters([{ zoomLink: '' }]), '')
 })
 
-test('role autofill selects all mapped recruiters and applicable hiring managers', () => {
+test('role autofill selects only the primary mapped recruiter and applicable hiring manager', () => {
   const recruiters = [
     { id: 'rec-mara' },
     { id: 'rec-jam' },
@@ -950,17 +1066,76 @@ test('role autofill selects all mapped recruiters and applicable hiring managers
   ]
 
   assert.deepEqual(roleAutofillSelections('1st-interview', recruiters, hiringManagers), {
-    recruiterIds: ['rec-mara', 'rec-jam'],
+    recruiterIds: ['rec-mara'],
     hiringManagerIds: [],
   })
   assert.deepEqual(roleAutofillSelections('2nd-interview', recruiters, hiringManagers), {
-    recruiterIds: ['rec-mara', 'rec-jam'],
-    hiringManagerIds: ['hm-ana', 'hm-lee'],
+    recruiterIds: ['rec-mara'],
+    hiringManagerIds: ['hm-ana'],
   })
   assert.deepEqual(roleAutofillSelections('final-interview', recruiters, []), {
-    recruiterIds: ['rec-mara', 'rec-jam'],
+    recruiterIds: ['rec-mara'],
     hiringManagerIds: [],
   })
+})
+
+test('role autofill defaults do not save additional mapped people as attendees', () => {
+  setTalentRecruiters([
+    { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
+    { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter', zoomLink: '' },
+  ])
+  setHiringManagers([
+    { id: 'hm-arvind', name: 'Arvind Singh', email: 'arvind@example.com', role: 'hiring_manager' },
+    { id: 'hm-crisielle', name: 'Crisielle Reyes', email: 'crisielle@example.com', role: 'hiring_manager' },
+  ])
+  setRoleAssignments([
+    {
+      roleId: 'job-loan',
+      roleKey: 'job-loan',
+      roleTitle: 'Loan Associate',
+      recruiter: { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
+      hiringManager: { id: 'hm-arvind', name: 'Arvind Singh', email: 'arvind@example.com', role: 'hiring_manager' },
+    },
+    {
+      roleId: 'job-loan',
+      roleKey: 'job-loan',
+      roleTitle: 'Loan Associate',
+      recruiter: { id: 'rec-tiana', name: 'Tiana Dela Cruz', email: 'tiana@example.com', role: 'recruiter', zoomLink: '' },
+      hiringManager: { id: 'hm-crisielle', name: 'Crisielle Reyes', email: 'crisielle@example.com', role: 'hiring_manager' },
+    },
+  ])
+
+  const selected = roleAutofillSelections(
+    '2nd-interview',
+    mappedRecruitersForRole('job-loan'),
+    mappedHiringManagersForRole('job-loan'),
+  )
+  const draft = buildIntakeDraft(
+    {
+      event_type_block: { event_type_select: { selected_option: { value: '2nd-interview' } } },
+      role_block: { role_select: { selected_option: { value: 'job-loan' } } },
+    },
+    [],
+    {
+      roleId: 'job-loan',
+      roleTitle: 'Loan Associate',
+      recruiterIds: selected.recruiterIds,
+      hiringManagerIds: selected.hiringManagerIds,
+    },
+  )
+
+  assert.deepEqual(selected, {
+    recruiterIds: ['rec-hanna'],
+    hiringManagerIds: ['hm-arvind'],
+  })
+  assert.equal(draft.recruiter.email, 'hanna@example.com')
+  assert.equal(draft.hiringManager.email, 'arvind@example.com')
+  assert.deepEqual(draft.recruiterIds, ['rec-hanna'])
+  assert.deepEqual(draft.hiringManagerIds, ['hm-arvind'])
+  assert.deepEqual(draft.extraAttendees, [])
+  setTalentRecruiters([])
+  setHiringManagers([])
+  setRoleAssignments([])
 })
 
 test('role mapping uses exact JazzHR job and enriches its hiring lead from recruiter contact data', () => {
