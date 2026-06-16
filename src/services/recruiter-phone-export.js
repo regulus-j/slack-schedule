@@ -151,7 +151,7 @@ export function personIdentityMatches(person, identity = {}) {
   const expectedMailbox = emailMailbox(expectedEmail)
   return Boolean(
     expectedMailbox &&
-    expectedMailbox.length >= 6 &&
+    expectedMailbox.length >= 10 &&
     !GENERIC_MAILBOXES.has(expectedMailbox) &&
     personEmails.some((email) => emailMailbox(email) === expectedMailbox),
   )
