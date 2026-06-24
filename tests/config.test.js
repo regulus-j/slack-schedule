@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { loadConfig } from '../src/config.js'
+import { loadConfig, validateStartupConfig } from '../src/config.js'
 
 test('role assignment export reuses recruiter export endpoint credentials by default', () => {
   const config = loadConfig({
@@ -36,13 +36,13 @@ test('automated notification configuration uses safe defaults and explicit overr
   assert.equal(configured.notifications.resumeAttachmentMaxBytes, 1024)
 })
 
-test('email test mode defaults off and supports a safe test recipient', () => {
+test('email test mode defaults off and requires an explicit test recipient', () => {
   const defaults = loadConfig({
     EMAIL_TEST_MODE: '',
     EMAIL_TEST_RECIPIENT: '',
   })
   assert.equal(defaults.email.testMode, false)
-  assert.equal(defaults.email.testRecipient, 'jamalalbadi03@gmail.com')
+  assert.equal(defaults.email.testRecipient, '')
 
   const configured = loadConfig({
     EMAIL_TEST_MODE: 'true',
@@ -51,9 +51,56 @@ test('email test mode defaults off and supports a safe test recipient', () => {
   assert.equal(configured.email.testMode, true)
   assert.equal(configured.email.testRecipient, 'test-recipient@example.com')
 
-  const fallbackRecipient = loadConfig({
-    EMAIL_TEST_MODE: 'true',
-    EMAIL_TEST_RECIPIENT: '',
+})
+
+test('security configuration parses Slack user allow-lists and secret file paths', async () => {
+  const config = loadConfig({
+    SLACK_RECRUITMENT_USER_IDS: 'UONE, UTWO UONE invalid',
+    SLACK_ADMIN_USER_IDS: 'UADMIN',
+    SLACK_ALERT_USER_IDS: 'UALERT',
+    ACCESS_CONTROL_ENFORCED: 'true',
   })
-  assert.equal(fallbackRecipient.email.testRecipient, 'jamalalbadi03@gmail.com')
+  assert.deepEqual(config.security.recruitmentUserIds, ['UONE', 'UTWO'])
+  assert.deepEqual(config.security.adminUserIds, ['UADMIN'])
+  assert.deepEqual(config.security.alertUserIds, ['UALERT'])
+  assert.equal(config.security.accessControlEnforced, true)
+})
+
+test('production validation requires Cloud SQL, KMS, and access-control lists', () => {
+  const config = loadConfig({
+    NODE_ENV: 'production',
+    SLACK_BOT_TOKEN: 'bot',
+    SLACK_APP_TOKEN: 'app',
+    JAZZHR_API_KEY: 'jazz',
+    ACCESS_CONTROL_ENFORCED: 'true',
+  })
+  assert.throws(
+    () => validateStartupConfig(config),
+    /SLACK_RECRUITMENT_USER_IDS.*SLACK_ADMIN_USER_IDS.*SLACK_ALERT_USER_IDS.*DATABASE_BACKEND=cloudsql/,
+  )
+})
+
+test('google redirectUri falls back to PUBLIC_BASE_URL when GOOGLE_REDIRECT_URI is unset', () => {
+  const withExplicit = loadConfig({
+    GOOGLE_REDIRECT_URI: 'https://example.com/custom/callback',
+    PUBLIC_BASE_URL: 'https://app.example.com',
+  })
+  assert.equal(withExplicit.google.redirectUri, 'https://example.com/custom/callback')
+
+  const withoutExplicit = loadConfig({
+    PUBLIC_BASE_URL: 'https://app.example.com',
+  })
+  assert.equal(withoutExplicit.google.redirectUri, 'https://app.example.com/oauth/google/callback')
+
+  const fallbackLocalhost = loadConfig({
+    PORT: '4000',
+  })
+  assert.equal(fallbackLocalhost.google.redirectUri, 'http://localhost:4000/oauth/google/callback')
+})
+
+test('google redirectUri strips trailing slashes from PUBLIC_BASE_URL', () => {
+  const config = loadConfig({
+    PUBLIC_BASE_URL: 'https://app.example.com/',
+  })
+  assert.equal(config.google.redirectUri, 'https://app.example.com/oauth/google/callback')
 })

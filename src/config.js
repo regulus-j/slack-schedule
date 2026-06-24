@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import process from 'node:process';
 
 const DEFAULT_RUNTIME_DIR = path.join(process.cwd(), 'data', 'runtime');
@@ -10,90 +10,106 @@ const DEFAULT_TIME_ZONES = [
   'America/New_York',
   'Europe/London',
 ];
-const DEFAULT_EMAIL_TEST_RECIPIENT = 'jamalalbadi03@gmail.com';
-
 export function loadConfig(env = process.env) {
-  const mergedEnv = { ...loadLocalEnvFile(), ...env };
+  const value = (name) => secretValue(env, name)
+  const nodeEnv = value('NODE_ENV') || 'development'
+  const port = Number(value('PORT') || 3000)
+  const publicBaseUrl = cleanString(value('PUBLIC_BASE_URL'))
+  const googleRedirectUri = value('GOOGLE_REDIRECT_URI') || buildDefaultGoogleRedirectUri(publicBaseUrl, port)
   return {
-    env: mergedEnv.NODE_ENV || 'development',
-    port: Number(mergedEnv.PORT || 3000),
-    runtimeDir: mergedEnv.RUNTIME_DIR || DEFAULT_RUNTIME_DIR,
-    databaseUrl: mergedEnv.DATABASE_URL,
+    env: nodeEnv,
+    port,
+    publicBaseUrl,
+    runtimeDir: value('RUNTIME_DIR') || DEFAULT_RUNTIME_DIR,
+    databaseUrl: value('DATABASE_URL'),
+    database: {
+      backend: value('DATABASE_BACKEND') || (value('CLOUD_SQL_INSTANCE') ? 'cloudsql' : (value('DATABASE_URL') ? 'postgres' : 'json')),
+      instanceConnectionName: cleanString(value('CLOUD_SQL_INSTANCE')),
+      name: cleanString(value('CLOUD_SQL_DATABASE')),
+      user: cleanString(value('CLOUD_SQL_IAM_USER')),
+      ipType: cleanString(value('CLOUD_SQL_IP_TYPE')) || 'PRIVATE',
+      maxConnections: positiveInteger(value('DATABASE_MAX_CONNECTIONS'), 5),
+    },
     slack: {
-      botToken: mergedEnv.SLACK_BOT_TOKEN,
-      appToken: mergedEnv.SLACK_APP_TOKEN,
-      postingChannelId: mergedEnv.SLACK_POSTING_CHANNEL_ID || null,
-      teamId: mergedEnv.SLACK_TEAM_ID || null,
+      botToken: value('SLACK_BOT_TOKEN'),
+      appToken: value('SLACK_APP_TOKEN'),
+      postingChannelId: value('SLACK_POSTING_CHANNEL_ID') || null,
+      teamId: value('SLACK_TEAM_ID') || null,
     },
     jazzhr: {
-      apiKey: mergedEnv.JAZZHR_API_KEY,
-      applicantMaxPages: positiveInteger(mergedEnv.JAZZHR_APPLICANT_MAX_PAGES, 500),
-      applicantFetchConcurrency: positiveInteger(mergedEnv.JAZZHR_APPLICANT_FETCH_CONCURRENCY, 2),
-      refreshOnStartup: parseBoolean(mergedEnv.JAZZHR_REFRESH_ON_STARTUP, false),
+      apiKey: value('JAZZHR_API_KEY'),
+      applicantMaxPages: positiveInteger(value('JAZZHR_APPLICANT_MAX_PAGES'), 500),
+      applicantFetchConcurrency: positiveInteger(value('JAZZHR_APPLICANT_FETCH_CONCURRENCY'), 2),
+      refreshOnStartup: parseBoolean(value('JAZZHR_REFRESH_ON_STARTUP'), false),
       liveSearch: {
-        pageSize: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_RESULT_PAGE_SIZE, 20),
-        concurrency: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_CONCURRENCY, 2),
-        maxPages: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_MAX_PAGES, 10),
-        sessionTtlMs: positiveInteger(mergedEnv.JAZZHR_LIVE_SEARCH_SESSION_TTL_MS, 900000),
+        pageSize: positiveInteger(value('JAZZHR_LIVE_SEARCH_RESULT_PAGE_SIZE'), 20),
+        concurrency: positiveInteger(value('JAZZHR_LIVE_SEARCH_CONCURRENCY'), 2),
+        maxPages: positiveInteger(value('JAZZHR_LIVE_SEARCH_MAX_PAGES'), 10),
+        sessionTtlMs: positiveInteger(value('JAZZHR_LIVE_SEARCH_SESSION_TTL_MS'), 900000),
       },
     },
     google: {
-      clientId: mergedEnv.GOOGLE_CLIENT_ID,
-      clientSecret: mergedEnv.GOOGLE_CLIENT_SECRET,
-      redirectUri: mergedEnv.GOOGLE_REDIRECT_URI,
-      sharedCalendarId: mergedEnv.GOOGLE_SHARED_CALENDAR_ID,
-      authSlackUserId: mergedEnv.GOOGLE_AUTH_SLACK_USER_ID || '',
+      clientId: value('GOOGLE_CLIENT_ID'),
+      clientSecret: value('GOOGLE_CLIENT_SECRET'),
+      redirectUri: googleRedirectUri,
+      sharedCalendarId: value('GOOGLE_SHARED_CALENDAR_ID'),
+      authSlackUserId: value('GOOGLE_AUTH_SLACK_USER_ID') || '',
     },
     email: {
-      testMode: parseBoolean(mergedEnv.EMAIL_TEST_MODE, false),
-      testRecipient: cleanString(mergedEnv.EMAIL_TEST_RECIPIENT) || DEFAULT_EMAIL_TEST_RECIPIENT,
+      testMode: parseBoolean(value('EMAIL_TEST_MODE'), false),
+      testRecipient: cleanString(value('EMAIL_TEST_RECIPIENT')),
     },
     recruiterPhoneExport: {
-      url: mergedEnv.RECRUITER_PHONE_EXPORT_URL || null,
-      token: mergedEnv.RECRUITER_PHONE_EXPORT_TOKEN || null,
-      fileId: mergedEnv.RECRUITER_PHONE_EXPORT_FILE_ID || null,
-      sheetName: mergedEnv.RECRUITER_PHONE_EXPORT_SHEET_NAME || null,
+      url: value('RECRUITER_PHONE_EXPORT_URL') || null,
+      token: value('RECRUITER_PHONE_EXPORT_TOKEN') || null,
+      fileId: value('RECRUITER_PHONE_EXPORT_FILE_ID') || null,
+      sheetName: value('RECRUITER_PHONE_EXPORT_SHEET_NAME') || null,
     },
     roleAssignmentExport: {
-      url: mergedEnv.ROLE_ASSIGNMENT_EXPORT_URL || mergedEnv.RECRUITER_PHONE_EXPORT_URL || null,
-      token: mergedEnv.ROLE_ASSIGNMENT_EXPORT_TOKEN || mergedEnv.RECRUITER_PHONE_EXPORT_TOKEN || null,
-      fileId: mergedEnv.ROLE_ASSIGNMENT_EXPORT_FILE_ID || null,
-      sheetName: mergedEnv.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME || null,
-      sheetGid: mergedEnv.ROLE_ASSIGNMENT_EXPORT_SHEET_GID || null,
+      url: value('ROLE_ASSIGNMENT_EXPORT_URL') || value('RECRUITER_PHONE_EXPORT_URL') || null,
+      token: value('ROLE_ASSIGNMENT_EXPORT_TOKEN') || value('RECRUITER_PHONE_EXPORT_TOKEN') || null,
+      fileId: value('ROLE_ASSIGNMENT_EXPORT_FILE_ID') || null,
+      sheetName: value('ROLE_ASSIGNMENT_EXPORT_SHEET_NAME') || null,
+      sheetGid: value('ROLE_ASSIGNMENT_EXPORT_SHEET_GID') || null,
     },
     security: {
-      encryptionKey: mergedEnv.APP_ENCRYPTION_KEY,
+      encryptionKey: value('APP_ENCRYPTION_KEY'),
+      kmsKeyName: cleanString(value('GOOGLE_KMS_KEY_NAME')),
+      recruitmentUserIds: parseSlackUserIds(value('SLACK_RECRUITMENT_USER_IDS')),
+      adminUserIds: parseSlackUserIds(value('SLACK_ADMIN_USER_IDS')),
+      alertUserIds: parseSlackUserIds(value('SLACK_ALERT_USER_IDS')),
+      accessControlEnforced: parseBoolean(value('ACCESS_CONTROL_ENFORCED'), nodeEnv === 'production'),
     },
     scheduling: {
-      timeZones: resolveTimeZoneList(mergedEnv.SCHEDULING_TIME_ZONES),
+      timeZones: resolveTimeZoneList(value('SCHEDULING_TIME_ZONES')),
     },
     notifications: {
-      enabled: parseBoolean(mergedEnv.AUTOMATED_NOTIFICATIONS_ENABLED, false),
-      pollIntervalMs: positiveInteger(mergedEnv.NOTIFICATION_POLL_INTERVAL_MS, 60000),
-      feedbackFormUrl: mergedEnv.FEEDBACK_FORM_URL || '',
+      enabled: parseBoolean(value('AUTOMATED_NOTIFICATIONS_ENABLED'), false),
+      pollIntervalMs: positiveInteger(value('NOTIFICATION_POLL_INTERVAL_MS'), 60000),
+      feedbackFormUrl: value('FEEDBACK_FORM_URL') || '',
       resumeAttachmentMaxBytes: positiveInteger(
-        mergedEnv.RESUME_ATTACHMENT_MAX_BYTES,
+        value('RESUME_ATTACHMENT_MAX_BYTES'),
         15 * 1024 * 1024,
       ),
+    },
+    alerting: {
+      warningThreshold: positiveInteger(value('ALERT_WARNING_THRESHOLD'), 3),
+      warningWindowMs: positiveInteger(value('ALERT_WARNING_WINDOW_MS'), 5 * 60 * 1000),
+      cooldownMs: positiveInteger(value('ALERT_COOLDOWN_MS'), 15 * 60 * 1000),
+    },
+    retention: {
+      completedCaseDays: positiveInteger(value('RETENTION_COMPLETED_CASE_DAYS'), 365),
+      candidateCacheDays: positiveInteger(value('RETENTION_CANDIDATE_CACHE_DAYS'), 30),
+      googleTokenInactiveDays: positiveInteger(value('RETENTION_GOOGLE_TOKEN_INACTIVE_DAYS'), 90),
+      oauthStateCleanupHours: positiveInteger(value('RETENTION_OAUTH_STATE_HOURS'), 24),
     },
   };
 }
 
-function loadLocalEnvFile() {
-  const envPath = path.join(process.cwd(), '.env');
-  if (!existsSync(envPath)) return {};
-
-  return readFileSync(envPath, 'utf8')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#') && line.includes('='))
-    .reduce((acc, line) => {
-      const index = line.indexOf('=');
-      const key = line.slice(0, index).trim();
-      const value = line.slice(index + 1).trim().replace(/^["']|["']$/g, '');
-      acc[key] = value;
-      return acc;
-    }, {});
+function secretValue(env, name) {
+  const filePath = cleanString(env?.[`${name}_FILE`])
+  if (filePath) return readFileSync(filePath, 'utf8').trim()
+  return env?.[name]
 }
 
 function resolveTimeZoneList(value) {
@@ -128,10 +144,45 @@ export function validateStartupConfig(config) {
   if (config.notifications?.enabled && !config.notifications.feedbackFormUrl) {
     missing.push('FEEDBACK_FORM_URL')
   }
+  if (config.email?.testMode && !config.email.testRecipient) {
+    missing.push('EMAIL_TEST_RECIPIENT')
+  }
+  if (config.env === 'production' && config.security?.accessControlEnforced) {
+    if (config.security.recruitmentUserIds.length === 0) missing.push('SLACK_RECRUITMENT_USER_IDS')
+    if (config.security.adminUserIds.length === 0) missing.push('SLACK_ADMIN_USER_IDS')
+    if (config.security.alertUserIds.length === 0) missing.push('SLACK_ALERT_USER_IDS')
+  }
+  if (config.database?.backend === 'cloudsql') {
+    if (!config.database.instanceConnectionName) missing.push('CLOUD_SQL_INSTANCE')
+    if (!config.database.name) missing.push('CLOUD_SQL_DATABASE')
+    if (!config.database.user) missing.push('CLOUD_SQL_IAM_USER')
+    if (!config.security?.kmsKeyName) missing.push('GOOGLE_KMS_KEY_NAME')
+  }
+  if (config.env === 'production' && config.database?.backend !== 'cloudsql') {
+    missing.push('DATABASE_BACKEND=cloudsql')
+  }
 
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
   }
+}
+
+function parseSlackUserIds(value) {
+  return [...new Set(
+    String(value || '')
+      .split(/[\s,]+/)
+      .map((item) => item.trim().toUpperCase())
+      .filter((item) => /^U[A-Z0-9]+$/.test(item)),
+  )]
+}
+
+function buildDefaultGoogleRedirectUri(publicBaseUrl, port) {
+  const base = publicBaseUrl || `http://localhost:${port}`
+  return `${base.replace(/\/+$/, '')}/oauth/google/callback`
+}
+
+export function googleRedirectUriDerived(config) {
+  return !config.google.redirectUri || config.google.redirectUri === buildDefaultGoogleRedirectUri(config.publicBaseUrl, config.port)
 }
 
 export function googleReady(config) {

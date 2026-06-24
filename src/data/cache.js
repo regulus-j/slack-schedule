@@ -2,6 +2,7 @@ let applicants = [];
 let recruiters = [];
 let hiringManagers = [];
 let talentRecruiters = [];
+let recruitmentSheetPeople = [];
 let slackUsers = [];
 let slackRecruiters = [];
 let roleAssignments = [];
@@ -25,6 +26,10 @@ export function getTalentRecruiters() {
   return talentRecruiters;
 }
 
+export function getRecruitmentSheetPeople() {
+  return recruitmentSheetPeople;
+}
+
 export function getSlackUsers() {
   return slackUsers;
 }
@@ -46,7 +51,18 @@ export function getJazzhrJobs() {
 }
 
 export function getAllPeople() {
-  return [...slackUsers, ...talentRecruiters, ...recruiters, ...hiringManagers];
+  if (_allPeopleDirty) {
+    _allPeopleCache = [...slackUsers, ...talentRecruiters, ...recruiters, ...hiringManagers]
+    _allPeopleDirty = false
+  }
+  return _allPeopleCache
+}
+
+let _allPeopleCache = []
+let _allPeopleDirty = true
+
+function markAllPeopleDirty() {
+  _allPeopleDirty = true
 }
 
 export function setApplicants(data) {
@@ -55,18 +71,26 @@ export function setApplicants(data) {
 
 export function setRecruiters(data) {
   recruiters = Array.isArray(data) ? data : [];
+  markAllPeopleDirty()
 }
 
 export function setHiringManagers(data) {
   hiringManagers = Array.isArray(data) ? data : [];
+  markAllPeopleDirty()
 }
 
 export function setTalentRecruiters(data) {
   talentRecruiters = Array.isArray(data) ? data : [];
+  markAllPeopleDirty()
+}
+
+export function setRecruitmentSheetPeople(data) {
+  recruitmentSheetPeople = Array.isArray(data) ? data : [];
 }
 
 export function setSlackUsers(data) {
   slackUsers = Array.isArray(data) ? data : [];
+  markAllPeopleDirty()
 }
 
 export function setSlackRecruiters(data) {
