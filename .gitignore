@@ -154,3 +154,12 @@ vite.config.ts.timestamp-*
 
 # runtime state
 /data/runtime/
+
+# Raw exported messages can contain personal data and transport metadata.
+*.eml
+
+# Terraform local state and provider cache
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log

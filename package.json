@@ -9,12 +9,21 @@
     "test": "node --test",
     "check": "node --check app.js",
     "migrate": "node scripts/migrate.js",
-    "notifications:test": "node scripts/notifications-cli.js"
+    "notifications:test": "node scripts/notifications-cli.js",
+    "retention": "node scripts/retention.js",
+    "legal-hold": "node scripts/legal-hold.js",
+    "tokens:reencrypt": "node scripts/reencrypt-google-tokens.js",
+    "security:audit": "npm audit --omit=dev --audit-level=moderate"
   },
   "license": "MIT",
   "dependencies": {
-    "@slack/bolt": "^4.7.2",
-    "pg": "^8.16.3"
+    "@google-cloud/cloud-sql-connector": "1.11.1",
+    "@google-cloud/kms": "5.5.1",
+    "@slack/bolt": "4.7.3",
+    "form-data": "4.0.6",
+    "pg": "8.22.0",
+    "qs": "6.15.2",
+    "ws": "8.21.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
