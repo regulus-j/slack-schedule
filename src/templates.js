@@ -4,6 +4,11 @@ import { generateSignatureHTML, signaturePlainText } from './signature.js';
 
 const TEMPLATE_DIR = path.join(process.cwd(), 'email-templates');
 export const SCHEDULING_TEMPLATE_IDS = ['1st-interview-invite', '2nd-or-Final-invite', 'job-offer-discussion'];
+export const CUSTOM_INVITE_TEMPLATE_IDS = [
+  'custom-invite-general-meeting',
+  'custom-invite-assessment',
+];
+export const CUSTOM_INVITE_MANUAL_TEMPLATE_ID = 'custom';
 
 export const TEMPLATE_LABELS = {
   '1st-interview-invite': '1st interview invite',
@@ -12,6 +17,8 @@ export const TEMPLATE_LABELS = {
   'interview-reminder': 'Interview reminder',
   'interview-reminder (unresponsive candidate)': 'Unresponsive candidate reminder',
   'Thank You Email - 2nd-or-Final Interview': 'Thank-you email',
+  'custom-invite-general-meeting': 'General Meeting',
+  'custom-invite-assessment': 'Assessment',
 };
 
 export const TEMPLATE_METADATA = {
@@ -97,27 +104,43 @@ export async function loadSchedulingTemplates(templateDir = TEMPLATE_DIR) {
   return templates.filter((template) => isSchedulingTemplate(template.id))
 }
 
+export async function loadCustomInviteTemplates(templateDir = TEMPLATE_DIR) {
+  const templates = await loadTemplates(templateDir)
+  return templates.filter((template) => isCustomInviteTemplate(template.id))
+}
+
+export async function loadIntakeTemplates(templateDir = TEMPLATE_DIR) {
+  const templates = await loadTemplates(templateDir)
+  return templates.filter((template) =>
+    isSchedulingTemplate(template.id) || isCustomInviteTemplate(template.id)
+  )
+}
+
 export function isSchedulingTemplate(templateId) {
   return SCHEDULING_TEMPLATE_IDS.includes(templateId)
 }
 
+export function isCustomInviteTemplate(templateId) {
+  return CUSTOM_INVITE_TEMPLATE_IDS.includes(templateId)
+}
+
 export function renderTemplate(template, variables) {
-  const htmlBody = replaceVariables(template.body, variables)
+  const htmlBody = replaceVariables(template.body, variables, { escape: true })
   const plainVariables = {
     ...variables,
     resume_link: variables.resume_link_plain || variables.resume_link,
     _signature: signaturePlainText(),
   }
-  const plainBody = replaceVariables(stripHtmlBody(template.body), plainVariables)
+  const plainBody = replaceVariables(stripHtmlBody(template.body), plainVariables, { escape: false })
   return {
     ...template,
-    subject: replaceVariables(template.subject, variables),
+    subject: replaceVariables(template.subject, variables, { escape: false }),
     body: htmlBody,
     plainBody,
   };
 }
 
-export function replaceVariables(text, variables) {
+export function replaceVariables(text, variables, { escape = true } = {}) {
   const resolved = variables['_signature'] || generateSignatureHTML()
   const plainSig = variables['_signature_plain'] || signaturePlainText()
 
@@ -126,8 +149,18 @@ export function replaceVariables(text, variables) {
     if (trimmed.toLowerCase() === 'signature') return resolved
     const normalizedKey = trimmed.toLowerCase().replace(/\s+/g, '_')
     const value = variables[normalizedKey] ?? variables[trimmed] ?? ''
-    return value || match
+    if (!value) return match
+    return escape ? escapeTemplateHtml(value) : String(value)
   })
+}
+
+function escapeTemplateHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 export function stripHtmlBody(html) {

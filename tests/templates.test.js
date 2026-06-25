@@ -2,6 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   TEMPLATE_METADATA,
+  CUSTOM_INVITE_TEMPLATE_IDS,
+  loadCustomInviteTemplates,
+  loadIntakeTemplates,
   loadSchedulingTemplates,
   loadTemplates,
   normalizeTemplateText,
@@ -164,6 +167,42 @@ test('loadSchedulingTemplates only exposes interview invite templates', async ()
     'job-offer-discussion',
   ])
   assert.ok(!templates.some((template) => template.id.endsWith('.eml')))
+})
+
+test('replaceVariables escapes user-controlled HTML by default', () => {
+  const result = replaceVariables('<p>[applicant_first_name]</p>', {
+    applicant_first_name: '<img src=x onerror=alert(1)>',
+  })
+  assert.equal(result, '<p>&lt;img src=x onerror=alert(1)&gt;</p>')
+})
+
+test('loadCustomInviteTemplates exposes the premade custom invite copy', async () => {
+  const templates = await loadCustomInviteTemplates()
+  assert.deepEqual(
+    templates.map((template) => template.id).sort(),
+    [...CUSTOM_INVITE_TEMPLATE_IDS].sort(),
+  )
+
+  const general = templates.find((template) => template.id === 'custom-invite-general-meeting')
+  const assessment = templates.find((template) => template.id === 'custom-invite-assessment')
+  assert.equal(general.subject, 'Invitation: [event_title]')
+  assert.match(general.body, /\[greeting\]/)
+  assert.match(general.body, /Date: \[date\]/)
+  assert.match(general.body, /Time: \[time\] \[timezone\]/)
+  assert.match(general.body, /Meeting link: \[meeting_link\]/)
+  assert.equal(assessment.subject, 'Assessment Invitation: [event_title]')
+  assert.match(assessment.body, /Assessment details:/)
+})
+
+test('loadIntakeTemplates combines scheduling and custom invite templates', async () => {
+  const templates = await loadIntakeTemplates()
+  assert.deepEqual(templates.map((template) => template.id).sort(), [
+    '1st-interview-invite',
+    '2nd-or-Final-invite',
+    'custom-invite-assessment',
+    'custom-invite-general-meeting',
+    'job-offer-discussion',
+  ])
 })
 
 test('all operational email templates use the shared Arial 14px formatting standard', async () => {

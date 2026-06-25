@@ -1,4 +1,5 @@
-import { plainTextToHtml } from '../templates.js'
+import { ensureSignaturePlainText } from '../templates.js'
+import { generateSignatureHTML } from '../signature.js'
 
 const EMAIL_PATTERN = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/
 const FINAL_DELIVERY_STATUSES = new Set(['sent', 'mocked'])
@@ -60,7 +61,7 @@ export function validateCustomInviteDraft(draft) {
   if (draft?.customInviteRecipientError) {
     errors.custom_external_guests_block = draft.customInviteRecipientError
   } else if (!Array.isArray(draft?.customInviteRecipients) || draft.customInviteRecipients.length === 0) {
-    errors.custom_slack_recipients_block = 'Select a Slack member or add an external guest.'
+    errors.custom_slack_recipients_block = 'Choose a Slack member or add an external email.'
   }
   return errors
 }
@@ -107,6 +108,7 @@ export function normalizeCustomInviteMetadata(caseRecord) {
   ).trim()
 
   return {
+    templateId: String(stored.templateId || 'custom').trim() || 'custom',
     title,
     subject: String(stored.subject || `Invitation: ${title}`).trim(),
     body: String(
@@ -161,7 +163,8 @@ export function buildCustomInviteEmail(caseRecord, recipient, overrides = {}) {
   if (!plainBody.toLowerCase().startsWith(greeting.toLowerCase())) {
     plainBody = `${greeting}\n\n${plainBody}`.trim()
   }
-  const htmlBody = `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">${plainTextToHtml(plainBody)}</body></html>`
+  const htmlBody = formatCustomInviteHtml(plainBody)
+  plainBody = ensureSignaturePlainText(plainBody)
 
   return {
     to: variables.email,
@@ -171,6 +174,67 @@ export function buildCustomInviteEmail(caseRecord, recipient, overrides = {}) {
     htmlBody,
     plainBody,
   }
+}
+
+function formatCustomInviteHtml(text) {
+  const blocks = String(text || '')
+    .trim()
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+  const content = blocks.map(formatInviteBlock).join('\n')
+
+  return [
+    '<html>',
+    '<body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;line-height:1.6;margin:0;padding:0;">',
+    content,
+    generateSignatureHTML(),
+    '</body>',
+    '</html>',
+  ].join('\n')
+}
+
+function formatInviteBlock(block, index) {
+  const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (lines.length > 0 && lines.every(isDetailLine)) {
+    return [
+      '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;color:#222222;margin:0 0 16px 0;padding:14px 16px;background-color:#f5f5f5;border-left:3px solid #c8651b;">',
+      ...lines.map(formatDetailLine),
+      '</div>',
+    ].join('\n')
+  }
+
+  if (lines.length === 1 && /:\s*$/.test(lines[0])) {
+    return `<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222222;margin:${index === 0 ? '0' : '16px'} 0 8px 0;"><strong>${formatInlineText(lines[0])}</strong></p>`
+  }
+
+  return `<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222222;margin:${index === 0 ? '0' : '16px'} 0 16px 0;">${lines.map(formatInlineText).join('<br>')}</p>`
+}
+
+function isDetailLine(line) {
+  return /^(date|time|timezone|meeting link|platform|location):/i.test(line)
+}
+
+function formatDetailLine(line) {
+  const match = line.match(/^([^:]+):\s*(.*)$/)
+  if (!match) return `<div>${formatInlineText(line)}</div>`
+  return `<div><strong>${escapeHtml(match[1])}:</strong> ${formatInlineText(match[2])}</div>`
+}
+
+function formatInlineText(value) {
+  return escapeHtml(value).replace(
+    /\bhttps?:\/\/[^\s<]+/gi,
+    (url) => `<a href="${url}" style="color:#1155cc;text-decoration:underline;" target="_blank">${url}</a>`,
+  )
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 export function hasPendingCustomInviteDeliveries(caseRecord) {
