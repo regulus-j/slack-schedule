@@ -1,15 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import pg from 'pg'
-
-const { Client } = pg
-
-const databaseUrl = process.env.DATABASE_URL
-if (!databaseUrl) {
-  console.error('DATABASE_URL is required to run migrations.')
-  process.exit(1)
-}
+import { loadConfig } from '../src/config.js'
+import { createPostgresPool } from '../src/store/postgres-connection.js'
 
 const migrationsDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -57,9 +50,30 @@ async function applyMigration(client, filename) {
   }
 }
 
+async function grantRuntimePrivileges(client, databaseName, runtimeUser) {
+  const user = String(runtimeUser || '').trim()
+  if (!user) return
+  const userIdentifier = quoteIdentifier(user)
+  await client.query(`GRANT CONNECT ON DATABASE ${quoteIdentifier(databaseName)} TO ${userIdentifier}`)
+  await client.query(`GRANT USAGE ON SCHEMA public TO ${userIdentifier}`)
+  await client.query(`REVOKE CREATE ON SCHEMA public FROM ${userIdentifier}`)
+  await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${userIdentifier}`)
+  await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${userIdentifier}`)
+  await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${userIdentifier}`)
+  await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${userIdentifier}`)
+}
+
+function quoteIdentifier(value) {
+  return `"${String(value || '').replace(/"/g, '""')}"`
+}
+
 async function run() {
-  const client = new Client({ connectionString: databaseUrl })
-  await client.connect()
+  const config = loadConfig()
+  if (config.database.backend === 'json') {
+    throw new Error('PostgreSQL configuration is required to run migrations.')
+  }
+  const connection = await createPostgresPool(config)
+  const client = await connection.pool.connect()
 
   try {
     await ensureMigrationsTable(client)
@@ -80,9 +94,12 @@ async function run() {
       await applyMigration(client, migration)
     }
 
+    const runtimeUser = process.env.RUNTIME_CLOUD_SQL_IAM_USER || config.database.user
+    await grantRuntimePrivileges(client, config.database.name, runtimeUser)
     console.log('Migrations complete.')
   } finally {
-    await client.end()
+    client.release()
+    await connection.close()
   }
 }
 
