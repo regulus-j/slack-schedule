@@ -1,4 +1,11 @@
-import { applicantLabel, personLabel, personOptions, trimForSlack } from '../data/search.js'
+import {
+  applicantLabel,
+  personLabel,
+  personOptions,
+  personPickerLabel,
+  toSlackOption,
+  trimForSlack,
+} from '../data/search.js'
 import { TIMEZONE_COUNTRY_MAP } from '../data/timezones.js'
 import { isScheduledCase, normalizeCaseSchedule, visibleCaseActions } from '../workflow/reschedule.js'
 import { DEFAULT_STAGE_RULES, STAGE_OPTIONS, normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from '../workflow/stage-rules.js'
@@ -135,6 +142,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   if (customInvite) {
     return customInviteIntakeModal({
       draft,
+      templates,
       selectedTimeZoneOption,
     })
   }
@@ -211,6 +219,23 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             selectedIds: draft.hiringManagerIds,
             required: hmRequired,
           }),
+          ...(draft.hiringManagerNeedsEmail ? [
+            input(
+              'Hiring manager email',
+              dynamicBlockId('hiring_manager_email_block', draft.hiringManagerId),
+              {
+                type: 'plain_text_input',
+                action_id: 'hiring_manager_email_override',
+                placeholder: plain('Enter the hiring manager email'),
+                ...(draft.hiringManagerEmailOverride ? {
+                  initial_value: draft.hiringManagerEmailOverride,
+                } : {}),
+              },
+              false,
+              false,
+              `${draft.hiringManagerName || 'The selected hiring manager'} is missing a valid email in the mapped directory.`,
+            ),
+          ] : []),
         ] : []),
       ]
     : []
@@ -402,17 +427,9 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
 }
 
 function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
-  const defaultSubject = draft.customInviteTitle ? `Invitation: ${draft.customInviteTitle}` : ''
-  const defaultBody = [
-    '[greeting]',
-    '',
-    'You are invited to [event_title].',
-    '',
-    'Date: [date]',
-    'Time: [time] [timezone]',
-    'Meeting link: [meeting_link]',
-  ].join('\n')
-
+  const customInviteTemplateOptions = draft.customInviteTemplateOptions?.length
+    ? draft.customInviteTemplateOptions
+    : [toSlackOption('Custom', 'custom')]
   return {
     type: 'modal',
     callback_id: 'schedule_intake_submit',
@@ -435,36 +452,48 @@ function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
       }),
       section([
         '*Choose Slack members or add external guests*',
-        'Bots, app users, and deactivated accounts are excluded from Slack member search.',
+        'Shows all recruitment team members when empty. Type to search any Slack workspace user.',
         '_All recipients are guests on one shared calendar event and can see each other._',
       ].join('\n')),
       input('Slack members', 'custom_slack_recipients_block', {
-        type: 'multi_users_select',
+        type: 'multi_external_select',
         action_id: 'custom_slack_recipients',
-        placeholder: plain('Search active Slack members'),
-        ...(draft.customInviteSlackRecipientIds?.length
-          ? { initial_users: draft.customInviteSlackRecipientIds }
+        min_query_length: 0,
+        placeholder: plain('Search Slack members or recruiters'),
+        ...(draft.customInviteSlackRecipients?.length
+          ? {
+              initial_options: draft.customInviteSlackRecipients.map((person) =>
+                toSlackOption(personPickerLabel(person), person.slackUserId || person.id)
+              ),
+            }
           : {}),
       }, true),
-      input('Other guests', 'custom_external_guests_block', {
+      input('External emails', 'custom_external_guests_block', {
         type: 'plain_text_input',
         action_id: 'custom_external_guests',
         multiline: true,
         placeholder: plain('Name - email, one guest per line'),
-        ...(draft.customInviteRecipientsRaw ? { initial_value: draft.customInviteRecipientsRaw } : {}),
-      }, true, false, 'Example: Alex Reyes - alex@example.com'),
-      input('Email subject', 'custom_subject_block', {
+        ...(draft.customInviteRecipientsRaw ? {
+          initial_value: draft.customInviteRecipientsRaw,
+        } : {}),
+      }, true, false, 'Optional. Example: Alex Reyes - alex@example.com'),
+      input('Email template', 'custom_email_template_block', {
+        type: 'static_select',
+        action_id: 'custom_email_template_select',
+        placeholder: plain('Choose an email template'),
+        options: customInviteTemplateOptions,
+        ...initialOption(draft.customInviteTemplateOption, customInviteTemplateOptions),
+      }, false, true),
+      input('Email subject', dynamicBlockId('custom_subject_block', draft.customInviteTemplateId), {
         type: 'plain_text_input',
         action_id: 'custom_subject',
-        ...(draft.customInviteSubject || defaultSubject
-          ? { initial_value: draft.customInviteSubject || defaultSubject }
-          : {}),
+        ...(draft.customInviteSubject ? { initial_value: draft.customInviteSubject } : {}),
       }),
-      input('Email body', 'custom_body_block', {
+      input('Email body', dynamicBlockId('custom_body_block', draft.customInviteTemplateId), {
         type: 'plain_text_input',
         action_id: 'custom_body',
         multiline: true,
-        initial_value: draft.customInviteBody || defaultBody,
+        ...(draft.customInviteBody ? { initial_value: draft.customInviteBody } : {}),
       }),
       input('Meeting link', 'custom_meeting_link_block', {
         type: 'plain_text_input',
@@ -1176,10 +1205,79 @@ export function scheduleTrackerModal({ cases = [], filters = {}, scope = 'all', 
 
 function caseListBlocks(cases, emptyText) {
   if (!cases.length) return [section(emptyText)];
-  return cases.slice(0, 8).flatMap((item) => [
-    section(caseSummary(item)),
-    actions(actionButtonsForCase(item, true)),
-  ]);
+  const grouped = new Map()
+  for (const caseRecord of cases.slice(0, 8)) {
+    const role = caseRoleName(caseRecord)
+    if (!grouped.has(role)) grouped.set(role, [])
+    grouped.get(role).push(caseRecord)
+  }
+
+  return [...grouped.entries()].flatMap(([role, roleCases]) => [
+    section(`*──────── ${escapeSlackText(role)} ────────*`),
+    ...roleCases.flatMap((caseRecord) => [
+      {
+        type: 'section',
+        text: mrkdwn(homeCaseSummary(caseRecord)),
+        accessory: button('View Details', 'view_case_details', undefined, caseRecord.id),
+      },
+      divider(),
+    ]),
+  ])
+}
+
+export function caseDetailsModal(caseRecord) {
+  return {
+    type: 'modal',
+    callback_id: 'case_details_modal',
+    title: plain('Schedule Case Details'),
+    close: plain('Close'),
+    blocks: [
+      header(caseRoleName(caseRecord)),
+      section(caseSummary(caseRecord)),
+      ...(actionButtonsForCase(caseRecord).length > 0
+        ? [actions(actionButtonsForCase(caseRecord))]
+        : []),
+    ],
+  }
+}
+
+function homeCaseSummary(caseRecord) {
+  return [
+    `*${homeCaseDate(caseRecord)} ${escapeSlackText(homeCasePersonName(caseRecord))}*`,
+    `Current Status: *${displayStatus(caseRecord.status)}*`,
+  ].join('\n')
+}
+
+function caseRoleName(caseRecord) {
+  if (isCustomInviteCase(caseRecord)) return 'Custom Invite'
+  return String(
+    caseRecord.roleTitle ||
+    caseRecord.autofill?.roleTitle ||
+    caseRecord.applicant?.jobTitle ||
+    'Unassigned Role'
+  ).trim() || 'Unassigned Role'
+}
+
+function homeCasePersonName(caseRecord) {
+  if (isCustomInviteCase(caseRecord)) {
+    const recipients = normalizeCustomInviteMetadata(caseRecord).recipients
+    return recipients[0]?.name || recipients[0]?.email || 'Custom Event'
+  }
+  return [
+    caseRecord.applicant?.firstName,
+    caseRecord.applicant?.lastName,
+  ].filter(Boolean).join(' ').trim() || caseRecord.applicant?.fullName || 'Candidate'
+}
+
+function homeCaseDate(caseRecord) {
+  const schedule = normalizeCaseSchedule(caseRecord).currentSchedule
+  const value =
+    schedule?.date ||
+    caseRecord.selectedInterviewDate ||
+    caseRecord.interviewWindowStartDate ||
+    ''
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : 'Date TBD'
 }
 
 function caseSummary(caseRecord) {

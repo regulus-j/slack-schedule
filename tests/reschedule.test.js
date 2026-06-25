@@ -32,8 +32,8 @@ import {
   selectableHiringManagersForRole,
   roleAutofillSelections,
 } from '../src/slack/handlers.js';
-import { actionButtonsForCase, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
-import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js';
+import { actionButtonsForCase, caseDetailsModal, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackRecruiters, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
 const baseCase = {
@@ -242,6 +242,74 @@ test('home view exposes the schedule tracker button', () => {
   assert.ok(labels.includes('📚 Schedule tracker'));
 });
 
+test('home view groups schedule cases by role with compact date status and details', () => {
+  const view = homeView({
+    myCases: [
+      {
+        ...baseCase,
+        id: 'case-loan-1',
+        status: 'Scheduled',
+        applicant: {
+          ...baseCase.applicant,
+          firstName: 'Vishant',
+          lastName: 'Amandushant',
+          jobTitle: 'Loan Associate',
+        },
+        currentSchedule: {
+          date: '2026-11-11',
+          time: '09:00',
+        },
+      },
+      {
+        ...baseCase,
+        id: 'case-support-1',
+        status: 'Draft',
+        applicant: {
+          ...baseCase.applicant,
+          firstName: 'Alex',
+          lastName: 'Reyes',
+          jobTitle: 'Customer Support Specialist',
+        },
+      },
+      {
+        ...baseCase,
+        id: 'case-loan-2',
+        status: 'Needs Attention',
+        applicant: {
+          ...baseCase.applicant,
+          firstName: 'Nina',
+          lastName: 'Cruz',
+          jobTitle: 'Loan Associate',
+        },
+        selectedInterviewDate: '2026-11-12',
+      },
+    ],
+    teamCases: [],
+  })
+
+  const text = view.blocks
+    .filter((block) => block.type === 'section')
+    .map((block) => block.text.text)
+    .join('\n')
+  const detailsButtons = view.blocks
+    .filter((block) => block.type === 'section' && block.accessory?.action_id === 'view_case_details')
+    .map((block) => block.accessory)
+
+  assert.equal((text.match(/Loan Associate/g) || []).length, 1)
+  assert.match(text, /──────── Loan Associate ────────/)
+  assert.match(text, /11\/11\/2026 Vishant Amandushant/)
+  assert.match(text, /12\/11\/2026 Nina Cruz/)
+  assert.match(text, /Current Status: \*Scheduled\*/)
+  assert.match(text, /──────── Customer Support Specialist ────────/)
+  assert.match(text, /Date TBD Alex Reyes/)
+  assert.deepEqual(detailsButtons.map((button) => button.value), [
+    'case-loan-1',
+    'case-loan-2',
+    'case-support-1',
+  ])
+  assert.ok(detailsButtons.every((button) => button.text.text === 'View Details'))
+})
+
 test('workflow trigger accepts schedule interview command messages', () => {
   assert.equal(isScheduleWorkflowTrigger('/schedule-interview'), true);
   assert.equal(isScheduleWorkflowTrigger('/schedule-interview button'), true);
@@ -263,6 +331,7 @@ test('case summaries and progress headers never mention Slack users', () => {
     },
   };
   const home = homeView({ myCases: [caseWithSlackIds], teamCases: [] });
+  const details = caseDetailsModal(caseWithSlackIds)
   const finalize = finalizeModal(caseWithSlackIds, [
     {
       action: 'case_created',
@@ -271,7 +340,7 @@ test('case summaries and progress headers never mention Slack users', () => {
     },
   ]);
 
-  const text = JSON.stringify([home.blocks, finalize.blocks]);
+  const text = JSON.stringify([home.blocks, details.blocks, finalize.blocks]);
   assert.equal(text.includes('<@'), false);
   assert.match(text, /Jamal Al Badi/);
   assert.match(text, /Ana Cruz/);
@@ -407,7 +476,6 @@ test('custom invite intake contains only generic event fields', () => {
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       customInviteTitle: 'Client intro',
-      customInviteRecipientsRaw: 'Alex - alex@example.com\nteam@example.com',
       customInviteSubject: 'Invitation: Client intro',
       customInviteBody: '[greeting]\n\nJoin [event_title].',
     },
@@ -417,10 +485,11 @@ test('custom invite intake contains only generic event fields', () => {
   const blockIds = inputBlocks.map((block) => block.block_id);
 
   assert.deepEqual(blockIds, [
-    'event_type_block',
-    'custom_title_block',
-    'custom_slack_recipients_block',
-    'custom_external_guests_block',
+      'event_type_block',
+      'custom_title_block',
+      'custom_slack_recipients_block',
+      'custom_external_guests_block',
+      'custom_email_template_block',
     'custom_subject_block',
     'custom_body_block',
     'custom_meeting_link_block',
@@ -450,14 +519,13 @@ test('custom invite intake starts with event type and supports multiple recipien
       eventType: 'custom-invite',
       eventTypeOption: { text: { type: 'plain_text', text: 'Custom Invite' }, value: 'custom-invite' },
       customInviteTitle: 'Client intro',
-      customInviteRecipientsRaw: 'Alex - alex@example.com\nteam@example.com',
     },
   });
   const inputBlocks = view.blocks.filter((block) => block.type === 'input');
   const eventTypeBlock = inputBlocks[0];
   const titleBlock = inputBlocks.find((block) => block.block_id === 'custom_title_block');
   const slackRecipientsBlock = inputBlocks.find((block) => block.block_id === 'custom_slack_recipients_block');
-  const recipientsBlock = inputBlocks.find((block) => block.block_id === 'custom_external_guests_block');
+  const emailTemplateBlock = inputBlocks.find((block) => block.block_id === 'custom_email_template_block');
 
   assert.equal(eventTypeBlock.block_id, 'event_type_block');
   assert.deepEqual(eventTypeBlock.element.options.map((option) => option.text.text), [
@@ -468,9 +536,10 @@ test('custom invite intake starts with event type and supports multiple recipien
     'Custom Invite',
   ]);
   assert.equal(titleBlock.element.initial_value, 'Client intro');
-  assert.equal(slackRecipientsBlock.element.type, 'multi_users_select');
-  assert.equal(recipientsBlock.element.multiline, true);
-  assert.match(recipientsBlock.element.initial_value, /team@example\.com/);
+  assert.equal(slackRecipientsBlock.element.type, 'multi_external_select');
+  assert.equal(slackRecipientsBlock.element.action_id, 'custom_slack_recipients');
+  assert.equal(emailTemplateBlock.element.type, 'static_select');
+  assert.equal(inputBlocks.some((block) => block.block_id === 'custom_external_guests_block'), true);
 });
 
 test('intake modal candidate details hides JazzHR resume and rating fields', () => {
@@ -1330,6 +1399,30 @@ test('unmatched roles keep the full manager directory available for manual selec
   setJazzhrJobs([])
 })
 
+test('unmatched roles use role-assignment managers for manual selection when talent directory is empty', () => {
+  setHiringManagers([])
+  setRoleAssignments([
+    {
+      roleId: '',
+      roleTitle: 'Completely Different Role',
+      hiringManager: { id: 'sheet-role-hm-ana', name: 'Ana Manager', email: 'ana@example.com', role: 'hiring_manager' },
+    },
+    {
+      roleId: '',
+      roleTitle: 'Another Different Role',
+      hiringManager: { id: 'sheet-role-hm-lee', name: 'Lee Manager', email: 'lee@example.com', role: 'hiring_manager' },
+    },
+  ])
+  setJazzhrJobs([{ id: 'job-unmatched', roleId: 'job-unmatched', title: 'Video Producer', status: 'Open' }])
+
+  assert.deepEqual(mappedHiringManagersForRole('job-unmatched'), [])
+  assert.deepEqual(selectableHiringManagersForRole('job-unmatched').map((person) => person.name), [
+    'Ana Manager',
+    'Lee Manager',
+  ])
+  setJazzhrJobs([])
+})
+
 test('second and final interviews show and select mapped manager suggestions', () => {
   const suggestions = [
     { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
@@ -1360,6 +1453,70 @@ test('second and final interviews show and select mapped manager suggestions', (
     assert.equal(hmBlock.optional, false)
     assert.deepEqual(hmBlock.element.initial_options.map((option) => option.value), ['hm-ana', 'hm-lee'])
   }
+})
+
+test('mapped hiring manager without email shows a manual email field', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: {
+      eventType: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd interview' }, value: '2nd-interview' },
+      stageKey: '2nd-interview',
+      roleId: 'job-1',
+      roleOption: { text: { type: 'plain_text', text: 'Support Specialist' }, value: 'job-1' },
+      hiringManagerId: 'hm-missing-email',
+      hiringManagerIds: ['hm-missing-email'],
+      hiringManagerName: 'Mapped Manager',
+      hiringManagerNeedsEmail: true,
+      suggestedHiringManagers: [{
+        id: 'hm-missing-email',
+        name: 'Mapped Manager',
+        email: '',
+        role: 'hiring_manager',
+      }],
+    },
+  })
+
+  const emailBlock = view.blocks.find((block) => block.block_id === 'hiring_manager_email_block_hm-missing-email')
+  assert.equal(emailBlock.element.action_id, 'hiring_manager_email_override')
+  assert.equal(emailBlock.optional, false)
+  assert.match(emailBlock.hint.text, /missing a valid email/)
+})
+
+test('manual hiring manager email completes an incomplete mapped manager', () => {
+  setJazzhrJobs([{ id: 'job-1', roleId: 'job-1', title: 'Support Specialist', status: 'Open' }])
+  setRoleAssignments([{
+    roleId: 'job-1',
+    roleKey: 'job-1',
+    roleTitle: 'Support Specialist',
+    hiringManager: {
+      id: 'hm-missing-email',
+      name: 'Mapped Manager',
+      email: '',
+      role: 'hiring_manager',
+    },
+  }])
+
+  const draft = buildIntakeDraft({
+    event_type_block: { event_type_select: { selected_option: { value: '2nd-interview' } } },
+    role_block: { role_select: { selected_option: { value: 'job-1' } } },
+    hiring_managers_block: {
+      hiring_manager_checkboxes: {
+        selected_options: [{ value: 'hm-missing-email' }],
+      },
+    },
+    hiring_manager_email_block: {
+      hiring_manager_email_override: { value: 'mapped.manager@example.com' },
+    },
+  }, [])
+
+  assert.equal(draft.hiringManagerNeedsEmail, true)
+  assert.equal(draft.hiringManagerEmailOverride, 'mapped.manager@example.com')
+  assert.equal(draft.hiringManager.email, 'mapped.manager@example.com')
+  assert.equal(draft.hiringManagerEmail, 'mapped.manager@example.com')
+
+  setRoleAssignments([])
+  setJazzhrJobs([])
 })
 
 test('second interview submission rejects an unselected suggested manager', async () => {
@@ -1766,13 +1923,16 @@ test('builds generic custom invite draft without applicant or recruiter records'
   setApplicants([]);
   setRecruiters([]);
   setHiringManagers([]);
+  setSlackRecruiters([
+    { id: 'U1', slackUserId: 'U1', name: 'Maria Santos', email: 'maria@example.com', role: 'slack_user' },
+  ])
 
   const draft = buildIntakeDraft(
     {
       event_type_block: { event_type_select: { selected_option: { value: 'custom-invite' } } },
       custom_title_block: { custom_title: { value: 'Client introduction' } },
-      custom_external_guests_block: {
-        custom_external_guests: { value: 'Maria Santos - MARIA@example.com\nteam@example.com' },
+      custom_slack_recipients_block: {
+        custom_slack_recipients: { selected_options: [{ value: 'U1' }] },
       },
       custom_subject_block: { custom_subject: { value: 'Invitation: [event_title]' } },
       custom_body_block: { custom_body: { value: '[greeting]\n\nJoin us on [date].' } },
@@ -1787,24 +1947,26 @@ test('builds generic custom invite draft without applicant or recruiter records'
   assert.equal(draft.stageKey, null);
   assert.equal(draft.customInviteTitle, 'Client introduction');
   assert.deepEqual(draft.customInviteRecipients, [
-    { name: 'Maria Santos', email: 'maria@example.com' },
-    { name: '', email: 'team@example.com' },
+    { name: 'Maria Santos', email: 'maria@example.com', slackUserId: 'U1' },
   ]);
   assert.equal(draft.customInviteMeetingLink, '');
+  setSlackRecruiters([])
 });
 
-test('custom invite merges Slack members with external guests and deduplicates email', () => {
-  setSlackUsers([
+test('custom invite merges recruitment-sheet Slack matches with external guests', () => {
+  const recruitmentUsers = [
     { id: 'U1', slackUserId: 'U1', name: 'Alex Slack', email: 'alex@example.com', role: 'slack_user' },
     { id: 'U2', slackUserId: 'U2', name: 'Casey Slack', email: 'casey@example.com', role: 'slack_user' },
-  ])
+  ]
+  setSlackUsers(recruitmentUsers)
+  setSlackRecruiters(recruitmentUsers)
 
   const draft = buildIntakeDraft({
     event_type_block: { event_type_select: { selected_option: { value: 'custom-invite' } } },
     custom_title_block: { custom_title: { value: 'Client introduction' } },
     custom_slack_recipients_block: {
       custom_slack_recipients: {
-        selected_users: ['U1', 'U2'],
+        selected_options: [{ value: 'U1' }, { value: 'U2' }],
       },
     },
     custom_external_guests_block: {
@@ -1824,10 +1986,14 @@ test('custom invite merges Slack members with external guests and deduplicates e
   ])
   const view = intakeModal({ templates: [], draft })
   assert.deepEqual(
-    view.blocks.find((block) => block.block_id === 'custom_slack_recipients_block').element.initial_users,
+    view.blocks
+      .find((block) => block.block_id === 'custom_slack_recipients_block')
+      .element.initial_options
+      .map((option) => option.value),
     ['U1', 'U2'],
   )
   setSlackUsers([])
+  setSlackRecruiters([])
 })
 
 test('builds intake draft recruiter from the selected applicant', () => {
@@ -2352,22 +2518,19 @@ test('scheduled candidate email cc includes recruiter and attendee recipients', 
 });
 
 test('slack case views hide backend application id and show calendar link', () => {
-  const view = homeView({
-    myCases: [{
-      ...baseCase,
-      status: 'Scheduled',
-      calendarEventId: 'event-1',
-      calendarEventHtmlLink: 'https://calendar.google.com/event?eid=abc',
-      applicant: {
-        ...baseCase.applicant,
-        jazzhrApplicationId: 'backend-only-id',
-      },
-      currentSchedule: {
-        date: '2026-05-20',
-        time: '09:30',
-      },
-    }],
-    teamCases: [],
+  const view = caseDetailsModal({
+    ...baseCase,
+    status: 'Scheduled',
+    calendarEventId: 'event-1',
+    calendarEventHtmlLink: 'https://calendar.google.com/event?eid=abc',
+    applicant: {
+      ...baseCase.applicant,
+      jazzhrApplicationId: 'backend-only-id',
+    },
+    currentSchedule: {
+      date: '2026-05-20',
+      time: '09:30',
+    },
   });
 
   const text = JSON.stringify(view.blocks);

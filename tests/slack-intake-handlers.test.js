@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { setApplicants, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js'
+import { getOpenRoles, setApplicants, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js'
 import { registerSlackHandlers } from '../src/slack/handlers.js'
 
 test('cached candidate selection hydrates exact JazzHR application details and clears search errors', async () => {
@@ -706,6 +706,146 @@ test('shared command result mentions the action owner', async () => {
 
   assert.equal(posted.length, 1)
   assert.match(posted[0].text, /^<@UACTOR> Talent directory refreshed:/)
+})
+
+test('refresh-jazz refreshes the open role list', async () => {
+  setJazzhrJobs([])
+  const commands = new Map()
+  const app = {
+    action() {},
+    command(id, handler) {
+      commands.set(id, handler)
+    },
+    event() {},
+    options() {},
+    view() {},
+    message() {},
+  }
+  const posted = []
+  registerSlackHandlers(app, {
+    config: {
+      jazzhr: {
+        apiKey: 'api-key',
+        applicantMaxPages: 1,
+        applicantFetchConcurrency: 1,
+        liveSearch: {},
+      },
+      slack: {},
+      google: {},
+      recruiterPhoneExport: {},
+      roleAssignmentExport: {},
+      scheduling: { timeZones: ['Australia/Sydney'] },
+    },
+    store: {
+      async saveJazzhrCandidates() {},
+      async listTalentDirectory() {
+        return [{
+          id: 'recruiter-1',
+          name: 'Recruiter One',
+          email: 'recruiter@example.com',
+          role: 'recruiter',
+        }]
+      },
+    },
+    logger: silentLogger(),
+  })
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(String(url)).pathname
+    if (pathname.endsWith('/jobs')) {
+      return {
+        ok: true,
+        async json() {
+          return [{
+            id: 'job-property-management',
+            title: 'Property Management Assistant - Philippines',
+            status: 'Open',
+          }]
+        },
+      }
+    }
+    return {
+      ok: true,
+      async json() {
+        return []
+      },
+    }
+  }
+
+  try {
+    await commands.get('/slack-scheduler')({
+      ack: async () => {},
+      command: {
+        text: 'refresh-jazz',
+        channel_id: 'CSHARED',
+        user_id: 'UACTOR',
+      },
+      client: {
+        chat: {
+          async postMessage(message) {
+            posted.push(message)
+          },
+        },
+      },
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  assert.deepEqual(
+    getOpenRoles().map((role) => ({ id: role.id, title: role.title })),
+    [{
+      id: 'job-property-management',
+      title: 'Property Management Assistant - Philippines',
+    }],
+  )
+  assert.match(posted[0].text, /1 open roles/)
+  setJazzhrJobs([])
+})
+
+test('workflow message trigger posts the schedule launcher', async () => {
+  const events = new Map()
+  const app = {
+    action() {},
+    command() {},
+    event(id, handler) {
+      events.set(id, handler)
+    },
+    options() {},
+    view() {},
+    message() {},
+  }
+  const posted = []
+  registerSlackHandlers(app, {
+    config: {
+      jazzhr: { liveSearch: {} },
+      slack: {},
+      google: {},
+      scheduling: { timeZones: ['Australia/Sydney'] },
+    },
+    store: {},
+    logger: silentLogger(),
+  })
+
+  await events.get('message')({
+    event: {
+      text: '/schedule-interview',
+      channel: 'CWORKFLOW',
+      user: 'UWORKFLOW',
+    },
+    client: {
+      chat: {
+        async postMessage(message) {
+          posted.push(message)
+        },
+      },
+    },
+  })
+
+  assert.equal(posted.length, 1)
+  assert.equal(posted[0].channel, 'CWORKFLOW')
+  assert.equal(posted[0].blocks[0].accessory.action_id, 'open_schedule_intake')
 })
 
 function registerActionHarness() {

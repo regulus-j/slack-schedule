@@ -1,10 +1,16 @@
 import crypto from 'node:crypto'
+import { issueOAuthState } from '../security/oauth-state.js'
+import {
+  installSlackSecurityMiddleware,
+  requireAdminSlackUser,
+} from '../security/slack-access.js'
 import {
   getApplicants,
   getRecruiters,
   getHiringManagers,
   getApplicantDetail,
   getTalentRecruiters,
+  getSlackRecruiters,
   getSlackUsers,
   getOpenRoles,
   getRoleAssignments,
@@ -21,18 +27,35 @@ import {
   personPickerLabel,
   toSlackOption,
 } from '../data/search.js'
-import { loadSchedulingTemplates, loadTemplates, plainTextToHtml, renderTemplate, signedEmailBodiesFromPlainText, stripSignatureHtml } from '../templates.js'
+import {
+  CUSTOM_INVITE_MANUAL_TEMPLATE_ID,
+  CUSTOM_INVITE_TEMPLATE_IDS,
+  loadIntakeTemplates,
+  loadSchedulingTemplates,
+  loadTemplates,
+  plainTextToHtml,
+  renderTemplate,
+  signedEmailBodiesFromPlainText,
+  stripSignatureHtml,
+} from '../templates.js'
 import { buildGoogleOAuthUrl, createCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { normalizeResumeFile, resolveResumeAttachment } from '../services/resume-attachment.js'
 import {
   applicantEligibilityReason,
   fetchApplicantDetail,
   refreshJazzhrCache,
+  refreshJazzhrOpenJobs,
   syncJazzhrJobCandidates,
 } from '../services/jazzhr.js'
 import { createJazzhrLiveSearchManager } from '../services/jazzhr-live-search.js'
 import { loadTalentDirectory } from '../services/talent-directory.js'
-import { ensureSlackDirectory, resolveSlackUser } from '../services/slack-directory.js'
+import { applyTestDirectoryData, isTestDirectoryRoleId } from '../services/test-directory-data.js'
+import {
+  ensureRecruitmentSlackDirectory,
+  ensureSlackDirectory,
+  resolveSlackUser,
+  slackApiErrorDetails,
+} from '../services/slack-directory.js'
 import { personIdentityMatches, recruiterPhoneLine } from '../services/recruiter-phone-export.js'
 import { resumeHtmlLink, resumePlainLink, resumeSlackLink } from '../resume-display.js'
 import { resolvePostingChannel, verifyChannel } from './guards.js'
@@ -96,6 +119,7 @@ import {
   customInviteRequestStatusModal,
   customInviteSentEmailsModal,
   candidateMessageModal,
+  caseDetailsModal,
   caseMessageBlocks,
   externalAttendeeModal,
   finalizeEmailPreviewModal,
@@ -111,6 +135,7 @@ import {
 
 export function registerSlackHandlers(app, context) {
   const { store, logger, config } = context;
+  installSlackSecurityMiddleware(app, { config, store, logger })
   const schedulingTimeZones = resolveSchedulingTimeZones(config)
   const defaultTimeZone = schedulingTimeZones[0] || SYDNEY_TIME_ZONE
   const liveCandidateSearch = createJazzhrLiveSearchManager({
@@ -156,6 +181,7 @@ export function registerSlackHandlers(app, context) {
       privateMetadata: command.channel_id,
       timeZones: schedulingTimeZones,
       defaultTimeZone,
+      userId: command.user_id,
     });
   });
 
@@ -190,19 +216,31 @@ export function registerSlackHandlers(app, context) {
 
   app.command('/slack-scheduler', async ({ command, ack, client }) => {
     await ack();
+    if (!await requireAdminSlackUser({
+      config,
+      userId: command.user_id,
+      client,
+      channelId: command.channel_id,
+      logger,
+      action: '/slack-scheduler',
+    })) return
     const text = (command.text || '').trim().toLowerCase();
 
     if (text === 'refresh-jazz') {
-      const result = await refreshJazzhrCache({ config, logger, store });
+      const [result, openJobsResult] = await Promise.all([
+        refreshJazzhrCache({ config, logger, store }),
+        refreshJazzhrOpenJobs({ config, logger }),
+      ])
       const recruiters = getRecruiters();
       await loadTalentDirectory(config, store)
+      applyTestDirectoryData(config, logger)
       const talentRecruiters = getTalentRecruiters()
       await postSharedActionMessage({
         client,
         channel: command.channel_id,
         actorSlackUserId: command.user_id,
-        text: result.refreshed
-          ? `JazzHR cache refreshed: ${result.records} applicants, ${result.indexedCandidates || 0} candidate index records, and ${recruiters.length} JazzHR users loaded. Talent recruiters refreshed: ${talentRecruiters.length}.`
+        text: result.refreshed && openJobsResult.refreshed
+          ? `JazzHR cache refreshed: ${result.records} applicants, ${result.indexedCandidates || 0} candidate index records, ${openJobsResult.records} open roles, and ${recruiters.length} JazzHR users loaded. Talent recruiters refreshed: ${talentRecruiters.length}.`
           : 'JazzHR refresh completed with warnings (check logs for details).',
       });
       return;
@@ -210,6 +248,7 @@ export function registerSlackHandlers(app, context) {
 
     if (text === 'refresh-directory') {
       await loadTalentDirectory(config, store)
+      applyTestDirectoryData(config, logger)
       const talentRecruiters = getTalentRecruiters()
       await postSharedActionMessage({
         client,
@@ -281,8 +320,18 @@ export function registerSlackHandlers(app, context) {
       privateMetadata: body.channel?.id || body.user.id,
       timeZones: schedulingTimeZones,
       defaultTimeZone,
+      userId: body.user.id,
     });
   });
+
+  app.action('view_case_details', async ({ ack, body, client }) => {
+    await ack()
+    const caseRecord = await requireCase(store, body.actions[0].value)
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: caseDetailsModal(caseRecord),
+    })
+  })
 
   app.action('edit_schedule_case', async ({ ack, body, client }) => {
     await ack()
@@ -296,7 +345,21 @@ export function registerSlackHandlers(app, context) {
       return
     }
 
-    const templates = await loadSchedulingTemplates()
+    const templates = await loadIntakeTemplates()
+    if (isCustomInviteCase(caseRecord)) {
+      try {
+        await ensureRecruitmentSlackDirectory({ client, config, logger })
+      } catch (error) {
+        const correlationId = crypto.randomUUID()
+        logger.error('custom_invite_directory_lookup_failed', { error, correlationId })
+        await client.chat.postEphemeral({
+          channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+          user: body.user.id,
+          text: `Custom Invite recipients could not be matched with the recruitment sheet. Reference: ${correlationId}`,
+        })
+        return
+      }
+    }
     const draft = buildEditCaseDraft(caseRecord, templates)
     await client.views.open({
       trigger_id: body.trigger_id,
@@ -314,6 +377,7 @@ export function registerSlackHandlers(app, context) {
           editCaseId: caseRecord.id,
           eventType: draft.eventType,
           customInviteSlackRecipientIds: draft.customInviteSlackRecipientIds,
+          customInviteTemplateId: draft.customInviteTemplateId,
           roleId: draft.roleId,
           roleTitle: draft.roleTitle,
           recruiterIds: draft.recruiterIds,
@@ -483,7 +547,7 @@ export function registerSlackHandlers(app, context) {
     await refreshIntakeModal({
       client,
       body,
-      templates: await loadSchedulingTemplates(),
+      templates: await loadIntakeTemplates(),
       draftOverrides: {
         eventType,
         roleId: '',
@@ -510,6 +574,27 @@ export function registerSlackHandlers(app, context) {
     })
   })
 
+  app.action('custom_email_template_select', async ({ ack, body, client }) => {
+    await ack()
+    const templates = await loadIntakeTemplates()
+    const templateId = selectedOptionValue(body)
+    const selectedTemplate = templates.find((template) => template.id === templateId)
+    await refreshIntakeModal({
+      client,
+      body,
+      templates,
+      draftOverrides: {
+        customInviteTemplateId: templateId,
+        ...(selectedTemplate ? {
+          customInviteSubject: selectedTemplate.subject,
+          customInviteBody: selectedTemplate.body,
+        } : {}),
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+    })
+  })
+
   app.action('role_select', async ({ ack, body, client }) => {
     await ack()
     const roleId = selectedOptionValue(body)
@@ -527,6 +612,7 @@ export function registerSlackHandlers(app, context) {
     const selectedRecruiters = recruiters.filter((person) => recruiterIds.includes(person.id))
     const selectedHiringManagers = hiringManagers.filter((person) => hiringManagerIds.includes(person.id))
     const zoomLink = resolveZoomLinkForRecruiters(selectedRecruiters)
+    const syncRoleCandidates = !isTestDirectoryRoleId(role?.roleId || roleId)
     logger.info('role_assignment_match_resolved', {
       roleId: role?.roleId || roleId,
       roleTitle: role?.title || '',
@@ -550,6 +636,7 @@ export function registerSlackHandlers(app, context) {
         hiringManagerIds,
         hiringManagerName: selectedHiringManagers[0]?.name || '',
         hiringManagerEmail: selectedHiringManagers[0]?.email || '',
+        hiringManagerEmailOverride: '',
         recruiterSearchQuery: '',
         hiringManagerSearchQuery: '',
         showAdditionalRecruiters: false,
@@ -564,13 +651,16 @@ export function registerSlackHandlers(app, context) {
         candidateSearchComplete: false,
         candidateSearchSearching: false,
         candidateSearchError: '',
-        remoteUpdateStatus: 'loading',
-        remoteUpdateMessage: `Loading candidates and assignment data for ${role?.title || 'the selected role'} from JazzHR.`,
+        remoteUpdateStatus: syncRoleCandidates ? 'loading' : '',
+        remoteUpdateMessage: syncRoleCandidates
+          ? `Loading candidates and assignment data for ${role?.title || 'the selected role'} from JazzHR.`
+          : '',
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
     })
     const updatedBody = bodyWithUpdatedView(body, loadingResult)
+    if (!syncRoleCandidates) return
     let remoteUpdateError = ''
     try {
       await syncJazzhrJobCandidates({
@@ -1001,14 +1091,17 @@ export function registerSlackHandlers(app, context) {
     await ack()
     if (!await verifyChannel({ config, body, client })) return
     const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
-    if (tokenOwnerId !== body.user.id) {
-      await client.chat.postEphemeral({
-        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
-        user: body.user.id,
-        text: 'Google is managed through a shared scheduling account. You do not need to connect your own Google account.',
+    if (
+      config.google.authSlackUserId &&
+      !await requireAdminSlackUser({
+        config,
+        userId: body.user.id,
+        client,
+        channelId: body.channel?.id,
+        logger,
+        action: 'open_google_oauth',
       })
-      return
-    }
+    ) return
     if (!config.google.clientId || !config.google.clientSecret || !config.google.redirectUri) {
       const dmChannel = await openDm(client, body.user.id)
       await client.chat.postMessage({
@@ -1018,7 +1111,14 @@ export function registerSlackHandlers(app, context) {
       return
     }
 
-    const oauthUrl = buildGoogleOAuthUrl(config, JSON.stringify({ recruiterId: tokenOwnerId, source: 'slack_home' }))
+    const state = await issueOAuthState({
+      store,
+      slackUserId: body.user.id,
+      teamId: body.team?.id || config.slack.teamId || '',
+      tokenOwnerId,
+      source: 'slack_home',
+    })
+    const oauthUrl = buildGoogleOAuthUrl(config, state)
     const dmChannel = await openDm(client, body.user.id)
     await client.chat.postMessage({
       channel: dmChannel,
@@ -1030,14 +1130,17 @@ export function registerSlackHandlers(app, context) {
     await ack()
     if (!await verifyChannel({ config, body, client })) return
     const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
-    if (tokenOwnerId !== body.user.id) {
-      await client.chat.postEphemeral({
-        channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
-        user: body.user.id,
-        text: 'Google is managed through a shared scheduling account. You cannot disconnect it from your Slack user.',
+    if (
+      config.google.authSlackUserId &&
+      !await requireAdminSlackUser({
+        config,
+        userId: body.user.id,
+        client,
+        channelId: body.channel?.id,
+        logger,
+        action: 'disconnect_google_oauth',
       })
-      return
-    }
+    ) return
     if (typeof store.deleteGoogleToken !== 'function') {
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
@@ -1112,6 +1215,25 @@ export function registerSlackHandlers(app, context) {
     await ack({ options: compactPersonOptions(options.value, selectableHiringManagersForRole(metadata?.roleId)) })
   })
 
+  app.options('custom_slack_recipients', async ({ options, ack, client }) => {
+    try {
+      if (!options.value) {
+        // No search query: show all recruitment ecosystem people (sheet + talent directory)
+        await ack({ options: personOptions('', getTalentRecruiters()) })
+      } else {
+        // Search query: search all Slack workspace users
+        const { users } = await ensureSlackDirectory({ client, config, logger })
+        await ack({ options: personOptions(options.value, users) })
+      }
+    } catch (error) {
+      logger.warn('custom_invite_recipient_options_failed', {
+        error: error.message,
+        slackError: error.data?.error,
+      })
+      await ack({ options: [] })
+    }
+  })
+
   app.options('guest_select', async ({ options, ack, client }) => {
     const { users } = await ensureSlackDirectory({ client, config, logger })
     await ack({ options: personOptions(options.value, users) });
@@ -1128,10 +1250,66 @@ export function registerSlackHandlers(app, context) {
 
   app.view('schedule_intake_submit', async ({ ack, body, view, client }) => {
     const values = view.state.values;
-    for (const userId of getSelectedUserValues(values, 'custom_slack_recipients')) {
-      await resolveSlackUser({ client, userId, logger })
+    const selectedEventType = values.event_type_block?.event_type_select?.selected_option?.value || ''
+    const selectedCustomInviteOptions = getSelectedOptions(values, 'custom_slack_recipients')
+    const selectedCustomInviteUserIds = getSelectedOptionValues(values, 'custom_slack_recipients')
+    let selectedCustomInviteUsers = []
+    if (selectedEventType === 'custom-invite' && selectedCustomInviteUserIds.length > 0) {
+      // Build combined lookup map from all available people sources
+      const byId = new Map()
+      for (const person of getTalentRecruiters()) {
+        if (person.id) byId.set(person.id, person)
+      }
+      for (const person of getSlackRecruiters()) {
+        if (person.slackUserId) byId.set(person.slackUserId, person)
+        if (person.id) byId.set(person.id, person)
+      }
+      for (const person of getSlackUsers()) {
+        if (person.slackUserId) byId.set(person.slackUserId, person)
+        if (person.id) byId.set(person.id, person)
+      }
+
+      let invalidIds = selectedCustomInviteUserIds.filter((id) => !byId.has(id))
+
+      // Try to resolve unknown IDs from selected option labels
+      if (invalidIds.length > 0) {
+        const optionFallbackUsers = selectedCustomInviteOptions
+          .filter((option) => invalidIds.includes(option.value))
+          .map(slackRecipientFromSelectedOption)
+          .filter(Boolean)
+        for (const user of optionFallbackUsers) {
+          byId.set(user.slackUserId || user.id, user)
+        }
+        invalidIds = selectedCustomInviteUserIds.filter((id) => !byId.has(id))
+      }
+
+      // Try Slack API resolution for remaining Slack-format user IDs
+      if (invalidIds.length > 0) {
+        for (const id of invalidIds) {
+          if (id.startsWith('U') || id.startsWith('W')) {
+            try {
+              const resolved = await resolveSlackUser({ client, userId: id, logger })
+              if (resolved) byId.set(id, resolved)
+            } catch {
+              // resolveSlackUser handles its own logging
+            }
+          }
+        }
+        invalidIds = selectedCustomInviteUserIds.filter((id) => !byId.has(id))
+      }
+
+      if (invalidIds.length > 0) {
+        await ack({
+          response_action: 'errors',
+          errors: {
+            custom_slack_recipients_block: 'Could not identify one or more selected recipients. Make sure the person exists in Slack or use "External emails" for guests without Slack accounts.',
+          },
+        })
+        return
+      }
+      selectedCustomInviteUsers = selectedCustomInviteUserIds.map((id) => byId.get(id))
     }
-    const templates = await loadSchedulingTemplates();
+    const templates = await loadIntakeTemplates();
     const metadata = parsePrivateMetadata(view.private_metadata) || {}
     const editCase = metadata.editCaseId ? await store.getCase(metadata.editCaseId) : null
     if (metadata.editCaseId && !canEditScheduleCase(editCase)) {
@@ -1145,6 +1323,8 @@ export function registerSlackHandlers(app, context) {
     }
     const intakeDraft = buildIntakeDraft(values, templates, {
       editCaseId: metadata.editCaseId || '',
+      customInviteSlackRecipientIds: selectedCustomInviteUserIds,
+      customInviteSlackRecipients: selectedCustomInviteUsers,
       remoteUpdateStatus: metadata.remoteUpdateStatus || '',
       remoteUpdateMessage: metadata.remoteUpdateMessage || '',
     });
@@ -1163,7 +1343,16 @@ export function registerSlackHandlers(app, context) {
     const errors = {};
 
     if (intakeDraft.eventType === 'custom-invite') {
-      Object.assign(errors, validateCustomInviteDraft(intakeDraft))
+      const customInviteErrors = validateCustomInviteDraft(intakeDraft)
+      for (const [blockId, message] of Object.entries(customInviteErrors)) {
+        if (blockId === 'custom_subject_block') {
+          errors[findInputBlockId(values, 'custom_subject', blockId)] = message
+        } else if (blockId === 'custom_body_block') {
+          errors[findInputBlockId(values, 'custom_body', blockId)] = message
+        } else {
+          errors[blockId] = message
+        }
+      }
       if (Object.keys(errors).length > 0) {
         await ack({ response_action: 'errors', errors })
         return
@@ -1172,6 +1361,7 @@ export function registerSlackHandlers(app, context) {
       await ack()
       const coordinator = await resolveSlackUser({ client, userId: body.user.id, logger })
       const customInvite = {
+        templateId: intakeDraft.customInviteTemplateId,
         title: intakeDraft.customInviteTitle,
         subject: intakeDraft.customInviteSubject,
         body: intakeDraft.customInviteBody,
@@ -1299,10 +1489,16 @@ export function registerSlackHandlers(app, context) {
     if (requiresHiringManager && intakeDraft.hiringManagerIds.length > 10) {
       errors[findInputBlockId(values, 'hiring_manager_checkboxes', 'hiring_managers_block')] = 'Choose no more than 10 hiring managers.';
     }
+    const hiringManagerEmailActionId = intakeDraft.hiringManagerNeedsEmail
+      ? 'hiring_manager_email_override'
+      : (standardEventType ? 'hiring_manager_checkboxes' : 'hm_select')
+    const hiringManagerEmailBlockId = intakeDraft.hiringManagerNeedsEmail
+      ? 'hiring_manager_email_block'
+      : (standardEventType ? 'hiring_managers_block' : 'hm_block')
     if (requiresHiringManager && intakeDraft.hiringManagerId && !intakeDraft.hiringManagerEmail) {
-      errors[findInputBlockId(values, standardEventType ? 'hiring_manager_checkboxes' : 'hm_select', standardEventType ? 'hiring_managers_block' : 'hm_block')] = 'Selected hiring manager is missing an email.';
+      errors[findInputBlockId(values, hiringManagerEmailActionId, hiringManagerEmailBlockId)] = 'Enter the hiring manager email.';
     } else if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
-      errors[findInputBlockId(values, standardEventType ? 'hiring_manager_checkboxes' : 'hm_select', standardEventType ? 'hiring_managers_block' : 'hm_block')] = 'Selected hiring manager has an invalid email.';
+      errors[findInputBlockId(values, hiringManagerEmailActionId, hiringManagerEmailBlockId)] = 'Enter a valid hiring manager email.';
     }
     if (Object.keys(errors).length > 0) {
       await ack({ response_action: 'errors', errors });
@@ -1675,7 +1871,9 @@ export function registerSlackHandlers(app, context) {
         view: schedulingModal(caseRecord, { phase: 1, stageRules, attendees, stageKey }, recentAudits)
       })
     } catch (error) {
-      logger.error('scheduling_open_error', { error: error.message })
+      const correlationId = crypto.randomUUID()
+      logger.error('scheduling_open_error', { error, correlationId })
+      error.message = `Reference: ${correlationId}`
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user?.id || body.user.id),
         user: body.user.id,
@@ -1781,23 +1979,28 @@ export function registerSlackHandlers(app, context) {
         }, recentAudits)
       })
     } catch (error) {
+      const correlationId = crypto.randomUUID()
       logger.error('scheduling_check_availability_error', {
         caseId: schedulingCaseId,
-        code: error?.code || 'availability_check_failed',
+        error,
+        correlationId,
       })
       if (!body?.view?.id) return
 
       try {
         await client.views.update({
           view_id: body.view.id,
-          view: availabilityCheckErrorModal(schedulingCaseRecord || { id: schedulingCaseId }, error.message),
+          view: availabilityCheckErrorModal(
+            schedulingCaseRecord || { id: schedulingCaseId },
+            `Availability could not be checked. Reference: ${correlationId}`,
+          ),
         })
       } catch (viewError) {
         logger.warn('scheduling_availability_error_modal_failed', { error: viewError.message })
         await client.chat.postEphemeral({
           channel: resolvePostingChannel(config, body.user.id),
           user: body.user.id,
-          text: `Could not check availability: ${error.message}`
+          text: `Could not check availability. Reference: ${correlationId}`
         })
       }
     }
@@ -2086,11 +2289,12 @@ export function registerSlackHandlers(app, context) {
       })
       return;
     } catch (error) {
-      logger.error('scheduling_confirm_error', { error: error.message })
+      const correlationId = crypto.randomUUID()
+      logger.error('scheduling_confirm_error', { error, correlationId })
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.user.id),
         user: body.user.id,
-        text: `Could not schedule interview: ${error.message}`
+        text: `Could not schedule interview. Reference: ${correlationId}`
       })
     }
   })
@@ -2465,13 +2669,14 @@ export function registerSlackHandlers(app, context) {
         saveAsScheduledMessage: true,
       })
     } catch (error) {
-      logger.error('finalize_email_preview_submit_error', { caseId, error: error.message })
+      const correlationId = crypto.randomUUID()
+      logger.error('finalize_email_preview_submit_error', { caseId, error, correlationId })
       if (isCustomInviteCase(caseRecord) && body.view?.id) {
         await client.views.update({
           view_id: body.view.id,
           view: customInviteRequestStatusModal({
             title: 'Request Failed',
-            message: `The event could not be completed: ${error.message}`,
+            message: `The event could not be completed. Reference: ${correlationId}`,
             status: 'error',
           }),
         })
@@ -2480,7 +2685,7 @@ export function registerSlackHandlers(app, context) {
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
         user: body.user.id,
-        text: `Could not complete scheduling: ${error.message}`,
+        text: `Could not complete scheduling. Reference: ${correlationId}`,
       })
     }
   });
@@ -2775,6 +2980,7 @@ export function registerSlackHandlers(app, context) {
         ...(previousPrimaryId !== (selectedIds[0] || '') ? {
           hiringManagerName: primary?.name || '',
           hiringManagerEmail: primary?.email || '',
+          hiringManagerEmailOverride: '',
         } : {}),
       },
       timeZones: schedulingTimeZones,
@@ -2851,13 +3057,14 @@ export function registerSlackHandlers(app, context) {
         })
       }
     } catch (error) {
-      logger.error('custom_invite_retry_failed', { caseId, error: error.message })
+      const correlationId = crypto.randomUUID()
+      logger.error('custom_invite_retry_failed', { caseId, error, correlationId })
       if (loadingViewId) {
         await client.views.update({
           view_id: loadingViewId,
           view: customInviteRequestStatusModal({
             title: 'Retry Failed',
-            message: `Invitations could not be retried: ${error.message}`,
+            message: `Invitations could not be retried. Reference: ${correlationId}`,
             status: 'error',
           }),
         })
@@ -3035,38 +3242,74 @@ async function openIntakeModal({
   privateMetadata = '',
   timeZones = [],
   defaultTimeZone,
+  userId = '',
 }) {
-  const templates = await loadSchedulingTemplates();
+  const templates = await loadIntakeTemplates();
   ensureSlackDirectory({ client, config, logger }).catch((error) => {
-    logger.warn('slack_directory_background_failed', { error: error.message })
+    logger.warn('slack_directory_background_failed', slackApiErrorDetails(error))
   })
   const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false, manualCandidateMode: false });
   logger.info('schedule_intake_opened', { templateCount: templates.length });
-  await client.views.open({
-    trigger_id: triggerId,
-    view: {
-      ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getTalentRecruiters(), roles: getOpenRoles() }),
-      private_metadata: meta,
-    },
-  });
+  try {
+    await client.views.open({
+      trigger_id: triggerId,
+      view: {
+        ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getTalentRecruiters(), roles: getOpenRoles() }),
+        private_metadata: meta,
+      },
+    })
+  } catch (error) {
+    if (error.data?.error === 'expired_trigger_id') {
+      logger.warn('schedule_intake_trigger_expired', {
+        hint: 'Event loop lag caused trigger_id to expire before modal could open',
+      })
+      if (privateMetadata && userId) {
+        await client.chat.postEphemeral({
+          channel: privateMetadata,
+          user: userId,
+          text: 'Sorry, the form took too long to open. Please click "Start scheduling" again.',
+        })
+      }
+      return
+    }
+    throw error
+  }
 }
 
 export function buildEditCaseDraft(caseRecord, templates) {
   if (isCustomInviteCase(caseRecord)) {
     const customInvite = normalizeCustomInviteMetadata(caseRecord)
+    const allRecruiters = [
+      ...getSlackRecruiters(),
+      ...getTalentRecruiters(),
+      ...getSlackUsers(),
+    ]
+    const recruitmentUsersById = new Map()
+    const recruitmentUsersByEmail = new Map()
+    for (const user of allRecruiters) {
+      if (user.slackUserId) recruitmentUsersById.set(user.slackUserId, user)
+      if (user.id) recruitmentUsersById.set(user.id, user)
+      if (user.email) recruitmentUsersByEmail.set(normalizeEmail(user.email), user)
+    }
+    const customInviteSlackRecipients = customInvite.recipients
+      .map((recipient) =>
+        recruitmentUsersById.get(recipient.slackUserId) ||
+        recruitmentUsersByEmail.get(normalizeEmail(recipient.email))
+      )
+      .filter(Boolean)
     return buildIntakeDraft({}, templates, {
       editCaseId: caseRecord.id,
       eventType: 'custom-invite',
       customInviteTitle: customInvite.title,
-      customInviteSlackRecipientIds: customInvite.recipients
-        .map((recipient) => recipient.slackUserId || findSlackUserByEmail(recipient.email)?.id)
-        .filter(Boolean),
-      customInviteSlackRecipients: customInvite.recipients
-        .map((recipient) => recipient.slackUserId ? recipient : findSlackUserByEmail(recipient.email))
-        .filter(Boolean),
+      customInviteTemplateId: customInvite.templateId || CUSTOM_INVITE_MANUAL_TEMPLATE_ID,
+      customInviteSlackRecipientIds: customInviteSlackRecipients
+        .map((recipient) => recipient.slackUserId || recipient.id),
+      customInviteSlackRecipients,
       customInviteRecipientsRaw: customInvite.recipients
-        .filter((recipient) => !recipient.slackUserId && !findSlackUserByEmail(recipient.email))
-        .map((recipient) => recipient.name ? `${recipient.name} - ${recipient.email}` : recipient.email)
+        .filter((recipient) => !recipient.slackUserId)
+        .map((recipient) => recipient.name
+          ? `${recipient.name} - ${recipient.email}`
+          : recipient.email)
         .join('\n'),
       customInviteSubject: customInvite.subject,
       customInviteBody: customInvite.body,
@@ -3183,6 +3426,9 @@ function buildPrivateMetadata(view, overrides = {}) {
   const customInviteSlackRecipientIds = 'customInviteSlackRecipientIds' in overrides
     ? overrides.customInviteSlackRecipientIds
     : parsed.customInviteSlackRecipientIds || []
+  const customInviteTemplateId = 'customInviteTemplateId' in overrides
+    ? overrides.customInviteTemplateId
+    : parsed.customInviteTemplateId || ''
   const roleId = 'roleId' in overrides ? overrides.roleId : parsed.roleId || ''
   const roleTitle = 'roleTitle' in overrides ? overrides.roleTitle : parsed.roleTitle || ''
   const recruiterIds = 'recruiterIds' in overrides ? overrides.recruiterIds : parsed.recruiterIds || []
@@ -3222,6 +3468,7 @@ function buildPrivateMetadata(view, overrides = {}) {
     eventType,
     editCaseId,
     customInviteSlackRecipientIds,
+    customInviteTemplateId,
     roleId,
     roleTitle,
     recruiterIds,
@@ -3293,6 +3540,7 @@ async function refreshIntakeModal({
     'eventType',
     'editCaseId',
     'customInviteSlackRecipientIds',
+    'customInviteTemplateId',
     'roleId',
     'roleTitle',
     'recruiterIds',
@@ -3397,6 +3645,7 @@ async function refreshIntakeModal({
     eventType: draft.eventType,
     editCaseId: draft.editCaseId,
     customInviteSlackRecipientIds: draft.customInviteSlackRecipientIds,
+    customInviteTemplateId: draft.customInviteTemplateId,
     roleId: draft.roleId,
     roleTitle: draft.roleTitle,
     recruiterIds: draft.recruiterIds,
@@ -4102,11 +4351,15 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   if (customInvite) {
     const customInviteSlackRecipientIds = normalizeIdList(
       overrides.customInviteSlackRecipientIds ??
-      getSelectedUserValues(values, 'custom_slack_recipients')
+      getSelectedOptionValues(values, 'custom_slack_recipients')
     )
     const customInviteSlackRecipients = (overrides.customInviteSlackRecipients ||
       customInviteSlackRecipientIds
-        .map((id) => getSlackUsers().find((person) => person.id === id || person.slackUserId === id))
+        .map((id) => {
+          return getSlackRecruiters().find((p) => p.id === id || p.slackUserId === id)
+            || getTalentRecruiters().find((p) => p.id === id)
+            || getSlackUsers().find((p) => p.id === id || p.slackUserId === id)
+        })
     )
       .filter((person) => person?.email)
       .map((person) => ({
@@ -4118,15 +4371,27 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     const customInviteTitle = overrides.customInviteTitle !== undefined
       ? overrides.customInviteTitle
       : getInputValue(values, 'custom_title')
+    const customInviteTemplateId = String(
+      overrides.customInviteTemplateId ??
+      getSelectedOptionValues(values, 'custom_email_template_select')[0] ??
+      CUSTOM_INVITE_TEMPLATE_IDS[0]
+    ).trim() || CUSTOM_INVITE_TEMPLATE_IDS[0]
+    const selectedCustomInviteTemplate = templates.find(
+      (template) => template.id === customInviteTemplateId,
+    )
     const customInviteRecipientsRaw = overrides.customInviteRecipientsRaw !== undefined
       ? overrides.customInviteRecipientsRaw
       : getInputValue(values, 'custom_external_guests')
     const customInviteSubject = overrides.customInviteSubject !== undefined
       ? overrides.customInviteSubject
-      : getInputValue(values, 'custom_subject')
+      : hasInputElement(values, 'custom_subject')
+        ? getInputValue(values, 'custom_subject')
+        : selectedCustomInviteTemplate?.subject || ''
     const customInviteBody = overrides.customInviteBody !== undefined
       ? overrides.customInviteBody
-      : getInputValue(values, 'custom_body')
+      : hasInputElement(values, 'custom_body')
+        ? getInputValue(values, 'custom_body')
+        : selectedCustomInviteTemplate?.body || ''
     const customInviteMeetingLink = overrides.customInviteMeetingLink !== undefined
       ? overrides.customInviteMeetingLink
       : getInputValue(values, 'custom_meeting_link')
@@ -4152,7 +4417,20 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       eventTypeOption: toSlackOption(eventTypeLabel(eventType), eventType),
       standardEventType: false,
       customInviteTitle,
+      customInviteTemplateId,
+      customInviteTemplateOption: toSlackOption(
+        selectedCustomInviteTemplate?.label ||
+          (customInviteTemplateId === CUSTOM_INVITE_MANUAL_TEMPLATE_ID ? 'Custom' : customInviteTemplateId),
+        customInviteTemplateId,
+      ),
+      customInviteTemplateOptions: [
+        ...templates
+          .filter((template) => CUSTOM_INVITE_TEMPLATE_IDS.includes(template.id))
+          .map((template) => toSlackOption(template.label, template.id)),
+        toSlackOption('Custom', CUSTOM_INVITE_MANUAL_TEMPLATE_ID),
+      ],
       customInviteSlackRecipientIds,
+      customInviteSlackRecipients,
       customInviteRecipientsRaw,
       customInviteRecipients,
       customInviteRecipientError,
@@ -4253,9 +4531,18 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const hiringManagerId = hiringManagerIds[0] || ''
   const selectedRecruiter = overrides.recruiterPerson || findMappedPersonById(recruiterId)
   const recruiter = selectedRecruiter ? asRecruiter(selectedRecruiter) : null
-  const hiringManager = requiresHiringManager
+  const baseHiringManager = requiresHiringManager
     ? asHiringManager(overrides.hiringManagerPerson || findMappedPersonById(hiringManagerId))
     : null
+  const hiringManagerNeedsEmail = Boolean(baseHiringManager && !isValidEmail(baseHiringManager.email))
+  const hiringManagerEmailOverride = String(
+    overrides.hiringManagerEmailOverride !== undefined
+      ? overrides.hiringManagerEmailOverride
+      : getInputValue(values, 'hiring_manager_email_override') || '',
+  ).trim()
+  const hiringManager = baseHiringManager && hiringManagerNeedsEmail
+    ? { ...baseHiringManager, email: hiringManagerEmailOverride }
+    : baseHiringManager
   const selectedRecruiters = standardEventType ? recruiterIds.map(findMappedPersonById).filter(Boolean).map(asRecruiter) : (recruiter ? [recruiter] : [])
   const selectedHiringManagers = standardHiringManagersAllowed ? hiringManagerIds.map(findMappedPersonById).filter(Boolean).map(asHiringManager) : (hiringManager ? [hiringManager] : [])
   const suggestedHiringManagers = standardHiringManagersAllowed
@@ -4346,6 +4633,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     recruiterEmail: recruiter?.email || '',
     hiringManagerName: hiringManager?.name || '',
     hiringManagerEmail: hiringManager?.email || '',
+    hiringManagerNeedsEmail,
+    hiringManagerEmailOverride,
     notes: overrides.notes !== undefined ? overrides.notes : getInputValue(values, 'notes'),
     resumeLink,
     resumeFile,
@@ -4371,22 +4660,47 @@ function getInputValue(values, actionId) {
 }
 
 function getSelectedOptionValues(values, actionId) {
+  return getSelectedOptions(values, actionId).map((option) => option.value).filter(Boolean)
+}
+
+function getSelectedOptions(values, actionId) {
   for (const block of Object.values(values || {})) {
     const element = findElementByActionId(block, actionId)
     if (Array.isArray(element?.selected_options)) {
-      return element.selected_options.map((option) => option.value).filter(Boolean)
+      return element.selected_options.filter((option) => option?.value)
     }
-    if (element?.selected_option?.value) return [element.selected_option.value]
+    if (element?.selected_option?.value) return [element.selected_option]
   }
   return []
 }
 
-function getSelectedUserValues(values, actionId) {
-  for (const block of Object.values(values || {})) {
-    const element = findElementByActionId(block, actionId)
-    if (Array.isArray(element?.selected_users)) return element.selected_users.filter(Boolean)
+function slackRecipientFromSelectedOption(option) {
+  const slackUserId = String(option?.value || '').trim()
+  const label = String(option?.text?.text || '').trim()
+  const description = String(option?.description?.text || '').trim()
+  const candidates = [
+    label,
+    description ? `${label} - ${description}` : '',
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    try {
+      const [recipient] = parseCustomInviteRecipients(candidate)
+      if (recipient?.email) {
+        return {
+          id: slackUserId,
+          slackUserId,
+          name: recipient.name || label.replace(/\s+-\s+[^\s]+@[^\s]+$/, '').trim(),
+          email: recipient.email,
+          role: 'slack_user',
+        }
+      }
+    } catch {
+      // Try the next representation.
+    }
   }
-  return []
+
+  return null
 }
 
 function normalizeIdList(values) {
@@ -4768,7 +5082,17 @@ export function mappedHiringManagersForRole(roleId) {
 
 export function selectableHiringManagersForRole(roleId) {
   const mapped = mappedHiringManagersForRole(roleId)
-  return mapped.length > 0 ? mapped : getHiringManagers().map(asHiringManager)
+  if (mapped.length > 0) return mapped
+
+  const directoryManagers = getHiringManagers().map(asHiringManager)
+  if (directoryManagers.length > 0) return directoryManagers
+
+  return uniquePeople(
+    getRoleAssignments()
+      .map((assignment) => assignment.hiringManager)
+      .filter(Boolean)
+      .map(asHiringManager),
+  )
 }
 
 function uniquePeople(people) {
@@ -4884,11 +5208,6 @@ function eventTypeLabel(eventType) {
     'job-offer': 'Job Offer',
     'custom-invite': 'Custom Invite',
   }[eventType] || ''
-}
-
-function findSlackUserByEmail(email) {
-  const expected = normalizeEmail(email)
-  return getSlackUsers().find((person) => normalizeEmail(person.email) === expected)
 }
 
 function mergeCustomInviteRecipients(...groups) {
