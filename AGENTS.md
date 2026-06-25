@@ -9,15 +9,15 @@ This file provides guidance to agents when working with code in this repository.
 - **Run a specific test by name:** `node --test --test-name-pattern "pattern" tests/<file>.test.js`
 - **Playwright E2E tests:** `npx playwright test` (tests in `playwright-tests/`)
 - **Syntax check:** `node --check app.js`
-- **Start app:** `npm start` (requires Slack tokens in `.env`)
+- **Start app:** `npm start` (requires Slack tokens through process environment or `*_FILE` secret mounts; `.env` files are not loaded)
 - **No linter/formatter configured** — no ESLint, Prettier, or equivalent
 
 ## Project Architecture (Non-Obvious)
 
 - **ESM-only** (`"type": "module"` in package.json) — all imports use `import`/`export`, no `require()` except [`index.cjs`](index.cjs) (legacy Selenium scratch file, not part of the app)
-- **Dual storage:** JSON file store at [`data/runtime/state.json`](data/runtime/state.json) by default; switches to Postgres if `DATABASE_URL` is set ([`src/store/index.js`](src/store/index.js:4))
+- **Dual storage:** JSON file store at [`data/runtime/state.json`](data/runtime/state.json) is local/test-only; production uses Cloud SQL IAM configuration through [`src/store/index.js`](src/store/index.js)
 - **Google/Gmail/JazzHR services are safely mocked** when credentials are absent — all API calls return `{ mocked: true, ... }` instead of throwing ([`src/services/google.js`](src/services/google.js:84))
-- **Google OAuth tokens are encrypted** with `APP_ENCRYPTION_KEY` using AES-256-GCM before storage ([`src/security/crypto.js`](src/security/crypto.js:9))
+- **Google OAuth tokens are encrypted** with Cloud KMS in production; local/test storage can use AES-256-GCM ([`src/security/token-cipher.js`](src/security/token-cipher.js))
 - **Logger auto-redacts** email addresses and phone numbers from all log output ([`src/logger.js`](src/logger.js:4))
 - **Email templates** are plain text files in [`email-templates/`](email-templates/) with `Subject:` / `Body:` headers, parsed by [`src/templates.js`](src/templates.js:59)
 - **Template variables** use `[bracket_notation]` (not `{{mustache}}` or `${js}`) — see [`src/templates.js`](src/templates.js:96)

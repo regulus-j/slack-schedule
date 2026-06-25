@@ -1,108 +1,91 @@
-# slack-schedule
+# Slack Scheduler
 
-FPI-OPG Slack Bolt app for scheduling interviews within slack and ensuring no conflict scheduling.
+Slack-first interview scheduling across JazzHR, Google Calendar, Gmail, and Slack.
 
-Slack-first workflow assistant for interview scheduling across JazzHR applicant data, Google Calendar, recruiter Gmail, and manual resume handling. Built on [Bolt for JavaScript](https://slack.dev/bolt-js/) with Socket Mode.
+## Security model
 
-## Features
+- Production secrets are stored in GCP Secret Manager and mounted as read-only files.
+- Google OAuth tokens are encrypted with Cloud KMS before being stored in Cloud SQL.
+- Recruitment, administrator, and alert access use explicit Slack user-ID lists.
+- PostgreSQL production access uses Cloud SQL IAM authentication and private networking.
+- The application does not load `.env` or `.env.production` files.
 
-- **App Home dashboard** with "My Cases" and "Team Queue" views
-- **Guided intake modal** — searchable applicant, recruiter, and hiring manager pickers
-- **Scheduling pipeline** — generate candidate slots, check calendar availability, rank conflict-free times
-- **Calendar event creation** via Google Calendar API with attendee invitations
-- **Candidate messaging** — templated email sent via Gmail, pre-prepared SMS draft for manual sending
-- **Reschedule workflow** — state machine with audit trail and schedule versioning
-- **Interview stage rules** — configurable duration, buffer times, attendee inclusion per stage
-- **Dual storage** — JSON file store for local dev, PostgreSQL for production
-- **Safe mocking** — all Google/Gmail/JazzHR service calls return `{ mocked: true }` when credentials are absent
+See:
 
-## Prerequisites
+- [Security review](docs/security-review.md)
+- [Access control](docs/access-control.md)
+- [Process flows](docs/process-flows.md)
+- [Incident response](docs/incident-response.md)
+- [GCP deployment](docs/gcp-deployment.md)
 
-- **Node.js 20+**
-- **Slack app** with Socket Mode enabled — use [`manifest.json`](manifest.json) to configure
-- **Google Cloud project** (optional, for Calendar and Gmail) with OAuth 2.0 credentials
-- **PostgreSQL** (optional, defaults to JSON file store)
+## Local development
 
-## Quick Start
+Requirements:
 
-```sh
-# Clone and install
-git clone <repo-url>
-cd slack-scheduler
-npm install
+- Node.js 20+
+- A development Slack app with Socket Mode enabled
 
-# Copy and fill the environment file
-cp .env.example .env
+Install:
 
-# Start (Socket Mode + HTTP health server)
-npm start
+```powershell
+npm.cmd ci
 ```
 
-## Environment Variables
+Set values in the current shell or use read-only secret files through `NAME_FILE`:
 
-| Variable | Required | Description |
-|---|---|---|
-| `SLACK_BOT_TOKEN` | Yes | Slack Bot User OAuth Token (`xoxb-...`) |
-| `SLACK_APP_TOKEN` | Yes | Slack App-Level Token for Socket Mode (`xapp-...`) |
-| `JAZZHR_API_KEY` | No | JazzHR API key for applicant data |
-| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
-| `GOOGLE_REDIRECT_URI` | No | OAuth callback URL |
-| `GOOGLE_SHARED_CALENDAR_ID` | No | Calendar ID for event creation |
-| `EMAIL_TEST_MODE` | No | Redirect Gmail sends to the test recipient and disable Calendar attendee emails |
-| `EMAIL_TEST_RECIPIENT` | No | Test-mode Gmail recipient; defaults to `jamalalbadi03@gmail.com` |
-| `APP_ENCRYPTION_KEY` | No | AES-256-GCM key for encrypting OAuth tokens at rest |
-| `DATABASE_URL` | No | PostgreSQL connection string (falls back to JSON store) |
+```powershell
+$env:SLACK_BOT_TOKEN_FILE = 'C:\secure\slack-bot-token'
+$env:SLACK_APP_TOKEN_FILE = 'C:\secure\slack-app-token'
+$env:JAZZHR_API_KEY_FILE = 'C:\secure\jazzhr-api-key'
+$env:ACCESS_CONTROL_ENFORCED = 'true'
+$env:SLACK_RECRUITMENT_USER_IDS = 'U12345678'
+$env:SLACK_ADMIN_USER_IDS = 'U12345678'
+$env:SLACK_ALERT_USER_IDS = 'U12345678'
+npm.cmd start
+```
 
-See [`.env.example`](.env.example) for a ready-to-copy template.
+The JSON store is permitted only for local development and tests. Production validation requires Cloud SQL configuration.
 
-## Slack Setup
+## Slack entry points
 
-Use [`manifest.json`](manifest.json) to create or update your Slack app. Reinstall the app after changing scopes or enabling App Home.
-
-Commands:
-- `/schedule-interview` — open the intake modal
-- `/schedule-interview button` — post a reusable channel launcher
+- `/schedule-interview` opens intake.
+- `/schedule-interview button` posts a reusable launcher.
+- `/slack-scheduler` is administrator-only.
+- Workflow Builder can send `/schedule-interview` or `/schedule-interview button` to a configured channel or DM.
 
 ## Architecture
 
+```text
+app.js
+  -> src/config.js                    secret-file/config loading and validation
+  -> src/security/slack-access.js     authorization and throttling
+  -> src/store/index.js               JSON or Cloud SQL store
+  -> src/slack/handlers.js            Slack workflows
+  -> src/http-server.js               health and Google OAuth callback
+  -> src/logger.js                    structured allow-listed logging
+  -> src/observability/slack-alerts.js operational alert DMs
 ```
-app.js                         # Entry point
-  -> src/config.js             # Env loading, defaults, validation
-  -> src/store/index.js        # Store factory (JSON or Postgres)
-  -> src/slack/handlers.js     # All Slack event/action/view handlers
-  -> src/http-server.js        # Health endpoint + Google OAuth callback
-  -> src/logger.js             # Structured JSON logging
+
+## Tests and security checks
+
+```powershell
+npm.cmd test
+npm.cmd run check
+npm.cmd run security:audit
 ```
 
-Key modules:
-- `src/slack/views.js` — Slack Block Kit UI builders (modals, home tab, messages)
-- `src/workflow/scheduler.js` — 5-step scheduling pipeline
-- `src/workflow/reschedule.js` — Reschedule state machine
-- `src/workflow/stage-rules.js` — Per-stage interview configuration
-- `src/services/google.js` — Google Calendar and Gmail API
-- `src/templates.js` — Email template loading, parsing, and rendering
-- `src/signature.js` — OPG-branded email signature with inline logo
-
-For a deeper dive, see [`docs/scheduling-architecture.md`](docs/scheduling-architecture.md).
-
-## Testing
-
-```sh
-npm test                    # Node built-in test runner
-npx playwright test         # E2E browser tests
-node --check app.js         # Syntax check
-```
+CI also runs full-history Gitleaks scanning and CodeQL.
 
 ## Production
 
-See:
-- [`docs/operations.md`](docs/operations.md) — deployment, security, maintenance
-- [`docs/configuration.md`](docs/configuration.md) — data model shapes and JazzHR adapter
-- [`migrations/`](migrations/) — PostgreSQL migration files
+Production infrastructure is defined under `infra/terraform`:
 
-The production storage target is PostgreSQL. The JSON store is for local development.
+- Cloud Run in `australia-southeast1`
+- Cloud SQL PostgreSQL 16
+- Secret Manager
+- Cloud KMS
+- Artifact Registry
+- Cloud Scheduler retention job
+- GitHub Actions Workload Identity Federation
 
-## License
-
-MIT — see [LICENSE](LICENSE).
+Deployment-specific identifiers belong in Terraform/GitHub environment configuration. Secret values must be added directly to Secret Manager and must not be committed or passed as Terraform variables.

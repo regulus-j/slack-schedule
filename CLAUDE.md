@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Run a specific test by name:** `node --test --test-name-pattern "pattern" tests/<file>.test.js`
 - **Playwright E2E tests:** `npx playwright test` (tests in `playwright-tests/`)
 - **Syntax check:** `node --check app.js`
-- **Start app:** `npm start` (requires Slack tokens in `.env`)
+- **Start app:** `npm start` (requires Slack tokens through process environment or `*_FILE` secret mounts; `.env` files are not loaded)
 - **Run migrations:** `npm run migrate`
 - **Notifications CLI:** `npm run notifications:test`
 - **No linter/formatter configured**
@@ -19,12 +19,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a Slack Bolt interview scheduling app using **Socket Mode** (no HTTP endpoints for Slack). It integrates JazzHR (applicant data), Google Calendar (free/busy + event creation), and Gmail (candidate messaging).
 
 - **Entry point:** `app.js` — loads config, creates store, registers Slack handlers, starts HTTP health server + notification worker
-- **Store:** `src/store/index.js` selects JSON file store (`data/runtime/state.json`) or Postgres based on whether `DATABASE_URL` is set. Both implement the same interface.
+- **Store:** `src/store/index.js` selects local/test JSON storage or Cloud SQL/Postgres. Production uses Cloud SQL IAM configuration.
 - **Slack:** `src/slack/handlers.js` is the central handler registry (actions, views, commands, events). `src/slack/views.js` builds all Block Kit UI.
 - **Scheduling pipeline:** `src/workflow/scheduler.js` — 5-step pipeline: generate candidate time slots → filter business hours → check calendar free/busy → rank by conflicts → present options
 - **Reschedule:** `src/workflow/reschedule.js` — state machine (`none → requested → approved → completed` / `cancelled`)
 - **Notifications:** `src/workflow/notifications.js` — polling worker for automated candidate reminders, completion reminders, and feedback requests
-- **Config:** `src/config.js` — loads `.env` file, validates required vars at startup
+- **Config:** `src/config.js` — reads process values or `*_FILE` secret mounts and validates startup configuration; it does not load `.env`
 - **HTTP server:** `src/http-server.js` — health endpoint (`/health`) and Google OAuth callback (`/oauth/google/callback`)
 - **Slash commands:** `/schedule-interview` (opens intake modal or posts channel launcher), `/slack-scheduler` (admin: `refresh-jazz`)
 
@@ -35,7 +35,7 @@ This is a Slack Bolt interview scheduling app using **Socket Mode** (no HTTP end
 - **No semicolons** — consistently omitted throughout
 - **Dual store interface** — both `json-store.js` and `postgres-store.js` export identical method signatures (`createCase`, `updateCase`, `getCase`, `listCases`, `saveGoogleToken`, etc.). New store methods must be added to both.
 - **Google/Gmail/JazzHR services safely mock** when credentials are absent — all API calls return `{ mocked: true, ... }` instead of throwing
-- **Google OAuth tokens encrypted** with `APP_ENCRYPTION_KEY` using AES-256-GCM before storage at rest (`src/security/crypto.js`)
+- **Google OAuth tokens encrypted** with Cloud KMS in production (`src/security/token-cipher.js`)
 - **Logger auto-redacts** email addresses and phone numbers from all log output (`src/logger.js:4`)
 - **Email templates** are plain text files in `email-templates/` with `Subject:` / `Body:` headers, parsed by `src/templates.js`. Variables use `[bracket_notation]` (not `{{mustache}}`)
 - **Mojibake normalization** built into template parsing for copy-pasted emoji/Unicode corruption (`src/templates.js:44`)

@@ -1,89 +1,75 @@
 # Operations Guide
 
-## Environments
+Production runs on GCP. Follow [gcp-deployment.md](gcp-deployment.md).
 
-Use separate Slack apps and Google OAuth credentials for local, staging, and production.
+## Required production controls
 
-Required production variables:
+- Separate staging and production projects, Slack apps, Cloud SQL databases, KMS keys, and secrets.
+- Secret Manager file mounts; no `.env` or `.env.production`.
+- `ACCESS_CONTROL_ENFORCED=true` with recruitment, admin, and alert Slack user lists.
+- Cloud SQL IAM authentication and private networking.
+- Production deployment approval and two reviewed pull-request approvals.
 
-- `SLACK_BOT_TOKEN`
-- `SLACK_APP_TOKEN`
-- `JAZZHR_API_KEY`
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REDIRECT_URI`
-- `GOOGLE_SHARED_CALENDAR_ID`
-- `DATABASE_URL`
-- `APP_ENCRYPTION_KEY`
+## Google OAuth Setup
 
-Local development can run the Slack workflow with only Slack tokens. Google and JazzHR calls are safely mocked until credentials are present.
+Each environment (local dev, staging, production) requires its own Google Cloud OAuth client
+configuration.
 
-Set `EMAIL_TEST_MODE=true` while testing with live Google credentials to redirect Gmail sends to `EMAIL_TEST_RECIPIENT` and suppress Google Calendar attendee update emails with `sendUpdates: none`. Calendar events are still created with the real stored attendees; only the outbound attendee notification emails are disabled.
+1. Go to **Google Cloud Console** → **APIs & Services** → **Credentials**.
+2. Find or create an OAuth 2.0 Client ID of type **Web application**.
+3. Under **Authorized redirect URIs**, add the exact callback URL for each environment:
+   - Local dev: `http://localhost:3000/oauth/google/callback`
+   - Staging: `https://<staging-cloud-run-url>/oauth/google/callback`
+   - Production: `https://<production-cloud-run-url>/oauth/google/callback`
+4. Set the corresponding env vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
+5. `GOOGLE_REDIRECT_URI` is optional — when unset, it defaults to
+   `{PUBLIC_BASE_URL}/oauth/google/callback`. When set explicitly, it takes precedence.
+6. The Google Cloud project must have the **Calendar API** and **Gmail API** enabled.
+7. The OAuth consent screen must include the `calendar.events`, `calendar.freebusy`, and
+   `gmail.send` scopes. The app is configured for **offline** access (refresh tokens).
 
-## Deployment
+**Troubleshooting**: If users see a Google error page mentioning `redirect_uri_mismatch`,
+the `GOOGLE_REDIRECT_URI` (or the derived `PUBLIC_BASE_URL/oauth/google/callback`) does not
+match any authorized URI in the Google Cloud Console. Add it or fix the env var.
 
-For production on an Azure VM with Docker Compose, follow the deployment guide in [docs/azure-vm-docker.md](docs/azure-vm-docker.md).
+## Routine operations
 
-If you are using Render, deploy the Node service as an always-on web service.
+- Review configured Slack access lists quarterly.
+- Rotate Slack, JazzHR, Google client, and Apps Script credentials every 90 days.
+- Run `npm run tokens:reencrypt` after KMS primary-key rotation.
+- Review failed notification jobs and `needs_attention` cases daily.
+- Run the retention job daily and review its deletion counts.
+- Apply or remove a case legal hold with `npm run legal-hold -- --case case-id --mode enable|disable`; record the authorizing ticket.
+- Perform a staging backup restore test quarterly.
+- Run `npm audit --omit=dev` and review Dependabot weekly.
 
-Recommended Render settings:
+## Verification
 
-- Build command: `npm ci`
-- Start command: `npm start`
-- Health check path: `/health`
-- Runtime: Node 20 or newer
+Expected signals:
 
-Run `npm run migrate` (or the Compose `migrate` service) against the Postgres database before production launch. If `DATABASE_URL` is present, the app uses Postgres. Without it, local development falls back to JSON state in `data/runtime/state.json`.
+- `health_server_started`
+- `slack_app_started`
+- successful `/health`
+- successful Cloud SQL connection
+- successful forced-error alert DM to configured users
+- retention dry-run output before enabling scheduled deletion
 
-The Slack app requires the `files:read` bot scope to attach private resumes to
-candidate emails. Updating `manifest.json` does not update an installed app's
-token automatically. Reinstall the Slack app after adding or changing scopes.
+## Notification testing
 
-## Security
-
-- Keep `.env` local only.
-- Store Render secrets in environment variables.
-- Encrypt Google refresh tokens with `APP_ENCRYPTION_KEY` before storage.
-- Do not store resumes in this app.
-- Review Slack, Google, JazzHR, and encryption secrets quarterly.
-- Redacted structured logs are used by default for email and phone-like values.
-
-## Maintenance
-
-- Refresh the JazzHR cache on a schedule after JazzHR field mapping is finalized.
-- Review `email-templates` whenever recruiting copy changes.
-- Run `npm audit` monthly.
-- Review OAuth scopes quarterly.
-- Check stuck cases daily: statuses other than `Scheduled` that have not changed recently.
-
-## Recovery Playbooks
-
-- Google OAuth reconnect: ask the recruiter to reconnect Gmail/Calendar and replace encrypted token payload.
-- Slack reinstall: update app manifest, reinstall workspace app, rotate bot/app tokens if needed.
-- JazzHR key replacement: rotate `JAZZHR_API_KEY`, restart service, trigger cache refresh.
-- Failed Calendar event: inspect case audit, confirm no stored `calendarEventId`, then retry from the Finalize modal.
-- Stuck case: move to `Needs Attention`, review audit history, and resume from the last approval step.
-
-## Automated notification testing
-
-Automated notifications are disabled unless `AUTOMATED_NOTIFICATIONS_ENABLED=true`.
-The worker polls persisted jobs using `NOTIFICATION_POLL_INTERVAL_MS` and resumes pending
-work after a restart.
-
-Preview one notification without sending:
+Preview without delivery:
 
 ```powershell
 npm.cmd run notifications:test -- --case case-id --type candidate-reminder --email test@example.com
 ```
 
-Deliver to explicit test recipients:
+Deliver only to explicit test recipients:
 
 ```powershell
 npm.cmd run notifications:test -- --case case-id --type all --email test@example.com --slack-user U12345678 --deliver
 ```
 
-Using the actual recipients stored on the case requires an explicit opt-in:
+Using real case recipients requires the existing explicit `--use-case-recipients` opt-in.
 
-```powershell
-npm.cmd run notifications:test -- --case case-id --type all --use-case-recipients --deliver
-```
+## Recovery
+
+Use [incident-response.md](incident-response.md) for credential exposure, OAuth compromise, unauthorized actions, duplicate sends, dependency vulnerabilities, and database recovery.
