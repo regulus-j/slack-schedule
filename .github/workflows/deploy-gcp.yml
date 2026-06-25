@@ -1,0 +1,71 @@
+name: Deploy GCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [staging, production]
+        required: true
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    environment: ${{ inputs.environment || 'staging' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: hashicorp/setup-terraform@v3
+      - name: Bootstrap Artifact Registry
+        working-directory: infra/terraform
+        run: |
+          terraform init -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}"
+          terraform apply -auto-approve -target=google_artifact_registry_repository.app \
+            -var="project_id=${{ vars.GCP_PROJECT_ID }}" \
+            -var="environment=${{ inputs.environment || 'staging' }}" \
+            -var="region=australia-southeast1" \
+            -var="github_repository=${{ github.repository }}" \
+            -var="container_image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"
+      - name: Build and push image
+        run: |
+          gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
+          docker build -t "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}" .
+          docker push "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: |
+          terraform apply -auto-approve \
+            -var="project_id=${{ vars.GCP_PROJECT_ID }}" \
+            -var="environment=${{ inputs.environment || 'staging' }}" \
+            -var="region=${{ vars.GCP_REGION }}" \
+            -var="github_repository=${{ github.repository }}" \
+            -var="container_image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}" \
+            -var="public_base_url=${{ vars.PUBLIC_BASE_URL }}" \
+            -var="slack_team_id=${{ vars.SLACK_TEAM_ID }}" \
+            -var="slack_posting_channel_id=${{ vars.SLACK_POSTING_CHANNEL_ID }}" \
+            -var="slack_recruitment_user_ids=${{ vars.SLACK_RECRUITMENT_USER_IDS }}" \
+            -var="slack_admin_user_ids=${{ vars.SLACK_ADMIN_USER_IDS }}" \
+            -var="slack_alert_user_ids=${{ vars.SLACK_ALERT_USER_IDS }}" \
+            -var="google_client_id=${{ vars.GOOGLE_CLIENT_ID }}" \
+            -var="google_redirect_uri=${{ vars.GOOGLE_REDIRECT_URI }}" \
+            -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}" \
+            -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}" \
+            -var="monitoring_email=${{ vars.MONITORING_EMAIL }}" \
+            -var="secret_next_rotation_time=${{ vars.SECRET_NEXT_ROTATION_TIME }}"
+      - name: Run migrations
+        run: gcloud run jobs execute slack-scheduler-migrate --region "${{ vars.GCP_REGION }}" --wait
+      - name: Promote application revision
+        run: |
+          gcloud run services update slack-scheduler \
+            --region "${{ vars.GCP_REGION }}" \
+            --image "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"

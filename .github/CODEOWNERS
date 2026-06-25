@@ -1,0 +1,9 @@
+* @regulus-j
+
+# Security-sensitive configuration and infrastructure require code-owner review.
+/src/config.js @regulus-j
+/src/security/ @regulus-j
+/src/observability/ @regulus-j
+/migrations/ @regulus-j
+/infra/ @regulus-j
+/.github/ @regulus-j
