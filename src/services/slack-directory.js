@@ -1,7 +1,17 @@
-import { getSlackUsers, setSlackUsers } from '../data/cache.js'
+import {
+  getRecruitmentSheetPeople,
+  getSlackRecruiters,
+  getSlackUsers,
+  setSlackRecruiters,
+  setSlackUsers,
+} from '../data/cache.js'
+import { personIdentityMatches } from './recruiter-phone-export.js'
 
 let directoryLoaded = false
 let directoryLoadPromise = null
+let recruitmentDirectoryLoadedAt = 0
+let recruitmentDirectoryLoadPromise = null
+const RECRUITMENT_DIRECTORY_TTL_MS = 5 * 60 * 1000
 
 export async function ensureSlackDirectory({ client, config, logger, force = false }) {
   if (!force && directoryLoaded) {
@@ -51,6 +61,35 @@ export async function resolveSlackUser({ client, userId, logger }) {
   }
 }
 
+export async function ensureRecruitmentSlackDirectory({
+  client,
+  config,
+  logger,
+  force = false,
+}) {
+  if (
+    !force &&
+    recruitmentDirectoryLoadedAt > 0 &&
+    Date.now() - recruitmentDirectoryLoadedAt < RECRUITMENT_DIRECTORY_TTL_MS
+  ) {
+    return { users: getSlackRecruiters() }
+  }
+
+  if (!force && recruitmentDirectoryLoadPromise) return recruitmentDirectoryLoadPromise
+
+  recruitmentDirectoryLoadPromise = loadRecruitmentSlackDirectory({
+    client,
+    config,
+    logger,
+    force,
+  })
+  try {
+    return await recruitmentDirectoryLoadPromise
+  } finally {
+    recruitmentDirectoryLoadPromise = null
+  }
+}
+
 export function normalizeSlackUser(user) {
   if (!user || user.deleted || user.is_bot || user.is_app_user) return null
   const profile = user.profile || {}
@@ -72,6 +111,15 @@ export function normalizeSlackUser(user) {
     positionTitle: profile.title || '',
     avatarUrl: profile.image_192 || profile.image_72 || profile.image_48 || '',
     source: 'slack',
+  }
+}
+
+export function slackApiErrorDetails(error) {
+  return {
+    error: error?.message || String(error || 'Unknown Slack API error'),
+    slackError: error?.data?.error,
+    needed: error?.data?.needed,
+    provided: error?.data?.provided,
   }
 }
 
@@ -100,6 +148,24 @@ async function fetchAllSlackUsers({ client, config, logger }) {
 
   logger.info('slack_users_loaded', { count: users.length })
   return users
+}
+
+async function loadRecruitmentSlackDirectory({ client, config, logger, force }) {
+  const { users } = await ensureSlackDirectory({ client, config, logger, force })
+  const sheetPeople = getRecruitmentSheetPeople()
+  const matchedUsers = users
+    .filter((user) => user?.email)
+    .filter((user) => sheetPeople.some((person) => personIdentityMatches(person, user)))
+  setSlackRecruiters(matchedUsers)
+  recruitmentDirectoryLoadedAt = Date.now()
+
+  logger.info('slack_recruitment_sheet_matches_loaded', {
+    slackUsers: users.length,
+    sheetPeople: sheetPeople.length,
+    selectableUsers: matchedUsers.length,
+  })
+
+  return { users: matchedUsers }
 }
 
 function buildSlackUsersListArgs({ cursor, teamId }) {

@@ -1,5 +1,6 @@
 import { readAppsScriptJson } from './apps-script-response.js'
 import { personIdentityMatches } from './recruiter-phone-export.js'
+import { fetchWithTimeout } from './http-client.js'
 
 export async function fetchRoleAssignmentRows({ config, logger }) {
   const url = config?.roleAssignmentExport?.url
@@ -16,7 +17,7 @@ export async function fetchRoleAssignmentRows({ config, logger }) {
   if (config.roleAssignmentExport.sheetGid) requestUrl.searchParams.set('gid', config.roleAssignmentExport.sheetGid)
 
   try {
-    const response = await fetch(requestUrl)
+    const response = await fetchWithTimeout(requestUrl, {}, { retries: 2 })
     if (!response.ok) {
       logger.warn('role_assignment_export_http_error', { status: response.status })
       return []

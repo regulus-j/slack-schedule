@@ -17,7 +17,7 @@ test('downloads a private Slack resume with bot authentication', async () => {
     maxBytes: 1024,
     fetchImpl: async (url, options) => {
       assert.match(url, /files\.slack\.com/)
-      authorization = options.headers.authorization
+      authorization = options.headers.Authorization
       return new Response(Buffer.from('%PDF-1.7\nresume bytes'), {
         status: 200,
         headers: {
@@ -108,7 +108,7 @@ test('falls back to stored download URL when files:read scope is missing', async
         id: 'F456',
         name: 'candidate.pdf',
         mimeType: 'application/pdf',
-        downloadUrl: 'https://files.slack.com/files-pri/T123-F456/candidate.pdf',
+        downloadUrl: 'https://example.com/candidate.pdf',
       },
     },
     client: {
@@ -132,6 +132,35 @@ test('falls back to stored download URL when files:read scope is missing', async
   assert.equal(attachment.content.toString(), '%PDF-1.7\nresume bytes')
 })
 
+test('rejects Slack private download URLs when files:read scope is missing', async () => {
+  await assert.rejects(
+    resolveResumeAttachment({
+      caseRecord: {
+        resumeFile: {
+          id: 'F456',
+          name: 'candidate.pdf',
+          mimeType: 'application/pdf',
+          downloadUrl: 'https://files.slack.com/files-pri/T123-F456/candidate.pdf',
+        },
+      },
+      client: {
+        files: {
+          async info() {
+            const error = new Error('An API error occurred: missing_scope')
+            error.data = { error: 'missing_scope', needed: 'files:read' }
+            throw error
+          },
+        },
+      },
+      botToken: 'xoxb-test',
+      fetchImpl: async () => {
+        throw new Error('Slack private URL should not be fetched without files:read')
+      },
+    }),
+    /missing files:read access/i,
+  )
+})
+
 test('returns null when files:read is missing and no stored download URL', async () => {
   const result = await resolveResumeAttachment({
     caseRecord: { resumeFile: { id: 'F456' } },
@@ -150,30 +179,31 @@ test('returns null when files:read is missing and no stored download URL', async
   assert.equal(result, null)
 })
 
-test('returns null when stored download URL has expired and files:read is missing', async () => {
-  const result = await resolveResumeAttachment({
-    caseRecord: {
-      resumeFile: {
-        id: 'F456',
-        name: 'candidate.pdf',
-        mimeType: 'application/pdf',
-        downloadUrl: 'https://files.slack.com/files-pri/T123-F456/expired.pdf',
-      },
-    },
-    client: {
-      files: {
-        async info() {
-          const error = new Error('An API error occurred: missing_scope')
-          error.data = { error: 'missing_scope', needed: 'files:read' }
-          throw error
+test('rejects expired Slack private download URLs when files:read is missing', async () => {
+  await assert.rejects(
+    resolveResumeAttachment({
+      caseRecord: {
+        resumeFile: {
+          id: 'F456',
+          name: 'candidate.pdf',
+          mimeType: 'application/pdf',
+          downloadUrl: 'https://files.slack.com/files-pri/T123-F456/expired.pdf',
         },
       },
-    },
-    botToken: 'xoxb-test',
-    fetchImpl: async () => new Response('Not found', { status: 404 }),
-  })
-
-  assert.equal(result, null)
+      client: {
+        files: {
+          async info() {
+            const error = new Error('An API error occurred: missing_scope')
+            error.data = { error: 'missing_scope', needed: 'files:read' }
+            throw error
+          },
+        },
+      },
+      botToken: 'xoxb-test',
+      fetchImpl: async () => new Response('Not found', { status: 404 }),
+    }),
+    /missing files:read access/i,
+  )
 })
 
 test('rejects resumes larger than the configured source limit', async () => {

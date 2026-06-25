@@ -1,11 +1,12 @@
 import { googleReady } from '../config.js';
 import { buildCalendarEventDraft } from '../time.js';
 import { logoAttachment } from '../signature.js';
+import { buildSafeEmailHeaders } from '../security/email-headers.js'
+import { fetchWithTimeout } from './http-client.js'
 
 const GOOGLE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_CALENDAR_BASE_URL = 'https://www.googleapis.com/calendar/v3';
 const GOOGLE_GMAIL_BASE_URL = 'https://gmail.googleapis.com/gmail/v1';
-const DEFAULT_EMAIL_TEST_RECIPIENT = 'jamalalbadi03@gmail.com'
 
 export function buildGoogleOAuthUrl(config, state) {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -31,7 +32,7 @@ export async function exchangeGoogleOAuthCode({ config, code }) {
     throw new Error('Google OAuth is not configured');
   }
 
-  const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
+  const response = await fetchWithTimeout(GOOGLE_OAUTH_TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -45,7 +46,11 @@ export async function exchangeGoogleOAuthCode({ config, code }) {
 
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error_description || payload.error || 'Google OAuth token exchange failed');
+    throw new Error(
+      payload.error_description ||
+        payload.error ||
+        `Google OAuth token exchange failed (redirect_uri: ${config.google.redirectUri})`,
+    )
   }
 
   return normalizeTokenPayload(payload);
@@ -64,17 +69,21 @@ export async function checkFreeBusy({ config, logger, attendees, windows, store,
     return { mocked: true, busy: [] };
   }
 
-  const response = await fetch(`${GOOGLE_CALENDAR_BASE_URL}/freeBusy`, {
-    method: 'POST',
-    headers: buildAuthHeaders(accessToken),
-    body: JSON.stringify({
-      timeMin: windows[0]?.timeMin || windows[0]?.start || new Date().toISOString(),
-      timeMax: windows[0]?.timeMax || windows[0]?.end || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      items: attendees.map((attendee) => ({
-        id: typeof attendee === 'string' ? attendee : attendee.id,
-      })),
-    }),
-  });
+  const response = await fetchWithTimeout(
+    `${GOOGLE_CALENDAR_BASE_URL}/freeBusy`,
+    {
+      method: 'POST',
+      headers: buildAuthHeaders(accessToken),
+      body: JSON.stringify({
+        timeMin: windows[0]?.timeMin || windows[0]?.start || new Date().toISOString(),
+        timeMax: windows[0]?.timeMax || windows[0]?.end || new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        items: attendees.map((attendee) => ({
+          id: typeof attendee === 'string' ? attendee : attendee.id,
+        })),
+      }),
+    },
+    { retries: 1 },
+  );
 
   const payload = await response.json();
   if (!response.ok) {
@@ -98,7 +107,7 @@ export async function createCalendarEvent({ config, logger, caseRecord, eventInp
     return { mocked: true, eventId: `pending-google-${caseRecord.id}`, eventDraft };
   }
 
-  const response = await fetch(`${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events`, {
+  const response = await fetchWithTimeout(`${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events`, {
     method: 'POST',
     headers: buildAuthHeaders(accessToken),
     body: JSON.stringify({
@@ -140,7 +149,7 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
     return { mocked: true, eventId: `pending-google-${caseRecord.id}`, eventDraft };
   }
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events/${encodeURIComponent(eventId)}`,
     {
       method: 'PATCH',
@@ -181,7 +190,7 @@ export async function sendRecruiterEmail({ config, logger, caseRecord, email, st
   }
 
   const raw = buildGmailRawMessage(deliveryEmail);
-  const response = await fetch(`${GOOGLE_GMAIL_BASE_URL}/users/me/messages/send`, {
+  const response = await fetchWithTimeout(`${GOOGLE_GMAIL_BASE_URL}/users/me/messages/send`, {
     method: 'POST',
     headers: buildAuthHeaders(accessToken),
     body: JSON.stringify({ raw }),
@@ -231,7 +240,9 @@ function emailForDelivery({ config, logger, caseRecord, email }) {
 }
 
 function normalizeTestRecipient(config) {
-  return String(config?.email?.testRecipient || '').trim() || DEFAULT_EMAIL_TEST_RECIPIENT
+  const recipient = String(config?.email?.testRecipient || '').trim()
+  if (!recipient) throw new Error('EMAIL_TEST_RECIPIENT is required when email test mode is enabled.')
+  return recipient
 }
 
 async function resolveAccessToken({ config, store, recruiterId }) {
@@ -257,7 +268,7 @@ async function resolveAccessToken({ config, store, recruiterId }) {
 }
 
 async function refreshGoogleToken({ config, refreshToken }) {
-  const response = await fetch(GOOGLE_OAUTH_TOKEN_URL, {
+  const response = await fetchWithTimeout(GOOGLE_OAUTH_TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -270,7 +281,11 @@ async function refreshGoogleToken({ config, refreshToken }) {
 
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error_description || payload.error || 'Google token refresh failed');
+    throw new Error(
+      payload.error_description ||
+        payload.error ||
+        `Google token refresh failed (redirect_uri: ${config.google.redirectUri})`,
+    )
   }
 
   return normalizeTokenPayload(payload);
@@ -310,10 +325,16 @@ export function buildGmailRawMessage(email) {
   const hasLogo = logo && htmlBody.includes('cid:opg-logo')
   const attachments = Array.isArray(email.attachments) ? email.attachments : []
 
-  const subject = email.subject || ''
-  const to = email.to || ''
-  const cc = normalizeEmailHeaderList(email.cc)
-  const from = email.from || ''
+  const safeHeaders = buildSafeEmailHeaders({
+    subject: email.subject || '',
+    to: email.to || '',
+    cc: email.cc,
+    from: email.from || '',
+  })
+  const subject = safeHeaders.subject
+  const to = safeHeaders.to
+  const cc = safeHeaders.cc
+  const from = safeHeaders.from
 
   const mixedBoundary = `mixed-${crypto.randomUUID()}`
   const altBoundary = `alt-${crypto.randomUUID()}`

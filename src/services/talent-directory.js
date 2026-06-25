@@ -1,7 +1,12 @@
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../logger.js';
-import { setHiringManagers, setRoleAssignments, setTalentRecruiters } from '../data/cache.js';
+import {
+  setHiringManagers,
+  setRecruitmentSheetPeople,
+  setRoleAssignments,
+  setTalentRecruiters,
+} from '../data/cache.js';
 import { fetchRecruiterPhoneRows, mergeRecruiterPhones, recruiterRowsToPeople } from './recruiter-phone-export.js';
 import { fetchRoleAssignmentRows, resolveRoleAssignments } from './role-assignment-export.js';
 
@@ -31,9 +36,15 @@ export async function loadTalentDirectory(config, store) {
     const filePath = path.join(config.runtimeDir, 'talent_directory.sql');
     let sql;
     try {
-      sql = readFileSync(filePath, 'utf8');
+      sql = await readFile(filePath, 'utf8');
     } catch (err) {
-      throw new Error(`Cannot read talent directory file at ${filePath}: ${err.message}`);
+      if (err.code === 'ENOENT') {
+        const log = hasExternalTalentDirectorySources(config) ? logger.info : logger.warn
+        log('talent_directory_file_missing', { filePath })
+        sql = ''
+      } else {
+        throw new Error(`Cannot read talent directory file at ${filePath}: ${err.message}`);
+      }
     }
     people = parseTalentDirectory(sql)
     source = filePath
@@ -48,6 +59,7 @@ export async function loadTalentDirectory(config, store) {
     role: 'recruiter',
   }))
   const sheetRecruiters = recruiterRowsToPeople(phoneRows)
+  setRecruitmentSheetPeople(sheetRecruiters)
   const enrichedBaseRecruiters = mergeRecruiterPhones(baseRecruiters, phoneRows)
   const talentRecruiters = mergeRecruiterLists(sheetRecruiters, enrichedBaseRecruiters)
   setTalentRecruiters(talentRecruiters)
@@ -132,6 +144,15 @@ export function isRecruitmentTalent(person) {
     person?.department,
   ].join(' ').toLowerCase()
   return haystack.includes('recruitment')
+}
+
+function hasExternalTalentDirectorySources(config) {
+  return Boolean(
+    config?.recruiterPhoneExport?.url ||
+    config?.roleAssignmentExport?.url ||
+    config?.roleAssignmentExport?.fileId ||
+    config?.recruiterPhoneExport?.fileId,
+  )
 }
 
 function mergeRecruiterLists(primaryRecruiters, fallbackRecruiters) {

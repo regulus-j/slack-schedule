@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from './http-client.js'
+
 const DEFAULT_MIME_TYPE = 'application/octet-stream'
 
 export async function resolveResumeAttachment({
@@ -15,6 +17,7 @@ export async function resolveResumeAttachment({
 
   let file = stored
   let hasFreshUrl = false
+  let filesInfoMissingScope = false
   if (file.id && client?.files?.info) {
     try {
       const result = await client.files.info({ file: file.id })
@@ -22,6 +25,7 @@ export async function resolveResumeAttachment({
       hasFreshUrl = true
     } catch (error) {
       if (error?.data?.error === 'missing_scope') {
+        filesInfoMissingScope = true
         hasFreshUrl = false
       } else {
         throw error
@@ -32,12 +36,19 @@ export async function resolveResumeAttachment({
   if (!file.downloadUrl) {
     return null
   }
+  if (filesInfoMissingScope && isSlackFileUrl(file.downloadUrl)) {
+    throw new Error('Slack bot token is missing files:read access for private resume files. Reinstall the Slack app after adding files:read, then upload the resume again.')
+  }
 
-  const response = await fetchImpl(file.downloadUrl, {
-    headers: isSlackFileUrl(file.downloadUrl) && botToken
-      ? { authorization: `Bearer ${botToken}` }
-      : {},
-  })
+  const response = await fetchWithTimeout(
+    file.downloadUrl,
+    {
+      headers: isSlackFileUrl(file.downloadUrl) && botToken
+        ? { Authorization: `Bearer ${botToken}` }
+        : {},
+    },
+    { fetchImpl },
+  )
   if (!response.ok) {
     if (!hasFreshUrl) return null
     throw new Error(`Resume download failed with HTTP ${response.status}. Check the Slack files:read scope.`)

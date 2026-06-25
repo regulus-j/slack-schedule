@@ -1,4 +1,5 @@
 import { readAppsScriptJson } from './apps-script-response.js'
+import { fetchWithTimeout } from './http-client.js'
 
 export async function fetchRecruiterPhoneRows({ config, logger }) {
   const url = config?.recruiterPhoneExport?.url
@@ -14,7 +15,7 @@ export async function fetchRecruiterPhoneRows({ config, logger }) {
   if (config.recruiterPhoneExport.sheetName) requestUrl.searchParams.set('sheetName', config.recruiterPhoneExport.sheetName)
 
   try {
-    const response = await fetch(requestUrl)
+    const response = await fetchWithTimeout(requestUrl, {}, { retries: 2 })
     if (!response.ok) {
       logger.warn('recruiter_phone_export_http_error', { status: response.status })
       return []

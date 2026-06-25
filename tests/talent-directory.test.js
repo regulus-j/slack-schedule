@@ -3,7 +3,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { getHiringManagers, getTalentRecruiters, setHiringManagers, setTalentRecruiters } from '../src/data/cache.js'
+import {
+  getHiringManagers,
+  getRecruitmentSheetPeople,
+  getTalentRecruiters,
+  setHiringManagers,
+  setRecruitmentSheetPeople,
+  setTalentRecruiters,
+} from '../src/data/cache.js'
 import { personOptions } from '../src/data/search.js'
 import { isRecruitmentTalent, loadTalentDirectory, parseTalentDirectory } from '../src/services/talent-directory.js'
 
@@ -21,6 +28,7 @@ test('parseTalentDirectory loads SQL talent rows', () => {
 
 test('loadTalentDirectory uses Postgres talent rows and filters recruiters by recruitment designation', async () => {
   setHiringManagers([])
+  setRecruitmentSheetPeople([])
   setTalentRecruiters([])
 
   await loadTalentDirectory(
@@ -81,6 +89,24 @@ test('loadTalentDirectory falls back to SQL file when Postgres talent rows are e
   assert.equal(getHiringManagers().length, 2)
   assert.equal(getTalentRecruiters().length, 1)
   assert.equal(getTalentRecruiters()[0].email, 'mara@example.com')
+})
+
+test('loadTalentDirectory continues when the local SQL fallback file is missing', async () => {
+  setHiringManagers([])
+  setRecruitmentSheetPeople([])
+  setTalentRecruiters([])
+
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'talent-directory-missing-'))
+
+  const people = await loadTalentDirectory(
+    { runtimeDir },
+    {},
+  )
+
+  assert.deepEqual(people, [])
+  assert.deepEqual(getHiringManagers(), [])
+  assert.deepEqual(getRecruitmentSheetPeople(), [])
+  assert.deepEqual(getTalentRecruiters(), [])
 })
 
 test('loadTalentDirectory uses Apps Script recruiter rows as the primary recruiter source', async () => {
@@ -151,6 +177,11 @@ test('loadTalentDirectory uses Apps Script recruiter rows as the primary recruit
   }
 
   const recruiters = getTalentRecruiters()
+  const sheetPeople = getRecruitmentSheetPeople()
+  assert.deepEqual(sheetPeople.map((person) => person.email), [
+    'armi@freedompropertyinvestors.com.au',
+    'jam.albadi@freedompropertyinvestors.com.au',
+  ])
   assert.equal(recruiters[0].email, 'armi@freedompropertyinvestors.com.au')
   assert.equal(recruiters[0].phone, '0480002413/ 0489275966')
   assert.equal(recruiters[0].zoomLink, 'https://freedompropertyinvestors-au.zoom.us/my/armi.escamilla')

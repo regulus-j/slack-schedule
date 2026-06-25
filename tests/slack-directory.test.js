@@ -1,7 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { getSlackUsers, setSlackUsers } from '../src/data/cache.js'
-import { ensureSlackDirectory, normalizeSlackUser } from '../src/services/slack-directory.js'
+import {
+  getRecruitmentSheetPeople,
+  getSlackRecruiters,
+  getSlackUsers,
+  setRecruitmentSheetPeople,
+  setSlackRecruiters,
+  setSlackUsers,
+} from '../src/data/cache.js'
+import {
+  ensureRecruitmentSlackDirectory,
+  ensureSlackDirectory,
+  normalizeSlackUser,
+  slackApiErrorDetails,
+} from '../src/services/slack-directory.js'
 
 test('normalizeSlackUser maps Slack profile email and skips inactive users', () => {
   const normalized = normalizeSlackUser({
@@ -102,6 +114,44 @@ test('ensureSlackDirectory ignores recruitment channel config and does not warn 
   assert.equal(warnings.length, 0)
 })
 
+test('ensureRecruitmentSlackDirectory matches active Slack users to recruitment sheet people', async () => {
+  setSlackUsers([])
+  setSlackRecruiters([])
+  setRecruitmentSheetPeople([
+    { id: 'sheet-1', name: 'Recruiter One', email: 'rec1@opg.com' },
+    { id: 'sheet-2', name: 'Recruiter Two', email: 'rec2@other-domain.com' },
+  ])
+  const listCalls = []
+  const client = {
+    users: {
+      async list(args) {
+        listCalls.push(args)
+        return {
+          members: [
+            { id: 'U1', profile: { real_name_normalized: 'Recruiter One', email: 'rec1@opg.com' } },
+            { id: 'U2', profile: { real_name_normalized: 'Recruiter Two', email: 'rec2@slack-domain.com' } },
+            { id: 'U3', profile: { real_name_normalized: 'Operations User', email: 'ops@opg.com' } },
+            { id: 'B1', is_bot: true, profile: { real_name_normalized: 'Bot', email: 'bot@opg.com' } },
+          ],
+          response_metadata: { next_cursor: '' },
+        }
+      },
+    },
+  }
+
+  const result = await ensureRecruitmentSlackDirectory({
+    client,
+    logger: { info() {}, warn() {} },
+    force: true,
+    config: { slack: { teamId: 'T1' } },
+  })
+
+  assert.deepEqual(listCalls, [{ limit: 200, team_id: 'T1' }])
+  assert.deepEqual(result.users.map((user) => user.id), ['U1', 'U2'])
+  assert.deepEqual(getSlackRecruiters().map((user) => user.id), ['U1', 'U2'])
+  assert.equal(getRecruitmentSheetPeople().length, 2)
+})
+
 test('ensureSlackDirectory retries users.list with resolved team id when Slack requires it', async () => {
   setSlackUsers([])
 
@@ -175,4 +225,20 @@ test('ensureSlackDirectory includes configured Slack team id on users.list calls
   })
 
   assert.deepEqual(listArgs, [{ limit: 200, team_id: 'T456' }])
+})
+
+test('slackApiErrorDetails omits raw Error objects and preserves Slack error codes', () => {
+  const error = new Error('An API error occurred: team_access_not_granted')
+  error.data = {
+    error: 'team_access_not_granted',
+    needed: 'team_id',
+    provided: 'limit',
+  }
+
+  assert.deepEqual(slackApiErrorDetails(error), {
+    error: 'An API error occurred: team_access_not_granted',
+    slackError: 'team_access_not_granted',
+    needed: 'team_id',
+    provided: 'limit',
+  })
 })

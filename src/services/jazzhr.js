@@ -1,5 +1,6 @@
 import { setApplicants, setRecruiters, setJazzhrJobs, getApplicants } from '../data/cache.js';
 import { searchApplicants } from '../data/search.js';
+import { fetchWithTimeout } from './http-client.js'
 
 const BASE = 'https://api.resumatorapi.com/v1';
 const DEFAULT_FETCH_CONCURRENCY = 2;
@@ -609,7 +610,7 @@ async function jazzhrGet(pathname, apiKey) {
   const sep = pathname.includes('?') ? '&' : '?';
   const fullUrl = `${url}${sep}apikey=${encodeURIComponent(apiKey)}`;
 
-  const res = await fetch(fullUrl);
+  const res = await fetchWithTimeout(fullUrl);
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');

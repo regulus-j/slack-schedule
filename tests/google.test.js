@@ -320,7 +320,7 @@ test('sendRecruiterEmail redirects recipients in email test mode', async () => {
         },
         email: {
           testMode: true,
-          testRecipient: 'jamalalbadi03@gmail.com',
+          testRecipient: 'test-recipient@example.com',
         },
       },
       logger: {
@@ -347,10 +347,10 @@ test('sendRecruiterEmail redirects recipients in email test mode', async () => {
     });
 
     const decoded = Buffer.from(sentRaw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
-    assert.match(decoded, /^To: jamalalbadi03@gmail\.com/m);
+    assert.match(decoded, /^To: test-recipient@example\.com/m);
     assert.doesNotMatch(decoded, /candidate@example\.com/);
     assert.doesNotMatch(decoded, /^Cc:/m);
-    assert.equal(result.email.to, 'jamalalbadi03@gmail.com');
+    assert.equal(result.email.to, 'test-recipient@example.com');
     assert.deepEqual(result.email.cc, []);
     assert.deepEqual(result.email.bcc, []);
     assert.deepEqual(result.email.testMode.originalRecipients, {
