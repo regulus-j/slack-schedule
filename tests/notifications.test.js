@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { setTimeout } from 'node:timers/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { createJsonStore } from '../src/store/json-store.js'
@@ -131,6 +132,7 @@ test('rescheduling cancels old-version jobs and keeps one job per new version', 
       now: new Date('2026-10-30T12:00:00.000Z'),
     })
 
+    await setTimeout(500) // wait for debounced json-store flush
     const state = JSON.parse(await readFile(fixture.statePath, 'utf8'))
     const oldJobs = state.notificationJobs.filter((job) => job.scheduleVersion === 1)
     const newJobs = state.notificationJobs.filter((job) => job.scheduleVersion === 2)
@@ -161,6 +163,7 @@ test('completion is idempotent and queues exactly one feedback job', async () =>
 
     assert.equal(first.alreadyCompleted, false)
     assert.equal(second.alreadyCompleted, true)
+    await setTimeout(500) // wait for debounced json-store flush
     const state = JSON.parse(await readFile(fixture.statePath, 'utf8'))
     assert.equal(state.notificationJobs.filter((job) => job.type === NOTIFICATION_TYPES.FEEDBACK_REQUEST).length, 1)
     assert.equal(state.cases[0].status, 'Completed')
@@ -182,6 +185,7 @@ test('stale completion does not complete a rescheduled case or queue feedback', 
     })
 
     assert.equal(result.stale, true)
+    await setTimeout(500) // wait for debounced json-store flush
     const state = JSON.parse(await readFile(fixture.statePath, 'utf8'))
     assert.equal(state.cases[0].status, 'Scheduled')
     assert.equal(state.notificationJobs.length, 0)
@@ -215,6 +219,7 @@ test('completion DM reports unchanged JazzHR and schedules one next-day recheck'
 
     assert.equal(messages.length, 1)
     assert.match(JSON.stringify(messages[0]), /still shows/)
+    await setTimeout(500) // wait for debounced json-store flush
     const state = JSON.parse(await readFile(fixture.statePath, 'utf8'))
     assert.equal(state.notificationJobs.filter((job) => job.type === NOTIFICATION_TYPES.JAZZHR_RECHECK).length, 1)
   } finally {

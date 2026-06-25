@@ -1,17 +1,16 @@
 import crypto from 'node:crypto';
-import { decryptJson, encryptJson } from '../security/crypto.js';
 import { candidateInactiveReason, normalizeJazzhrCandidate, normalizeJazzhrCandidates } from './candidate-index.js';
+import { createPostgresPool } from './postgres-connection.js';
 
-export function createPostgresStore(databaseUrl, encryptionKey = '') {
+export function createPostgresStore(config, tokenCipher) {
   let pool;
+  let closePool;
 
   async function getPool() {
     if (!pool) {
-      const { Pool } = await import('pg');
-      pool = new Pool({
-        connectionString: databaseUrl,
-        ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
-      });
+      const connection = await createPostgresPool(config)
+      pool = connection.pool
+      closePool = connection.close
     }
     return pool;
   }
@@ -21,22 +20,14 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     return currentPool.query(text, params);
   }
 
-  function encodeTokenPayload(tokenData) {
-    if (encryptionKey) return encryptJson(tokenData, encryptionKey);
-    return JSON.stringify(tokenData);
+  async function encodeTokenPayload(tokenData) {
+    return tokenCipher.encrypt(tokenData)
   }
 
-  function decodeTokenPayload(payload) {
+  async function decodeTokenPayload(payload) {
     if (!payload) return null;
-    if (encryptionKey && String(payload).includes('.')) {
-      try {
-        return decryptJson(payload, encryptionKey);
-      } catch {
-        return null;
-      }
-    }
     try {
-      return JSON.parse(payload);
+      return await tokenCipher.decrypt(payload);
     } catch {
       return null;
     }
@@ -118,6 +109,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       completedBy: row.completed_by,
       feedbackEmail: normalizeJson(row.feedback_email),
       feedbackEmailStatus: row.feedback_email_status,
+      legalHold: Boolean(row.legal_hold),
     };
   }
 
@@ -477,8 +469,14 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     },
 
     async getGoogleToken(recruiterId) {
-      const result = await query('SELECT encrypted_payload FROM encrypted_google_tokens WHERE recruiter_id = $1', [recruiterId]);
-      return result.rows[0] ? decodeTokenPayload(result.rows[0].encrypted_payload) : null;
+      const result = await query(
+        `UPDATE encrypted_google_tokens
+         SET last_used_at = now()
+         WHERE recruiter_id = $1
+         RETURNING encrypted_payload`,
+        [recruiterId],
+      );
+      return result.rows[0] ? await decodeTokenPayload(result.rows[0].encrypted_payload) : null;
     },
 
     async hasGoogleToken(recruiterId) {
@@ -486,14 +484,20 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       return result.rowCount > 0;
     },
 
+    async listGoogleTokenIds() {
+      const result = await query('SELECT recruiter_id FROM encrypted_google_tokens ORDER BY recruiter_id')
+      return result.rows.map((row) => row.recruiter_id)
+    },
+
     async saveGoogleToken(recruiterId, tokenData) {
-      const encryptedPayload = encodeTokenPayload(tokenData);
+      const encryptedPayload = await encodeTokenPayload(tokenData);
       await query(
-        `INSERT INTO encrypted_google_tokens (id, recruiter_id, encrypted_payload)
-         VALUES ($1, $2, $3)
+        `INSERT INTO encrypted_google_tokens (id, recruiter_id, encrypted_payload, last_used_at)
+         VALUES ($1, $2, $3, now())
          ON CONFLICT (id) DO UPDATE SET
            recruiter_id = EXCLUDED.recruiter_id,
            encrypted_payload = EXCLUDED.encrypted_payload,
+           last_used_at = now(),
            updated_at = now()`,
         [recruiterId, recruiterId, encryptedPayload],
       );
@@ -503,6 +507,116 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
     async deleteGoogleToken(recruiterId) {
       await query('DELETE FROM encrypted_google_tokens WHERE recruiter_id = $1 OR id = $1', [recruiterId]);
       return true;
+    },
+
+    async createOAuthState(record) {
+      const result = await query(
+        `INSERT INTO oauth_states (
+          state_hash, slack_user_id, team_id, token_owner_id, source, created_at, expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *`,
+        [
+          record.stateHash,
+          record.slackUserId,
+          record.teamId || '',
+          record.tokenOwnerId,
+          record.source || 'slack',
+          record.createdAt,
+          record.expiresAt,
+        ],
+      )
+      return oauthStateRow(result.rows[0])
+    },
+
+    async consumeOAuthState(stateHash, { expectedTeamId = '', now = new Date().toISOString() } = {}) {
+      const result = await query(
+        `UPDATE oauth_states SET consumed_at = $2
+         WHERE state_hash = $1
+           AND consumed_at IS NULL
+           AND expires_at > $2
+           AND ($3 = '' OR team_id = '' OR team_id = $3)
+         RETURNING *`,
+        [stateHash, now, expectedTeamId],
+      )
+      return result.rows[0] ? oauthStateRow(result.rows[0]) : null
+    },
+
+    async consumeRateLimit({ userId, bucket, limit, windowMs, now = new Date().toISOString() }) {
+      const nowMs = new Date(now).getTime()
+      const windowStartMs = Math.floor(nowMs / windowMs) * windowMs
+      const windowStartedAt = new Date(windowStartMs).toISOString()
+      const result = await query(
+        `INSERT INTO rate_limit_counters (user_id, bucket, window_started_at, request_count)
+         VALUES ($1, $2, $3, 1)
+         ON CONFLICT (user_id, bucket, window_started_at)
+         DO UPDATE SET request_count = rate_limit_counters.request_count + 1
+         RETURNING request_count`,
+        [userId, bucket, windowStartedAt],
+      )
+      const count = Number(result.rows[0].request_count)
+      return {
+        allowed: count <= limit,
+        count,
+        retryAfterMs: Math.max(0, windowStartMs + windowMs - nowMs),
+      }
+    },
+
+    async purgeRetention({
+      now = new Date(),
+      completedCaseDays = 365,
+      candidateCacheDays = 30,
+      googleTokenInactiveDays = 90,
+      oauthStateCleanupHours = 24,
+      authorizedGoogleUserIds = [],
+      dryRun = false,
+    } = {}) {
+      const caseCutoff = new Date(new Date(now).getTime() - completedCaseDays * 86400000)
+      const candidateCutoff = new Date(new Date(now).getTime() - candidateCacheDays * 86400000)
+      const tokenCutoff = new Date(new Date(now).getTime() - googleTokenInactiveDays * 86400000)
+      const oauthCutoff = new Date(new Date(now).getTime() - oauthStateCleanupHours * 3600000)
+      const counts = await query(
+        `SELECT
+          (SELECT COUNT(*)::int FROM scheduling_cases
+            WHERE legal_hold = false
+              AND (status IN ('Completed', 'Cancelled') OR reschedule_status = 'cancelled')
+              AND COALESCE(completed_at, updated_at) < $1) AS cases,
+          (SELECT COUNT(*)::int FROM jazzhr_candidates WHERE updated_at < $2) AS candidates,
+          (SELECT COUNT(*)::int FROM encrypted_google_tokens
+            WHERE COALESCE(last_used_at, updated_at) < $3
+               OR (cardinality($5::text[]) > 0 AND NOT (recruiter_id = ANY($5::text[])))) AS google_tokens,
+          (SELECT COUNT(*)::int FROM oauth_states WHERE expires_at < $4) AS oauth_states`,
+        [caseCutoff, candidateCutoff, tokenCutoff, oauthCutoff, authorizedGoogleUserIds],
+      )
+      const result = {
+        cases: counts.rows[0].cases,
+        candidates: counts.rows[0].candidates,
+        googleTokens: counts.rows[0].google_tokens,
+        oauthStates: counts.rows[0].oauth_states,
+        dryRun,
+      }
+      if (dryRun) return result
+      await query(
+        `DELETE FROM scheduling_cases
+         WHERE legal_hold = false
+           AND (status IN ('Completed', 'Cancelled') OR reschedule_status = 'cancelled')
+           AND COALESCE(completed_at, updated_at) < $1`,
+        [caseCutoff],
+      )
+      await query('DELETE FROM jazzhr_candidates WHERE updated_at < $1', [candidateCutoff])
+      await query(
+        `DELETE FROM encrypted_google_tokens
+         WHERE COALESCE(last_used_at, updated_at) < $1
+            OR (cardinality($2::text[]) > 0 AND NOT (recruiter_id = ANY($2::text[])))`,
+        [tokenCutoff, authorizedGoogleUserIds],
+      )
+      await query('DELETE FROM oauth_states WHERE expires_at < $1', [oauthCutoff])
+      await query('DELETE FROM rate_limit_counters WHERE window_started_at < now() - interval \'1 day\'')
+      return result
+    },
+
+    async close() {
+      if (closePool) await closePool()
+      await tokenCipher.close?.()
     },
 
     async createCase(input) {
@@ -662,6 +776,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           completed_by = $49,
           feedback_email = $50,
           feedback_email_status = $51,
+          legal_hold = $52,
           updated_at = now()
         WHERE id = $1
         RETURNING *`,
@@ -717,6 +832,7 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
           merged.completedBy || null,
           serializeJson(merged.feedbackEmail),
           merged.feedbackEmailStatus || null,
+          Boolean(merged.legalHold),
         ],
       );
       return rowToCase(result.rows[0]);
@@ -949,4 +1065,17 @@ export function createPostgresStore(databaseUrl, encryptionKey = '') {
       }));
     },
   };
+}
+
+function oauthStateRow(row) {
+  return {
+    stateHash: row.state_hash,
+    slackUserId: row.slack_user_id,
+    teamId: row.team_id,
+    tokenOwnerId: row.token_owner_id,
+    source: row.source,
+    createdAt: row.created_at?.toISOString?.() || row.created_at,
+    expiresAt: row.expires_at?.toISOString?.() || row.expires_at,
+    consumedAt: row.consumed_at?.toISOString?.() || row.consumed_at,
+  }
 }

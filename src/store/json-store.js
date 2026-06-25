@@ -8,6 +8,9 @@ const DEFAULT_STATE = {
   cases: [],
   audits: [],
   googleTokens: {},
+  oauthStates: {},
+  rateLimits: {},
+  candidateSeenAt: {},
   jazzhrCandidates: [],
   notificationJobs: [],
 };
@@ -29,13 +32,84 @@ function normalizeCase(record) {
   }
 }
 
-export function createJsonStore(runtimeDir, encryptionKey = '') {
+export function createJsonStore(runtimeDir, cipher = '') {
   const statePath = path.join(runtimeDir, 'state.json');
+  const backupPath = path.join(runtimeDir, 'state.json.bak')
   let state = structuredClone(DEFAULT_STATE);
+  const tokenCipher = normalizeCipher(cipher)
 
+  // Debounced persistence: mutations mark state dirty and schedule an async
+  // flush. The flush runs on a setTimeout so it yields to the event loop,
+  // preventing large JSON.stringify calls from blocking Slack interactions.
+  const WRITE_DEBOUNCE_MS = 200
+  let _dirty = false
+  let _flushTimer = null
+  let _flushPromise = null
+
+  // Marks state as dirty and schedules a deferred write. Resolves immediately
+  // so callers never wait for disk I/O on the critical path.
   async function persist() {
-    await fs.mkdir(runtimeDir, { recursive: true });
-    await fs.writeFile(statePath, JSON.stringify(state, null, 2));
+    _dirty = true
+    scheduleFlush()
+  }
+
+  function scheduleFlush() {
+    if (_flushTimer || _flushPromise) return
+    _flushTimer = setTimeout(flush, WRITE_DEBOUNCE_MS)
+  }
+
+  async function flush() {
+    _flushTimer = null
+    _flushPromise = (async () => {
+      if (!_dirty) return
+      _dirty = false
+      try {
+        await fs.mkdir(runtimeDir, { recursive: true })
+        const payload = JSON.stringify(state, null, 2)
+        await writeFileAtomically(statePath, payload)
+        await writeFileAtomically(backupPath, payload)
+      } catch (error) {
+        // Log but never propagate — in-memory state is already correct.
+        // JSON store is dev/local; disk failures should not crash the app.
+        console.error('json_store_write_failed', error.message)
+      }
+    })()
+    await _flushPromise
+    _flushPromise = null
+    // If more mutations arrived during the flush, schedule another
+    if (_dirty) scheduleFlush()
+  }
+
+  function loadStateFromRaw(raw) {
+    state = normalizeLoadedState(JSON.parse(raw))
+  }
+
+  async function recoverFromBackup(parseError) {
+    try {
+      const backupRaw = await fs.readFile(backupPath, 'utf8')
+      loadStateFromRaw(backupRaw)
+    } catch (backupError) {
+      throw new Error(
+        `Cannot parse JSON store at ${statePath}: ${parseError.message}. ` +
+        `No valid backup could be loaded from ${backupPath}: ${backupError.message}`,
+      )
+    }
+
+    await preserveCorruptStateFile()
+    await persist()
+    await flush()
+  }
+
+  async function preserveCorruptStateFile() {
+    const corruptPath = path.join(
+      runtimeDir,
+      `state.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+    )
+    try {
+      await fs.rename(statePath, corruptPath)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
   }
 
   return {
@@ -43,13 +117,20 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       await fs.mkdir(runtimeDir, { recursive: true });
       try {
         const raw = await fs.readFile(statePath, 'utf8');
-        state = { ...structuredClone(DEFAULT_STATE), ...JSON.parse(raw) };
-        state.cases = normalizeArray(state.cases).map(normalizeCase)
-        state.jazzhrCandidates = normalizeJazzhrCandidates(state.jazzhrCandidates)
-        state.notificationJobs = normalizeArray(state.notificationJobs)
+        loadStateFromRaw(raw)
+        await writeFileAtomically(backupPath, JSON.stringify(state, null, 2))
       } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-        await persist();
+        if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+        if (error instanceof SyntaxError) {
+          await recoverFromBackup(error)
+          return
+        }
+        // First-time init: write the initial empty state directly so the
+        // file exists on disk before init resolves. Don't use persist()
+        // here — it's debounced and the file might not exist yet.
+        await fs.mkdir(runtimeDir, { recursive: true })
+        await writeFileAtomically(statePath, JSON.stringify(state, null, 2))
+        await writeFileAtomically(backupPath, JSON.stringify(state, null, 2))
       }
     },
 
@@ -59,6 +140,8 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
 
     async saveJazzhrCandidates(records) {
       state.jazzhrCandidates = normalizeJazzhrCandidates(records);
+      const now = new Date().toISOString()
+      state.candidateSeenAt = Object.fromEntries(state.jazzhrCandidates.map((item) => [item.candidateKey, now]))
       await persist();
       return state.jazzhrCandidates.length;
     },
@@ -67,6 +150,7 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       const merged = new Map(state.jazzhrCandidates.map((candidate) => [candidate.candidateKey, candidate]))
       for (const candidate of normalizeJazzhrCandidates(records)) {
         merged.set(candidate.candidateKey, candidate)
+        state.candidateSeenAt[candidate.candidateKey] = new Date().toISOString()
       }
       state.jazzhrCandidates = normalizeJazzhrCandidates([...merged.values()])
       await persist()
@@ -80,6 +164,12 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
         ...state.jazzhrCandidates.filter((candidate) => candidate.jazzhrJobId !== normalizedJobId),
         ...candidates,
       ])
+      const now = new Date().toISOString()
+      const activeKeys = new Set(state.jazzhrCandidates.map((candidate) => candidate.candidateKey))
+      state.candidateSeenAt = Object.fromEntries(
+        Object.entries(state.candidateSeenAt).filter(([key]) => activeKeys.has(key)),
+      )
+      for (const candidate of candidates) state.candidateSeenAt[candidate.candidateKey] = now
       await persist()
       return candidates.length
     },
@@ -102,17 +192,32 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
     },
 
     async getGoogleToken(recruiterId) {
-      const payload = state.googleTokens?.[recruiterId];
-      if (!payload) return null;
-      return decodeTokenPayload(payload, encryptionKey);
+      const stored = state.googleTokens?.[recruiterId];
+      if (!stored) return null;
+      const payload = typeof stored === 'object' && stored.payload ? stored.payload : stored
+      if (typeof stored === 'object' && stored.payload) {
+        stored.lastUsedAt = new Date().toISOString()
+        await persist()
+      }
+      return tokenCipher.decrypt(payload);
     },
 
     async hasGoogleToken(recruiterId) {
       return Boolean(state.googleTokens?.[recruiterId]);
     },
 
+    async listGoogleTokenIds() {
+      return Object.keys(state.googleTokens || {})
+    },
+
     async saveGoogleToken(recruiterId, tokenData) {
-      state.googleTokens[recruiterId] = encodeTokenPayload(tokenData, encryptionKey);
+      const now = new Date().toISOString()
+      state.googleTokens[recruiterId] = {
+        payload: await tokenCipher.encrypt(tokenData),
+        createdAt: state.googleTokens[recruiterId]?.createdAt || now,
+        updatedAt: now,
+        lastUsedAt: now,
+      }
       await persist();
       return tokenData;
     },
@@ -121,6 +226,107 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
       delete state.googleTokens[recruiterId];
       await persist();
       return true;
+    },
+
+    async createOAuthState(record) {
+      state.oauthStates[record.stateHash] = { ...record, consumedAt: null }
+      await persist()
+      return structuredClone(state.oauthStates[record.stateHash])
+    },
+
+    async consumeOAuthState(stateHash, { expectedTeamId = '', now = new Date().toISOString() } = {}) {
+      const record = state.oauthStates[stateHash]
+      if (!record || record.consumedAt || new Date(record.expiresAt).getTime() <= new Date(now).getTime()) return null
+      if (expectedTeamId && record.teamId && record.teamId !== expectedTeamId) return null
+      record.consumedAt = now
+      await persist()
+      return structuredClone(record)
+    },
+
+    async consumeRateLimit({ userId, bucket, limit, windowMs, now = new Date().toISOString() }) {
+      const nowMs = new Date(now).getTime()
+      const windowStartMs = Math.floor(nowMs / windowMs) * windowMs
+      const key = `${userId}:${bucket}:${windowStartMs}`
+      const current = state.rateLimits[key] || { count: 0, windowStartMs }
+      current.count += 1
+      state.rateLimits[key] = current
+      await persist()
+      return {
+        allowed: current.count <= limit,
+        count: current.count,
+        retryAfterMs: Math.max(0, windowStartMs + windowMs - nowMs),
+      }
+    },
+
+    async purgeRetention({
+      now = new Date(),
+      completedCaseDays = 365,
+      candidateCacheDays = 30,
+      googleTokenInactiveDays = 90,
+      oauthStateCleanupHours = 24,
+      authorizedGoogleUserIds = [],
+      dryRun = false,
+    } = {}) {
+      const nowMs = new Date(now).getTime()
+      const caseCutoff = nowMs - completedCaseDays * 86400000
+      const candidateCutoff = nowMs - candidateCacheDays * 86400000
+      const tokenCutoff = nowMs - googleTokenInactiveDays * 86400000
+      const oauthCutoff = nowMs - oauthStateCleanupHours * 3600000
+      const removableCases = state.cases.filter((item) =>
+        !item.legalHold &&
+        (
+          ['Completed', 'Cancelled'].includes(item.status) ||
+          String(item.rescheduleStatus || '').toLowerCase() === 'cancelled'
+        ) &&
+        new Date(item.completedAt || item.updatedAt || item.createdAt).getTime() < caseCutoff
+      )
+      const caseIds = new Set(removableCases.map((item) => item.id))
+      const removableCandidates = new Set(
+        Object.entries(state.candidateSeenAt)
+          .filter(([, seenAt]) => new Date(seenAt).getTime() < candidateCutoff)
+          .map(([key]) => key),
+      )
+      const removableTokens = Object.entries(state.googleTokens)
+        .filter(([id, stored]) => {
+          if (authorizedGoogleUserIds.length > 0 && !authorizedGoogleUserIds.includes(id)) return true
+          if (typeof stored !== 'object') return false
+          return new Date(stored.lastUsedAt || stored.updatedAt || stored.createdAt).getTime() < tokenCutoff
+        })
+        .map(([id]) => id)
+      const removableStates = Object.entries(state.oauthStates)
+        .filter(([, record]) => new Date(record.expiresAt).getTime() < oauthCutoff)
+        .map(([hash]) => hash)
+      const result = {
+        cases: caseIds.size,
+        audits: state.audits.filter((item) => caseIds.has(item.caseId)).length,
+        notificationJobs: state.notificationJobs.filter((item) => caseIds.has(item.caseId)).length,
+        candidates: removableCandidates.size,
+        googleTokens: removableTokens.length,
+        oauthStates: removableStates.length,
+        dryRun,
+      }
+      if (dryRun) return result
+
+      state.cases = state.cases.filter((item) => !caseIds.has(item.id))
+      state.audits = state.audits.filter((item) => !caseIds.has(item.caseId))
+      state.notificationJobs = state.notificationJobs.filter((item) => !caseIds.has(item.caseId))
+      state.jazzhrCandidates = state.jazzhrCandidates.filter((item) => !removableCandidates.has(item.candidateKey))
+      for (const key of removableCandidates) delete state.candidateSeenAt[key]
+      for (const id of removableTokens) delete state.googleTokens[id]
+      for (const hash of removableStates) delete state.oauthStates[hash]
+      await persist()
+      return result
+    },
+
+    async close() {
+      if (_flushTimer) {
+        clearTimeout(_flushTimer)
+        _flushTimer = null
+      }
+      if (_dirty || _flushPromise) {
+        await flush()
+      }
+      await tokenCipher.close?.()
     },
 
     async createCase(input) {
@@ -373,23 +579,57 @@ export function createJsonStore(runtimeDir, encryptionKey = '') {
   };
 }
 
-function encodeTokenPayload(tokenData, encryptionKey) {
-  if (encryptionKey) return encryptJson(tokenData, encryptionKey);
-  return JSON.stringify(tokenData);
+async function writeFileAtomically(targetPath, payload) {
+  const directory = path.dirname(targetPath)
+  await fs.mkdir(directory, { recursive: true })
+  const tempPath = path.join(
+    directory,
+    `${path.basename(targetPath)}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`,
+  )
+  try {
+    await fs.writeFile(tempPath, payload)
+    await fs.rename(tempPath, targetPath)
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => {})
+    throw error
+  }
 }
 
-function decodeTokenPayload(payload, encryptionKey) {
-  if (typeof payload !== 'string') return payload;
-  if (encryptionKey && payload.includes('.')) {
-    try {
-      return decryptJson(payload, encryptionKey);
-    } catch {
-      return null;
-    }
-  }
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return null;
+function normalizeLoadedState(parsed) {
+  const loaded = { ...structuredClone(DEFAULT_STATE), ...(parsed && typeof parsed === 'object' ? parsed : {}) }
+  loaded.cases = normalizeArray(loaded.cases).map(normalizeCase)
+  loaded.audits = normalizeArray(loaded.audits)
+  loaded.jazzhrCandidates = normalizeJazzhrCandidates(loaded.jazzhrCandidates)
+  loaded.notificationJobs = normalizeArray(loaded.notificationJobs)
+  loaded.googleTokens = loaded.googleTokens && typeof loaded.googleTokens === 'object' ? loaded.googleTokens : {}
+  loaded.oauthStates = loaded.oauthStates && typeof loaded.oauthStates === 'object' ? loaded.oauthStates : {}
+  loaded.rateLimits = loaded.rateLimits && typeof loaded.rateLimits === 'object' ? loaded.rateLimits : {}
+  loaded.candidateSeenAt = loaded.candidateSeenAt && typeof loaded.candidateSeenAt === 'object' ? loaded.candidateSeenAt : {}
+  return loaded
+}
+
+function normalizeCipher(cipher) {
+  if (cipher && typeof cipher.encrypt === 'function' && typeof cipher.decrypt === 'function') return cipher
+  const encryptionKey = String(cipher || '')
+  return {
+    async encrypt(value) {
+      return encryptionKey ? await encryptJson(value, encryptionKey) : JSON.stringify(value)
+    },
+    async decrypt(payload) {
+      if (typeof payload !== 'string') return payload
+      if (encryptionKey && payload.includes('.')) {
+        try {
+          return await decryptJson(payload, encryptionKey)
+        } catch {
+          return null
+        }
+      }
+      try {
+        return JSON.parse(payload)
+      } catch {
+        return null
+      }
+    },
+    async close() {},
   }
 }
