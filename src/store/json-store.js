@@ -35,16 +35,30 @@ function normalizeCase(record) {
 export function createJsonStore(runtimeDir, cipher = '') {
   const statePath = path.join(runtimeDir, 'state.json');
   const backupPath = path.join(runtimeDir, 'state.json.bak')
+  // The JazzHR candidate index can grow to tens of thousands of records
+  // (tens of MB). It is kept in a separate file so the small, frequently
+  // mutated hot state (cases, audits, rate limits, tokens) never has to
+  // re-serialize that bulk on every interaction. The candidate file is only
+  // rewritten when candidate data actually changes.
+  const candidatesPath = path.join(runtimeDir, 'candidates.json');
+  const candidatesBackupPath = path.join(runtimeDir, 'candidates.json.bak')
   let state = structuredClone(DEFAULT_STATE);
   const tokenCipher = normalizeCipher(cipher)
 
   // Debounced persistence: mutations mark state dirty and schedule an async
   // flush. The flush runs on a setTimeout so it yields to the event loop,
   // preventing large JSON.stringify calls from blocking Slack interactions.
-  const WRITE_DEBOUNCE_MS = 200
+  const WRITE_DEBOUNCE_MS = 50
+  const CANDIDATE_WRITE_DEBOUNCE_MS = 1000
   let _dirty = false
   let _flushTimer = null
   let _flushPromise = null
+  let _candidatesDirty = false
+  let _candidatesFlushTimer = null
+  let _candidatesFlushPromise = null
+
+  // Case lookup index for O(1) getCase instead of O(n) Array.find.
+  const caseIndex = new Map()
 
   // Marks state as dirty and schedules a deferred write. Resolves immediately
   // so callers never wait for disk I/O on the critical path.
@@ -58,6 +72,27 @@ export function createJsonStore(runtimeDir, cipher = '') {
     _flushTimer = setTimeout(flush, WRITE_DEBOUNCE_MS)
   }
 
+  // Serializes only the small, hot state — never the candidate index.
+  function serializeMainState() {
+    return JSON.stringify({
+      cases: state.cases,
+      audits: state.audits,
+      googleTokens: state.googleTokens,
+      oauthStates: state.oauthStates,
+      rateLimits: state.rateLimits,
+      notificationJobs: state.notificationJobs,
+    }, null, 2)
+  }
+
+  // Serializes the candidate index separately. No pretty-printing: this
+  // payload can be tens of MB and indentation only adds size and time.
+  function serializeCandidates() {
+    return JSON.stringify({
+      jazzhrCandidates: state.jazzhrCandidates,
+      candidateSeenAt: state.candidateSeenAt,
+    })
+  }
+
   async function flush() {
     _flushTimer = null
     _flushPromise = (async () => {
@@ -65,7 +100,7 @@ export function createJsonStore(runtimeDir, cipher = '') {
       _dirty = false
       try {
         await fs.mkdir(runtimeDir, { recursive: true })
-        const payload = JSON.stringify(state, null, 2)
+        const payload = serializeMainState()
         await writeFileAtomically(statePath, payload)
         await writeFileAtomically(backupPath, payload)
       } catch (error) {
@@ -80,8 +115,48 @@ export function createJsonStore(runtimeDir, cipher = '') {
     if (_dirty) scheduleFlush()
   }
 
+  async function persistCandidates() {
+    _candidatesDirty = true
+    scheduleCandidateFlush()
+  }
+
+  function scheduleCandidateFlush() {
+    if (_candidatesFlushTimer || _candidatesFlushPromise) return
+    _candidatesFlushTimer = setTimeout(flushCandidates, CANDIDATE_WRITE_DEBOUNCE_MS)
+  }
+
+  async function flushCandidates() {
+    _candidatesFlushTimer = null
+    _candidatesFlushPromise = (async () => {
+      if (!_candidatesDirty) return
+      _candidatesDirty = false
+      try {
+        await fs.mkdir(runtimeDir, { recursive: true })
+        // Yield to the event loop before serializing the large candidate
+        // payload so pending I/O callbacks (Slack messages) get a turn.
+        await new Promise(resolve => setImmediate(resolve))
+        const payload = serializeCandidates()
+        await writeFileAtomically(candidatesPath, payload)
+        await writeFileAtomically(candidatesBackupPath, payload)
+      } catch (error) {
+        console.error('json_store_candidates_write_failed', error.message)
+      }
+    })()
+    await _candidatesFlushPromise
+    _candidatesFlushPromise = null
+    if (_candidatesDirty) scheduleCandidateFlush()
+  }
+
   function loadStateFromRaw(raw) {
     state = normalizeLoadedState(JSON.parse(raw))
+  }
+
+  function loadCandidatesFromRaw(raw) {
+    const parsed = JSON.parse(raw)
+    state.jazzhrCandidates = normalizeJazzhrCandidates(parsed.jazzhrCandidates)
+    state.candidateSeenAt = parsed.candidateSeenAt && typeof parsed.candidateSeenAt === 'object'
+      ? parsed.candidateSeenAt
+      : {}
   }
 
   async function recoverFromBackup(parseError) {
@@ -89,15 +164,34 @@ export function createJsonStore(runtimeDir, cipher = '') {
       const backupRaw = await fs.readFile(backupPath, 'utf8')
       loadStateFromRaw(backupRaw)
     } catch (backupError) {
+      if (backupError.code === 'ENOENT') {
+        throw new Error(
+          `Cannot parse JSON store at ${statePath}: ${parseError.message}. ` +
+          `No backup exists at ${backupPath}.`,
+        )
+      }
       throw new Error(
         `Cannot parse JSON store at ${statePath}: ${parseError.message}. ` +
-        `No valid backup could be loaded from ${backupPath}: ${backupError.message}`,
+        `Backup at ${backupPath} also failed: ${backupError.message}`,
       )
+    }
+
+    // Candidates live in a separate file; recover them from their own backup
+    // when possible (otherwise keep whatever the main backup embedded).
+    try {
+      const cBackupRaw = await fs.readFile(candidatesBackupPath, 'utf8')
+      loadCandidatesFromRaw(cBackupRaw)
+    } catch {
+      // Best effort — leave in-memory candidates as loaded from the main backup.
     }
 
     await preserveCorruptStateFile()
     await persist()
     await flush()
+    if (state.jazzhrCandidates.length > 0) {
+      await persistCandidates()
+      await flushCandidates()
+    }
   }
 
   async function preserveCorruptStateFile() {
@@ -117,21 +211,59 @@ export function createJsonStore(runtimeDir, cipher = '') {
       await fs.mkdir(runtimeDir, { recursive: true });
       try {
         const raw = await fs.readFile(statePath, 'utf8');
+        // Legacy state.json may still embed the candidate index; it lands in
+        // memory here and is migrated to candidates.json below.
         loadStateFromRaw(raw)
-        await writeFileAtomically(backupPath, JSON.stringify(state, null, 2))
       } catch (error) {
-        if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
-        if (error instanceof SyntaxError) {
+        if (error.code === 'ENOENT' && !(error instanceof SyntaxError)) {
+          // First-time init — leave the default empty state.
+        } else if (error instanceof SyntaxError) {
           await recoverFromBackup(error)
+          // Populate case index after recovery.
+          for (const c of state.cases) caseIndex.set(c.id, c)
           return
+        } else {
+          throw error
         }
-        // First-time init: write the initial empty state directly so the
-        // file exists on disk before init resolves. Don't use persist()
-        // here — it's debounced and the file might not exist yet.
-        await fs.mkdir(runtimeDir, { recursive: true })
-        await writeFileAtomically(statePath, JSON.stringify(state, null, 2))
-        await writeFileAtomically(backupPath, JSON.stringify(state, null, 2))
       }
+
+      // Candidates are the source of truth in their own file once it exists.
+      let candidatesFileExists = false
+      try {
+        const craw = await fs.readFile(candidatesPath, 'utf8')
+        loadCandidatesFromRaw(craw)
+        candidatesFileExists = true
+      } catch (error) {
+        if (error.code === 'ENOENT' || error instanceof SyntaxError) {
+          // Fall back to the candidate backup, then to any candidates embedded
+          // in the legacy state.json (already in memory).
+          try {
+            const braw = await fs.readFile(candidatesBackupPath, 'utf8')
+            loadCandidatesFromRaw(braw)
+            candidatesFileExists = true
+          } catch {
+            // keep legacy in-memory candidates for migration below
+          }
+        } else {
+          throw error
+        }
+      }
+
+      // Always (re)write the main state file in the small split format so the
+      // legacy multi-MB file is trimmed on the first start with this code.
+      await writeFileAtomically(statePath, serializeMainState())
+      await writeFileAtomically(backupPath, serializeMainState())
+
+      // One-time migration: persist candidates to their own file if it does
+      // not exist yet. On subsequent starts the file is only read, so no large
+      // stringify runs here.
+      if (!candidatesFileExists && state.jazzhrCandidates.length > 0) {
+        await writeFileAtomically(candidatesPath, serializeCandidates())
+        await writeFileAtomically(candidatesBackupPath, serializeCandidates())
+      }
+
+      // Populate case lookup index after state is fully loaded.
+      for (const c of state.cases) caseIndex.set(c.id, c)
     },
 
     async stats() {
@@ -142,7 +274,7 @@ export function createJsonStore(runtimeDir, cipher = '') {
       state.jazzhrCandidates = normalizeJazzhrCandidates(records);
       const now = new Date().toISOString()
       state.candidateSeenAt = Object.fromEntries(state.jazzhrCandidates.map((item) => [item.candidateKey, now]))
-      await persist();
+      await persistCandidates();
       return state.jazzhrCandidates.length;
     },
 
@@ -153,7 +285,7 @@ export function createJsonStore(runtimeDir, cipher = '') {
         state.candidateSeenAt[candidate.candidateKey] = new Date().toISOString()
       }
       state.jazzhrCandidates = normalizeJazzhrCandidates([...merged.values()])
-      await persist()
+      await persistCandidates()
       return records.length
     },
 
@@ -170,7 +302,7 @@ export function createJsonStore(runtimeDir, cipher = '') {
         Object.entries(state.candidateSeenAt).filter(([key]) => activeKeys.has(key)),
       )
       for (const candidate of candidates) state.candidateSeenAt[candidate.candidateKey] = now
-      await persist()
+      await persistCandidates()
       return candidates.length
     },
 
@@ -315,6 +447,8 @@ export function createJsonStore(runtimeDir, cipher = '') {
       for (const id of removableTokens) delete state.googleTokens[id]
       for (const hash of removableStates) delete state.oauthStates[hash]
       await persist()
+      for (const id of caseIds) caseIndex.delete(id)
+      if (removableCandidates.size > 0) await persistCandidates()
       return result
     },
 
@@ -325,6 +459,13 @@ export function createJsonStore(runtimeDir, cipher = '') {
       }
       if (_dirty || _flushPromise) {
         await flush()
+      }
+      if (_candidatesFlushTimer) {
+        clearTimeout(_candidatesFlushTimer)
+        _candidatesFlushTimer = null
+      }
+      if (_candidatesDirty || _candidatesFlushPromise) {
+        await flushCandidates()
       }
       await tokenCipher.close?.()
     },
@@ -362,6 +503,7 @@ export function createJsonStore(runtimeDir, cipher = '') {
         ...input,
       };
       state.cases.unshift(record);
+      caseIndex.set(record.id, record)
       await persist();
       return record;
     },
@@ -375,7 +517,7 @@ export function createJsonStore(runtimeDir, cipher = '') {
     },
 
     async getCase(id) {
-      return normalizeCase(state.cases.find((item) => item.id === id));
+      return normalizeCase(caseIndex.get(id));
     },
 
     async listNotificationEligibleCases() {
@@ -386,13 +528,15 @@ export function createJsonStore(runtimeDir, cipher = '') {
     },
 
     async updateCase(id, patch) {
+      const existing = caseIndex.get(id)
+      if (!existing) throw new Error(`Case not found: ${id}`);
       const index = state.cases.findIndex((item) => item.id === id);
-      if (index === -1) throw new Error(`Case not found: ${id}`);
       state.cases[index] = normalizeCase({
-        ...state.cases[index],
+        ...existing,
         ...patch,
         updatedAt: new Date().toISOString(),
       });
+      caseIndex.set(id, state.cases[index])
       await persist();
       return state.cases[index];
     },
@@ -556,6 +700,7 @@ export function createJsonStore(runtimeDir, cipher = '') {
           })
         }
       }
+      caseIndex.set(caseId, state.cases[index])
       await persist()
       return { caseRecord: state.cases[index], alreadyCompleted: false }
     },
@@ -590,6 +735,19 @@ async function writeFileAtomically(targetPath, payload) {
     await fs.writeFile(tempPath, payload)
     await fs.rename(tempPath, targetPath)
   } catch (error) {
+    // EPERM on Windows occurs when antivirus software holds a lock on the
+    // temp file after writeFile completes. Fall back to copyFile + unlink
+    // which is more widely compatible across Windows Defender, McAfee, etc.
+    if (process.platform === 'win32' && error.code === 'EPERM') {
+      try {
+        await fs.copyFile(tempPath, targetPath)
+        await fs.unlink(tempPath).catch(() => {})
+        return
+      } catch (fallbackError) {
+        await fs.rm(tempPath, { force: true }).catch(() => {})
+        throw fallbackError
+      }
+    }
     await fs.rm(tempPath, { force: true }).catch(() => {})
     throw error
   }

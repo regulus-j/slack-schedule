@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Run migrations:** `npm run migrate`
 - **Notifications CLI:** `npm run notifications:test`
 - **No linter/formatter configured**
+- **Run single E2E test:** `npx playwright test --grep "test name"`
 
 ## Project Architecture
 
@@ -23,10 +24,20 @@ This is a Slack Bolt interview scheduling app using **Socket Mode** (no HTTP end
 - **Slack:** `src/slack/handlers.js` is the central handler registry (actions, views, commands, events). `src/slack/views.js` builds all Block Kit UI.
 - **Scheduling pipeline:** `src/workflow/scheduler.js` — 5-step pipeline: generate candidate time slots → filter business hours → check calendar free/busy → rank by conflicts → present options
 - **Reschedule:** `src/workflow/reschedule.js` — state machine (`none → requested → approved → completed` / `cancelled`)
+- **Custom invite:** `src/workflow/custom-invite.js` — alternative flow for non-candidate events (general meetings, assessments). Creates cases without applicant/recruiter data, sends per-recipient personalized emails through its own delivery pipeline
 - **Notifications:** `src/workflow/notifications.js` — polling worker for automated candidate reminders, completion reminders, and feedback requests
 - **Config:** `src/config.js` — reads process values or `*_FILE` secret mounts and validates startup configuration; it does not load `.env`
 - **HTTP server:** `src/http-server.js` — health endpoint (`/health`) and Google OAuth callback (`/oauth/google/callback`)
 - **Slash commands:** `/schedule-interview` (opens intake modal or posts channel launcher), `/slack-scheduler` (admin: `refresh-jazz`)
+
+## Infrastructure
+
+- **Deployment:** Cloud Run in `australia-southeast1`, deployed via GitHub Actions (Workload Identity Federation with GCP)
+- **Database:** Cloud SQL PostgreSQL 16 with IAM authentication and private networking
+- **Secrets:** GCP Secret Manager, mounted as read-only files at runtime
+- **KMS:** Cloud KMS for Google OAuth token encryption (`src/security/token-cipher.js`)
+- **Terraform:** `infra/terraform/` defines all production resources
+- **Docker Compose** for local stack: app + Postgres 16 + Caddy reverse proxy, with a separate `migrate` service
 
 ## Key Non-Obvious Patterns
 
@@ -37,14 +48,18 @@ This is a Slack Bolt interview scheduling app using **Socket Mode** (no HTTP end
 - **Google/Gmail/JazzHR services safely mock** when credentials are absent — all API calls return `{ mocked: true, ... }` instead of throwing
 - **Google OAuth tokens encrypted** with Cloud KMS in production (`src/security/token-cipher.js`)
 - **Logger auto-redacts** email addresses and phone numbers from all log output (`src/logger.js:4`)
-- **Email templates** are plain text files in `email-templates/` with `Subject:` / `Body:` headers, parsed by `src/templates.js`. Variables use `[bracket_notation]` (not `{{mustache}}`)
+- **Email templates** are plain text files in `email-templates/` with `Subject:` / `Body:` headers, parsed by `src/templates.js`. Variables use `[bracket_notation]` (not `{{mustache}}`). Custom invite templates (`custom-invite-*`) are plain text and get HTML formatting at send time via `formatCustomInviteHtml`, while scheduling templates already contain full HTML on disk
 - **Mojibake normalization** built into template parsing for copy-pasted emoji/Unicode corruption (`src/templates.js:44`)
+- **Signature generation** (`src/signature.js`) produces both HTML (with embedded OPG logo via CID) and plain text company signatures, appended automatically to all outbound emails
+- **Shared email HTML utilities** in `src/workflow/messages.js` — `generatedEmailHtml()`, `emailParagraph()`, `emailDetailsBlock()` are used by all programmatic emails (reminders, reschedules, cancellations, feedback requests). Custom invite has its own parallel HTML formatting in `custom-invite.js`
 - **Timezones:** Business hours default to Sydney (`Australia/Sydney`, 07:00-16:00), calendar events default to Philippines (`Asia/Manila`)
 - **In-memory cache** (`src/data/cache.js`) holds applicants, recruiters, hiring managers, slack users, and role assignments loaded at startup
 - **`camelCase`** for JS identifiers, **`snake_case`** for Postgres column names (mapped in `src/store/postgres-store.js`)
 - **`emailTestMode`** — when enabled, Gmail sends go only to `EMAIL_TEST_RECIPIENT` and Calendar attendee update emails are suppressed
 - **Sample data** in `src/data/sample-data.js` is the default when JazzHR is unreachable
-- **Resume handling is intentionally manual** — no automated upload/storage
+- **Resume attachment** (`src/services/resume-attachment.js`) downloads Slack files using `files.info` + Bearer-token HTTP fetch, validates content (rejects HTML sign-in pages, checks PDF/DOCX/DOC magic bytes), and enforces size limits. Fails gracefully when `files:read` scope is missing
+- **Timezone utilities** in `src/time.js` export constants (`PH_TIME_ZONE`, `SYDNEY_TIME_ZONE`, `BUSINESS_DAY_START/END`) and helpers (`formatDateTimeInTimeZone`, `convertLocalDateTimeToZone`) — all scheduling uses these, never raw `Date` methods
+- **Attendees model** (`src/workflow/attendees.js`) — normalizes candidate/recruiter/hiring-manager/guests/external-attendees, with per-stage attendance rules and `attendanceOverrides` for edge cases. `normalizeAttendees` is called before all calendar operations
+- **Registration scripts** in `scripts/` — `retention.js` (Cloud Scheduler cron cleanup), `legal-hold.js`, `reencrypt-google-tokens.js` (KMS key rotation), `notifications-cli.js` (one-shot notification dispatch), `jazzhr-delta-probe.js` (JazzHR change detection), `channel-probe.cjs` (Slack connectivity test)
 - **Error logging** uses structured event names (e.g., `logger.warn('calendar_freebusy_mocked', { ... })`)
 - **Postgres migrations** in `migrations/` are plain SQL, run via `node scripts/migrate.js`
-- **Docker Compose** stack: app + Postgres 16 + Caddy reverse proxy, with a separate `migrate` service that runs migrations then exits

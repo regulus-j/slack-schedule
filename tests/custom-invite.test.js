@@ -25,8 +25,10 @@ import { buildCalendarEventDraft } from '../src/time.js'
 import { loadIntakeTemplates } from '../src/templates.js'
 import {
   buildCustomInviteEmail,
+  buildCustomInvitePreviewVariables,
   normalizeCustomInviteMetadata,
   parseCustomInviteRecipients,
+  replaceInviteVariables,
   validateCustomInviteDraft,
 } from '../src/workflow/custom-invite.js'
 
@@ -875,7 +877,7 @@ test('builds separate personalized generic emails with neutral fallback greeting
   assert.match(named.plainBody, /2026-07-01/)
   assert.match(named.plainBody, /Outsourced Pro Global Limited/)
   assert.match(named.htmlBody, /font-family:Arial,Helvetica,sans-serif/)
-  assert.match(named.htmlBody, /font-size:14px;line-height:1\.6/)
+  assert.match(named.htmlBody, /font-size:14px;line-height:1\.38/)
   assert.match(named.htmlBody, /data-opg-signature="true"/)
   assert.equal(unnamed.to, 'guest@example.com')
   assert.match(unnamed.plainBody, /^Hello,/)
@@ -998,6 +1000,88 @@ test('custom invite delivery skips recipients already sent on retry', async () =
   assert.equal(record.customInvite.deliveryStatus['guest@example.com'].status, 'mocked')
   assert.equal(record.customInvite.deliveryStatus['alex@example.com'].email.to, 'alex@example.com')
   assert.match(record.customInvite.deliveryStatus['alex@example.com'].email.plainBody, /^Hello Alex,/)
+})
+
+test('buildCustomInvitePreviewVariables uses first recipient for per-recipient vars', () => {
+  const caseRecord = makeCustomCase({
+    currentSchedule: {
+      date: '2026-07-01',
+      time: '09:00',
+      zoomLink: 'https://meet.example.com/preview',
+    },
+  })
+  const vars = buildCustomInvitePreviewVariables(caseRecord)
+
+  assert.equal(vars.name, 'Alex')
+  assert.equal(vars.greeting, 'Hello Alex,')
+  assert.equal(vars.email, 'alex@example.com')
+  assert.equal(vars.event_title, 'Client introduction')
+  assert.equal(vars.date, '2026-07-01')
+  assert.equal(vars.time, '09:00')
+  assert.equal(vars.meeting_link, 'https://meet.example.com/preview')
+})
+
+test('buildCustomInvitePreviewVariables handles unnamed first recipient', () => {
+  const vars = buildCustomInvitePreviewVariables(makeCustomCase({
+    customInvite: {
+      ...makeCustomCase().customInvite,
+      recipients: [
+        { name: '', email: 'nobody@example.com' },
+      ],
+    },
+  }))
+
+  assert.equal(vars.name, '')
+  assert.equal(vars.greeting, 'Hello,')
+  assert.equal(vars.email, 'nobody@example.com')
+})
+
+test('buildCustomInvitePreviewVariables handles no recipients', () => {
+  const vars = buildCustomInvitePreviewVariables(makeCustomCase({
+    customInvite: {
+      ...makeCustomCase().customInvite,
+      recipients: [],
+    },
+  }))
+
+  assert.equal(vars.name, 'Recipient')
+  assert.equal(vars.greeting, 'Hello Recipient,')
+  assert.equal(vars.email, '')
+})
+
+test('buildCustomInvitePreviewVariables handles missing schedule data', () => {
+  const vars = buildCustomInvitePreviewVariables(makeCustomCase({
+    currentSchedule: {},
+    selectedInterviewDate: '',
+    selectedInterviewTime: '',
+  }))
+
+  assert.equal(vars.date, '')
+  assert.equal(vars.time, '')
+  assert.equal(vars.meeting_link, '')
+  assert.equal(vars.timezone, 'Asia/Manila')
+})
+
+test('custom invite preview renders resolved template variables', () => {
+  const caseRecord = makeCustomCase({
+    currentSchedule: {
+      date: '2026-07-01',
+      time: '09:00',
+      zoomLink: '',
+    },
+  })
+  const vars = buildCustomInvitePreviewVariables(caseRecord)
+  const subject = replaceInviteVariables(caseRecord.customInvite.subject, vars)
+  const body = replaceInviteVariables(caseRecord.customInvite.body, vars)
+
+  assert.equal(subject, 'Invitation: Client introduction')
+  assert.match(body, /Hello Alex,/)
+  assert.match(body, /2026-07-01/)
+  assert.match(body, /09:00/)
+  assert.doesNotMatch(body, /\[greeting\]/)
+  assert.doesNotMatch(body, /\[event_title\]/)
+  assert.doesNotMatch(body, /\[date\]/)
+  assert.doesNotMatch(body, /\[time\]/)
 })
 
 function makeCustomCase(overrides = {}) {

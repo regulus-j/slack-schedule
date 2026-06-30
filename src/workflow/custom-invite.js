@@ -1,5 +1,5 @@
 import { ensureSignaturePlainText } from '../templates.js'
-import { generateSignatureHTML } from '../signature.js'
+import { generatedEmailHtml } from './messages.js'
 
 const EMAIL_PATTERN = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/
 const FINAL_DELIVERY_STATUSES = new Set(['sent', 'mocked'])
@@ -176,6 +176,30 @@ export function buildCustomInviteEmail(caseRecord, recipient, overrides = {}) {
   }
 }
 
+export function buildCustomInvitePreviewVariables(caseRecord) {
+  const metadata = normalizeCustomInviteMetadata(caseRecord)
+  const schedule = caseRecord?.currentSchedule || {}
+  const firstRecipient = metadata.recipients[0] || {}
+  const rawName = String(firstRecipient?.name || '').replace(/\s+/g, ' ').trim()
+  const name = rawName || (firstRecipient?.email ? '' : 'Recipient')
+  const greeting = name ? `Hello ${name},` : 'Hello,'
+
+  return {
+    greeting,
+    name,
+    recipient_name: name,
+    email: String(firstRecipient?.email || ''),
+    recipient_email: String(firstRecipient?.email || ''),
+    event_title: metadata.title,
+    title: metadata.title,
+    date: schedule.date || caseRecord.selectedInterviewDate || '',
+    time: schedule.time || caseRecord.selectedInterviewTime || '',
+    timezone: caseRecord.interviewTimezone || '',
+    meeting_link: schedule.zoomLink || metadata.meetingLink || '',
+    link: schedule.zoomLink || metadata.meetingLink || '',
+  }
+}
+
 function formatCustomInviteHtml(text) {
   const blocks = String(text || '')
     .trim()
@@ -183,15 +207,7 @@ function formatCustomInviteHtml(text) {
     .map((block) => block.trim())
     .filter(Boolean)
   const content = blocks.map(formatInviteBlock).join('\n')
-
-  return [
-    '<html>',
-    '<body style="font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;line-height:1.6;margin:0;padding:0;">',
-    content,
-    generateSignatureHTML(),
-    '</body>',
-    '</html>',
-  ].join('\n')
+  return generatedEmailHtml([content])
 }
 
 function formatInviteBlock(block, index) {
@@ -205,10 +221,10 @@ function formatInviteBlock(block, index) {
   }
 
   if (lines.length === 1 && /:\s*$/.test(lines[0])) {
-    return `<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222222;margin:${index === 0 ? '0' : '16px'} 0 8px 0;"><strong>${formatInlineText(lines[0])}</strong></p>`
+    return `<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.38;color:#222222;margin:${index === 0 ? '0' : '16px'} 0 8px 0;"><strong>${formatInlineText(lines[0])}</strong></p>`
   }
 
-  return `<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#222222;margin:${index === 0 ? '0' : '16px'} 0 16px 0;">${lines.map(formatInlineText).join('<br>')}</p>`
+  return `<p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.38;color:#222222;margin:${index === 0 ? '0' : '16px'} 0 16px 0;">${lines.map(formatInlineText).join('<br>')}</p>`
 }
 
 function isDetailLine(line) {
@@ -249,7 +265,7 @@ export function isFinalCustomInviteDeliveryStatus(status) {
   return FINAL_DELIVERY_STATUSES.has(status)
 }
 
-function replaceInviteVariables(value, variables) {
+export function replaceInviteVariables(value, variables) {
   return String(value || '').replace(/\[([^\]]+)\]/g, (match, key) => {
     const normalized = key.trim().toLowerCase().replace(/\s+/g, '_')
     return normalized in variables ? variables[normalized] : match

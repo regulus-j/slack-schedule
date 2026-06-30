@@ -1,7 +1,7 @@
 export function startEventLoopLagMonitor({
   logger,
   intervalMs = 1000,
-  warnAfterMs = 1500,
+  warnAfterMs = 200,
 } = {}) {
   if (!logger) return () => {}
 
