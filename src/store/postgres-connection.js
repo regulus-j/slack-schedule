@@ -16,6 +16,10 @@ export async function createPostgresPool(config) {
       user: config.database.user,
       database: config.database.name,
       max: config.database.maxConnections || 5,
+      statement_timeout: config.database?.statementTimeoutMs || 15000,
+      query_timeout: config.database?.queryTimeoutMs || 15000,
+      connectionTimeoutMillis: config.database?.connectionTimeoutMs || 10000,
+      idleTimeoutMillis: config.database?.idleTimeoutMs || 30000,
     })
     return {
       pool,
@@ -30,6 +34,10 @@ export async function createPostgresPool(config) {
     connectionString: config.databaseUrl,
     ssl: { rejectUnauthorized: true },
     max: config?.database?.maxConnections || 5,
+    statement_timeout: config?.database?.statementTimeoutMs || 15000,
+    query_timeout: config?.database?.queryTimeoutMs || 15000,
+    connectionTimeoutMillis: config?.database?.connectionTimeoutMs || 10000,
+    idleTimeoutMillis: config?.database?.idleTimeoutMs || 30000,
   })
   return {
     pool,

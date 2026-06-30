@@ -10,6 +10,7 @@ import { hydrateJazzhrCacheFromStore, refreshJazzhrCache, refreshJazzhrOpenJobs 
 import { ensureSlackDirectory, slackApiErrorDetails } from './src/services/slack-directory.js'
 import { startEventLoopLagMonitor } from './src/event-loop-monitor.js'
 import { createSlackAlertDispatcher } from './src/observability/slack-alerts.js'
+import { loadTemplates } from './src/templates.js'
 import {
   backfillNotificationJobs,
   startNotificationWorker,
@@ -18,6 +19,13 @@ import {
 export async function main() {
   const config = loadConfig()
   validateStartupConfig(config)
+
+  // Warm the template cache at startup to avoid disk I/O during the first form submission.
+  loadTemplates().then((templates) => {
+    logger.info('template_cache_warmed', { count: templates.length })
+  }).catch((error) => {
+    logger.warn('template_cache_warm_failed', { error: error.message })
+  })
 
   logger.info('google_redirect_uri_resolved', {
     redirectUri: config.google.redirectUri || '(not set)',
@@ -44,6 +52,10 @@ export async function main() {
     appToken: config.slack.appToken,
   })
   app.error(async (error) => {
+    if (error?.name === 'CaseNotFoundError') {
+      logger.warn('slack_bolt_stale_case_interaction', { caseId: error.caseId, message: error.message })
+      return
+    }
     logger.error('slack_bolt_unhandled_error', { error })
   })
   logger.setAlertDispatcher(createSlackAlertDispatcher({

@@ -84,7 +84,7 @@ export function parseTemplate(filename, rawText) {
   };
 }
 
-export async function loadTemplates(templateDir = TEMPLATE_DIR) {
+async function _loadTemplatesFromDisk(templateDir = TEMPLATE_DIR) {
   const entries = await fs.readdir(templateDir);
   const templates = [];
 
@@ -97,6 +97,31 @@ export async function loadTemplates(templateDir = TEMPLATE_DIR) {
   }
 
   return templates.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// In-memory template cache to avoid reading template files from disk on every
+// form submission. Templates rarely change at runtime — they are loaded once
+// at startup and only reloaded when explicitly refreshed.
+let _templateCache = null
+let _templateCacheMtime = 0
+
+export function invalidateTemplateCache() {
+  _templateCache = null
+  _templateCacheMtime = 0
+}
+
+export async function loadTemplates(templateDir = TEMPLATE_DIR) {
+  if (_templateCache) return _templateCache
+  try {
+    const stat = await fs.stat(templateDir)
+    if (stat.mtimeMs === _templateCacheMtime && _templateCache) return _templateCache
+  } catch (_) { /* directory may not exist yet, load will fail below */ }
+  _templateCache = await _loadTemplatesFromDisk(templateDir)
+  try {
+    const stat = await fs.stat(templateDir)
+    _templateCacheMtime = stat.mtimeMs
+  } catch (_) { _templateCacheMtime = Date.now() }
+  return _templateCache
 }
 
 export async function loadSchedulingTemplates(templateDir = TEMPLATE_DIR) {
