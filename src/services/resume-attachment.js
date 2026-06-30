@@ -8,6 +8,7 @@ export async function resolveResumeAttachment({
   botToken,
   maxBytes = 15 * 1024 * 1024,
   fetchImpl = fetch,
+  logger,
 }) {
   const resumeFile = caseRecord?.resumeFile
   const stored = normalizeResumeFile(resumeFile, caseRecord?.resumeLink)
@@ -59,16 +60,71 @@ export async function resolveResumeAttachment({
     throw new Error(`The resume is larger than the ${formatMegabytes(maxBytes)} MB attachment limit.`)
   }
 
-  const content = Buffer.from(await response.arrayBuffer())
+  let content = Buffer.from(await response.arrayBuffer())
   if (content.length > maxBytes) {
     throw new Error(`The resume is larger than the ${formatMegabytes(maxBytes)} MB attachment limit.`)
   }
-  validateResumeContent({
+
+  const validationError = checkResumeContent({
     content,
     contentType: response.headers?.get?.('content-type') || '',
     filename: file.name,
     mimeType: file.mimeType,
   })
+
+  if (validationError) {
+    // If files.info succeeded earlier, Slack's CDN may have served a stale page despite
+    // the token having files:read. Retry once with a fresh URL.
+    if (hasFreshUrl && client?.files?.info && file.id) {
+      logger?.warn?.('resume_html_retry', {
+        caseId: caseRecord?.id,
+        fileId: file.id,
+        contentType: response.headers?.get?.('content-type') || '',
+        reason: validationError.reason,
+      })
+      try {
+        const retryResult = await client.files.info({ file: file.id })
+        const retryFile = normalizeResumeFile(retryResult?.file, caseRecord?.resumeLink)
+        if (retryFile.downloadUrl && retryFile.downloadUrl !== file.downloadUrl) {
+          const retryResponse = await fetchWithTimeout(
+            retryFile.downloadUrl,
+            {
+              headers: isSlackFileUrl(retryFile.downloadUrl) && botToken
+                ? { Authorization: `Bearer ${botToken}` }
+                : {},
+            },
+            { fetchImpl },
+          )
+          if (retryResponse.ok) {
+            const retryContent = Buffer.from(await retryResponse.arrayBuffer())
+            if (retryContent.length <= maxBytes) {
+              const retryError = checkResumeContent({
+                content: retryContent,
+                contentType: retryResponse.headers?.get?.('content-type') || '',
+                filename: retryFile.name,
+                mimeType: retryFile.mimeType,
+              })
+              if (!retryError) {
+                return {
+                  filename: sanitizeFilename(retryFile.name || 'resume'),
+                  mimeType: retryFile.mimeType || DEFAULT_MIME_TYPE,
+                  content: retryContent,
+                }
+              }
+            }
+          }
+        }
+      } catch (retryErr) {
+        logger?.warn?.('resume_html_retry_failed', {
+          caseId: caseRecord?.id,
+          fileId: file.id,
+          error: retryErr?.message || String(retryErr),
+        })
+      }
+    }
+
+    throw new Error(validationError.message)
+  }
 
   return {
     filename: sanitizeFilename(file.name || 'resume'),
@@ -100,7 +156,7 @@ export function slackFileId(value) {
   return match?.[1] || ''
 }
 
-function validateResumeContent({ content, contentType, filename, mimeType }) {
+function checkResumeContent({ content, contentType, filename, mimeType }) {
   const normalizedContentType = clean(contentType).toLowerCase()
   const textPrefix = content.subarray(0, 1024).toString('utf8').trimStart().toLowerCase()
   if (
@@ -109,26 +165,44 @@ function validateResumeContent({ content, contentType, filename, mimeType }) {
     textPrefix.startsWith('<html') ||
     textPrefix.includes('this browser is no longer supported')
   ) {
-    throw new Error('Slack returned a sign-in page instead of the resume file. Verify files:read access and upload the resume again.')
+    return {
+      reason: 'html_signin',
+      message: 'Slack returned a sign-in page instead of the resume file. Verify files:read access and upload the resume again.',
+    }
   }
 
   const extension = extensionFromFilename(filename)
   const normalizedMimeType = clean(mimeType).toLowerCase()
   if ((extension === 'pdf' || normalizedMimeType === 'application/pdf') && !content.includes(Buffer.from('%PDF-'))) {
-    throw new Error('The downloaded resume is not a valid PDF. Upload the original PDF again before sending.')
+    return {
+      reason: 'invalid_pdf',
+      message: 'The downloaded resume is not a valid PDF. Upload the original PDF again before sending.',
+    }
   }
   if (
     (extension === 'docx' || normalizedMimeType.includes('officedocument.wordprocessingml.document')) &&
     !hasZipSignature(content)
   ) {
-    throw new Error('The downloaded resume is not a valid DOCX file. Upload the original document again before sending.')
+    return {
+      reason: 'invalid_docx',
+      message: 'The downloaded resume is not a valid DOCX file. Upload the original document again before sending.',
+    }
   }
   if (
     (extension === 'doc' || normalizedMimeType === 'application/msword') &&
     !content.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]))
   ) {
-    throw new Error('The downloaded resume is not a valid DOC file. Upload the original document again before sending.')
+    return {
+      reason: 'invalid_doc',
+      message: 'The downloaded resume is not a valid DOC file. Upload the original document again before sending.',
+    }
   }
+  return null
+}
+
+function validateResumeContent(opts) {
+  const err = checkResumeContent(opts)
+  if (err) throw new Error(err.message)
 }
 
 function extensionFromFilename(value) {
