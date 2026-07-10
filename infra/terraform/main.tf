@@ -38,8 +38,10 @@ resource "google_project_service" "apis" {
     "cloudscheduler.googleapis.com",
     "compute.googleapis.com",
     "iamcredentials.googleapis.com",
+    "iap.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
+    "oslogin.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
@@ -249,107 +251,122 @@ resource "google_kms_crypto_key_iam_member" "migration_kms" {
   member        = "serviceAccount:${google_service_account.migration.email}"
 }
 
-resource "google_cloud_run_v2_service" "app" {
-  name                = local.service_name
-  location            = var.region
-  deletion_protection = var.environment == "production"
-  ingress             = "INGRESS_TRAFFIC_ALL"
+# ── Compute Engine VM ──────────────────────────────────────────────────
 
-  template {
-    service_account                  = google_service_account.runtime.email
-    timeout                          = "3600s"
-    max_instance_request_concurrency = 80
+resource "google_compute_address" "app" {
+  name   = "${local.service_name}-${var.environment}"
+  region = var.region
+}
 
-    scaling {
-      min_instance_count = 1
-      max_instance_count = 1
+resource "google_compute_firewall" "allow_https" {
+  name    = "${local.service_name}-${var.environment}-allow-https"
+  network = google_compute_network.private.name
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
+  }
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["slack-scheduler-vm"]
+}
+
+resource "google_compute_firewall" "allow_http" {
+  name    = "${local.service_name}-${var.environment}-allow-http"
+  network = google_compute_network.private.name
+  allow {
+    protocol = "tcp"
+    ports    = ["80"]
+  }
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["slack-scheduler-vm"]
+}
+
+resource "google_compute_firewall" "allow_ssh_iap" {
+  name    = "${local.service_name}-${var.environment}-allow-ssh-iap"
+  network = google_compute_network.private.name
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+  source_ranges = ["35.235.240.0/20"]
+  target_tags   = ["ssh-iap"]
+}
+
+resource "google_compute_firewall" "allow_health_checks" {
+  name    = "${local.service_name}-${var.environment}-allow-health-checks"
+  network = google_compute_network.private.name
+  allow {
+    protocol = "tcp"
+    ports    = ["3000"]
+  }
+  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
+  target_tags   = ["slack-scheduler-vm"]
+}
+
+resource "google_compute_instance" "app" {
+  name         = "${local.service_name}-${var.environment}"
+  machine_type = "e2-micro"
+  zone         = "${var.region}-a"
+
+  tags = ["slack-scheduler-vm", "ssh-iap"]
+
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
+      size  = 50
+      type  = "pd-balanced"
     }
+    auto_delete = false
+  }
 
-    vpc_access {
-      network_interfaces {
-        network    = google_compute_network.private.name
-        subnetwork = google_compute_subnetwork.run.name
-      }
-      egress = "PRIVATE_RANGES_ONLY"
-    }
-
-    dynamic "volumes" {
-      for_each = google_secret_manager_secret.app
-      content {
-        name = lower(replace(volumes.key, "_", "-"))
-        secret {
-          secret = volumes.value.secret_id
-          items {
-            version = "latest"
-            path    = volumes.key
-          }
-        }
-      }
-    }
-
-    containers {
-      image = var.container_image
-
-      ports {
-        container_port = 3000
-      }
-
-      resources {
-        limits = {
-          cpu    = "1"
-          memory = "512Mi"
-        }
-        cpu_idle          = false
-        startup_cpu_boost = true
-      }
-
-      startup_probe {
-        initial_delay_seconds = 5
-        timeout_seconds       = 2
-        period_seconds        = 5
-        failure_threshold     = 12
-        tcp_socket {
-          port = 3000
-        }
-      }
-
-      dynamic "env" {
-        for_each = local.common_env
-        content {
-          name  = env.key
-          value = env.value
-        }
-      }
-
-      dynamic "env" {
-        for_each = var.secret_names
-        content {
-          name  = "${env.key}_FILE"
-          value = "/secrets/${env.key}/${env.key}"
-        }
-      }
-
-      dynamic "volume_mounts" {
-        for_each = var.secret_names
-        content {
-          name       = lower(replace(volume_mounts.key, "_", "-"))
-          mount_path = "/secrets/${volume_mounts.key}"
-        }
-      }
+  network_interface {
+    subnetwork = google_compute_subnetwork.run.self_link
+    access_config {
+      nat_ip = google_compute_address.app.address
     }
   }
+
+  service_account {
+    email  = google_service_account.runtime.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata = {
+    enable-oslogin = "TRUE"
+    startup-script = templatefile("${path.module}/startup-script.tftpl", {
+      container_image           = var.container_image
+      cloud_sql_connection_name = google_sql_database_instance.postgres.connection_name
+      database_name             = google_sql_database.app.name
+      iam_user                  = trimsuffix(google_service_account.runtime.email, ".gserviceaccount.com")
+      kms_key_name              = google_kms_crypto_key.oauth_tokens.id
+      public_base_url           = var.public_base_url
+      public_base_url_domain    = replace(replace(var.public_base_url, "https://", ""), "/", "")
+      slack_team_id             = var.slack_team_id
+      slack_posting_channel_id  = var.slack_posting_channel_id
+      slack_recruitment_user_ids = var.slack_recruitment_user_ids
+      slack_admin_user_ids      = var.slack_admin_user_ids
+      slack_alert_user_ids      = var.slack_alert_user_ids
+      google_client_id          = var.google_client_id
+      google_redirect_uri       = var.google_redirect_uri
+      google_shared_calendar_id = var.google_shared_calendar_id
+      google_auth_slack_user_id = var.google_auth_slack_user_id
+      secret_names = {
+        SLACK_BOT_TOKEN              = google_secret_manager_secret.app["SLACK_BOT_TOKEN"].secret_id
+        SLACK_APP_TOKEN              = google_secret_manager_secret.app["SLACK_APP_TOKEN"].secret_id
+        JAZZHR_API_KEY               = google_secret_manager_secret.app["JAZZHR_API_KEY"].secret_id
+        GOOGLE_CLIENT_SECRET         = google_secret_manager_secret.app["GOOGLE_CLIENT_SECRET"].secret_id
+        RECRUITER_PHONE_EXPORT_TOKEN = google_secret_manager_secret.app["RECRUITER_PHONE_EXPORT_TOKEN"].secret_id
+        ROLE_ASSIGNMENT_EXPORT_TOKEN = google_secret_manager_secret.app["ROLE_ASSIGNMENT_EXPORT_TOKEN"].secret_id
+      }
+    })
+  }
+
+  deletion_protection = var.environment == "production"
 
   depends_on = [
     google_project_service.apis,
     google_sql_user.runtime,
+    google_secret_manager_secret_iam_member.runtime_secret_access,
   ]
-}
-
-resource "google_cloud_run_v2_service_iam_member" "public" {
-  name     = google_cloud_run_v2_service.app.name
-  location = google_cloud_run_v2_service.app.location
-  role     = "roles/run.invoker"
-  member   = "allUsers"
 }
 
 resource "google_cloud_run_v2_job" "migrate" {
@@ -455,7 +472,7 @@ resource "google_monitoring_uptime_check_config" "health" {
   monitored_resource {
     type = "uptime_url"
     labels = {
-      host       = replace(google_cloud_run_v2_service.app.uri, "https://", "")
+      host       = replace(var.public_base_url, "https://", "")
       project_id = var.project_id
     }
   }
@@ -479,7 +496,7 @@ resource "google_monitoring_notification_channel" "email" {
 
 resource "google_logging_metric" "application_errors" {
   name   = "${local.service_name}_${var.environment}_errors"
-  filter = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${local.service_name}\" AND severity>=ERROR"
+  filter = "resource.type=\"gce_instance\" AND jsonPayload.severity>=ERROR"
   metric_descriptor {
     metric_kind = "DELTA"
     value_type  = "INT64"
@@ -490,9 +507,9 @@ resource "google_monitoring_alert_policy" "application_errors" {
   display_name = "${local.service_name}-${var.environment}-application-errors"
   combiner     = "OR"
   conditions {
-    display_name = "Cloud Run application errors"
+    display_name = "Application errors"
     condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.application_errors.name}\" AND resource.type=\"cloud_run_revision\""
+      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.application_errors.name}\" AND resource.type=\"gce_instance\""
       comparison      = "COMPARISON_GT"
       threshold_value = 0
       duration        = "0s"
@@ -540,9 +557,11 @@ resource "google_project_iam_member" "deploy_roles" {
     "roles/artifactregistry.writer",
     "roles/cloudkms.admin",
     "roles/cloudsql.admin",
+    "roles/compute.instanceAdmin.v1",
     "roles/compute.networkAdmin",
     "roles/iam.serviceAccountAdmin",
     "roles/iam.serviceAccountUser",
+    "roles/iap.tunnelResourceAccessor",
     "roles/resourcemanager.projectIamAdmin",
     "roles/run.admin",
     "roles/secretmanager.admin",

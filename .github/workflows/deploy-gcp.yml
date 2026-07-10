@@ -64,8 +64,15 @@ jobs:
             -var="secret_next_rotation_time=${{ vars.SECRET_NEXT_ROTATION_TIME }}"
       - name: Run migrations
         run: gcloud run jobs execute slack-scheduler-migrate --region "${{ vars.GCP_REGION }}" --wait
-      - name: Promote application revision
+      - name: Deploy to Compute Engine
         run: |
-          gcloud run services update slack-scheduler \
-            --region "${{ vars.GCP_REGION }}" \
-            --image "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"
+          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"
+          gcloud compute ssh "slack-scheduler-${{ inputs.environment || 'staging' }}" \
+            --zone="${{ vars.GCP_REGION }}-a" \
+            --tunnel-through-iap \
+            --command="
+              sudo docker pull ${IMAGE} &&
+              cd /opt/slack-scheduler &&
+              sudo sed -i \"s|image: .*|image: ${IMAGE}|\" docker-compose.yml &&
+              sudo docker compose up -d app
+            "
