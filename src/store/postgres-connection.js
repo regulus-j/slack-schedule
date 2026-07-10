@@ -30,9 +30,10 @@ export async function createPostgresPool(config) {
     }
   }
 
+  const sslMode = config?.database?.sslMode || 'require'
   const pool = new Pool({
     connectionString: config.databaseUrl,
-    ssl: { rejectUnauthorized: true },
+    ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode !== 'no-verify' },
     max: config?.database?.maxConnections || 5,
     statement_timeout: config?.database?.statementTimeoutMs || 15000,
     query_timeout: config?.database?.queryTimeoutMs || 15000,

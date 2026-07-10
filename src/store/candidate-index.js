@@ -1,3 +1,5 @@
+import { ALLOWED_APPLICANT_STAGE_KEYS, applicantStageKey } from '../services/jazzhr.js'
+
 export function normalizeJazzhrCandidate(record, index = 0) {
   const identity = candidateIdentity(record)
   const { jazzhrApplicationId, jazzhrJobId, candidateKey } = identity
@@ -52,6 +54,7 @@ export function searchJazzhrCandidateRecords(records = [], query = '', {
   recruiterIds = [],
   recruiterEmails = [],
   recruiterNames = [],
+  accountKey = '',
 } = {}) {
   const normalizedQuery = normalizeSearchText(query)
   const normalizedBaseQuery = normalizeSearchText(baseQuery)
@@ -60,6 +63,7 @@ export function searchJazzhrCandidateRecords(records = [], query = '', {
   const normalizedRecruiterIds = new Set((recruiterIds || []).map(normalizeRecruiterId).filter(Boolean))
   const normalizedRecruiterEmails = new Set((recruiterEmails || []).map(normalizeSearchText).filter(Boolean))
   const normalizedRecruiterNames = new Set((recruiterNames || []).map(normalizeSearchText).filter(Boolean))
+  const normalizedAccountKey = String(accountKey || '').trim()
   const results = []
   const safeLimit = Math.max(0, Number(limit) || 0)
   if (safeLimit === 0) return results
@@ -69,6 +73,7 @@ export function searchJazzhrCandidateRecords(records = [], query = '', {
       ? rawRecord
       : normalizeJazzhrCandidate(rawRecord)
     if (!record || candidateInactiveReason(record)) continue
+    if (normalizedAccountKey && String(record.accountKey || 'default') !== normalizedAccountKey) continue
 
     const haystack = candidateSearchText(record)
     if (normalizedRoleId && String(record.jazzhrJobId || '').trim() !== normalizedRoleId) continue
@@ -113,6 +118,10 @@ export function candidateInactiveReason(record) {
     if (INACTIVE_STATUS_KEYS.has(statusKey(normalized))) return `disposition:${normalized}`
     const term = INACTIVE_STATUS_TERMS.find((item) => normalized.includes(item))
     if (term) return term
+  }
+  const stage = record?.stage || record?.applicantProgress || record?.applicant_progress || record?.workflowStep || record?.workflow_step || ''
+  if (stage && !ALLOWED_APPLICANT_STAGE_KEYS.has(applicantStageKey(stage))) {
+    return `unknown-stage:${normalizeSearchText(stage)}`
   }
 
   return ''
@@ -213,6 +222,7 @@ const INACTIVE_STATUS_TERMS = [
 const INACTIVE_STATUS_KEYS = new Set([
   '1stinterviewrejectedbyrecruiter',
   'resumescreeningrejectedbyrecruiter',
+  'resumescreeningrejectedbyhiringmanager',
   '2ndorfinalinterviewrejectedbyhiringmanager',
   'rejectedduetofailedassessment',
   'blacklistedandnotculturefit',

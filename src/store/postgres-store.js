@@ -78,6 +78,7 @@ export function createPostgresStore(config, tokenCipher) {
       hmAvailability: row.hm_availability,
       calendarEventId: row.calendar_event_id,
       calendarEventDraft: row.calendar_event_draft,
+      googleAccountId: row.google_account_id,
       scheduleVersion: row.schedule_version || 0,
       rescheduleStatus: row.reschedule_status || 'none',
       rescheduleReason: row.reschedule_reason,
@@ -154,6 +155,7 @@ export function createPostgresStore(config, tokenCipher) {
       source: row.source,
       appliedAt: row.applied_at?.toISOString?.() || row.applied_at || '',
       sourceOrder: row.source_order,
+      accountKey: row.account_key || 'default',
     });
   }
 
@@ -187,7 +189,8 @@ export function createPostgresStore(config, tokenCipher) {
 
     async saveJazzhrCandidates(records) {
       const candidates = normalizeJazzhrCandidates(records);
-      await query('DELETE FROM jazzhr_candidates');
+      const accountKey = candidates.length > 0 ? (candidates[0].accountKey || 'default') : 'default'
+      await query('DELETE FROM jazzhr_candidates WHERE account_key = $1', [accountKey]);
       for (const candidate of candidates) {
         await query(
           `INSERT INTO jazzhr_candidates (
@@ -210,9 +213,10 @@ export function createPostgresStore(config, tokenCipher) {
             recruiter_name,
             source,
             applied_at,
-            source_order
+            source_order,
+            account_key
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
           ON CONFLICT (candidate_key) DO UPDATE SET
             full_name = EXCLUDED.full_name,
             jazzhr_application_id = EXCLUDED.jazzhr_application_id,
@@ -233,6 +237,7 @@ export function createPostgresStore(config, tokenCipher) {
             source = EXCLUDED.source,
             applied_at = EXCLUDED.applied_at,
             source_order = EXCLUDED.source_order,
+            account_key = EXCLUDED.account_key,
             updated_at = now()`,
           [
             candidate.candidateKey,
@@ -255,6 +260,7 @@ export function createPostgresStore(config, tokenCipher) {
             candidate.source,
             dateOrNull(candidate.appliedAt),
             candidate.sourceOrder,
+            candidate.accountKey || 'default',
           ],
         );
       }
@@ -285,9 +291,10 @@ export function createPostgresStore(config, tokenCipher) {
             recruiter_name,
             source,
             applied_at,
-            source_order
+            source_order,
+            account_key
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
           ON CONFLICT (candidate_key) DO UPDATE SET
             jazzhr_application_id = EXCLUDED.jazzhr_application_id,
             jazzhr_job_id = EXCLUDED.jazzhr_job_id,
@@ -308,6 +315,7 @@ export function createPostgresStore(config, tokenCipher) {
             source = EXCLUDED.source,
             applied_at = EXCLUDED.applied_at,
             source_order = EXCLUDED.source_order,
+            account_key = EXCLUDED.account_key,
             updated_at = now()`,
           [
             candidate.candidateKey,
@@ -330,6 +338,7 @@ export function createPostgresStore(config, tokenCipher) {
             candidate.source,
             dateOrNull(candidate.appliedAt),
             candidate.sourceOrder,
+            candidate.accountKey || 'default',
           ],
         )
       }
@@ -339,17 +348,19 @@ export function createPostgresStore(config, tokenCipher) {
     async replaceJazzhrJobCandidates(jobId, records) {
       const normalizedJobId = String(jobId || '').trim()
       const candidates = normalizeJazzhrCandidates(records)
+      const accountKey = candidates.length > 0 ? (candidates[0].accountKey || 'default') : 'default'
       await this.upsertJazzhrCandidates(candidates)
       const candidateKeys = candidates.map((candidate) => candidate.candidateKey)
       if (candidateKeys.length > 0) {
         await query(
           `DELETE FROM jazzhr_candidates
            WHERE jazzhr_job_id = $1
-             AND NOT (candidate_key = ANY($2))`,
-          [normalizedJobId, candidateKeys],
+             AND account_key = $2
+             AND NOT (candidate_key = ANY($3))`,
+          [normalizedJobId, accountKey, candidateKeys],
         )
       } else {
-        await query('DELETE FROM jazzhr_candidates WHERE jazzhr_job_id = $1', [normalizedJobId])
+        await query('DELETE FROM jazzhr_candidates WHERE jazzhr_job_id = $1 AND account_key = $2', [normalizedJobId, accountKey])
       }
       return candidates.length
     },
@@ -362,9 +373,14 @@ export function createPostgresStore(config, tokenCipher) {
       recruiterIds = [],
       recruiterEmails = [],
       recruiterNames = [],
+      accountKey = '',
     } = {}) {
       const filters = [];
       const params = [];
+      if (accountKey) {
+        params.push(String(accountKey).trim())
+        filters.push(`account_key = $${params.length}`)
+      }
       for (const value of [baseQuery, searchQuery]) {
         const normalized = String(value || '').trim();
         if (!normalized) continue;
@@ -417,13 +433,22 @@ export function createPostgresStore(config, tokenCipher) {
         .slice(0, limit);
     },
 
-    async listJazzhrCandidates({ limit = 50000 } = {}) {
+    async listJazzhrCandidates({ limit = 50000, accountKey = '' } = {}) {
+      const filters = []
+      const params = []
+      if (accountKey) {
+        params.push(String(accountKey).trim())
+        filters.push(`account_key = $${params.length}`)
+      }
+      params.push(limit)
+      const whereClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''
       const result = await query(
         `SELECT *
          FROM jazzhr_candidates
+         ${whereClause}
          ORDER BY applied_at DESC NULLS LAST, source_order ASC, full_name ASC
-         LIMIT $1`,
-        [limit],
+         LIMIT $${params.length}`,
+        params,
       );
       return result.rows
         .map(rowToJazzhrCandidate)
@@ -491,17 +516,35 @@ export function createPostgresStore(config, tokenCipher) {
 
     async saveGoogleToken(recruiterId, tokenData) {
       const encryptedPayload = await encodeTokenPayload(tokenData);
+      const label = tokenData?.label || null;
+      const accountEmail = tokenData?.account_email || tokenData?.email || null;
+      const id = accountEmail || recruiterId;
       await query(
-        `INSERT INTO encrypted_google_tokens (id, recruiter_id, encrypted_payload, last_used_at)
-         VALUES ($1, $2, $3, now())
+        `INSERT INTO encrypted_google_tokens (id, recruiter_id, encrypted_payload, label, account_email, last_used_at)
+         VALUES ($1, $2, $3, $4, $5, now())
          ON CONFLICT (id) DO UPDATE SET
            recruiter_id = EXCLUDED.recruiter_id,
            encrypted_payload = EXCLUDED.encrypted_payload,
+           label = EXCLUDED.label,
+           account_email = EXCLUDED.account_email,
            last_used_at = now(),
            updated_at = now()`,
-        [recruiterId, recruiterId, encryptedPayload],
+        [id, recruiterId, encryptedPayload, label, accountEmail],
       );
       return tokenData;
+    },
+
+    async listGoogleAccounts() {
+      const result = await query(
+        'SELECT id, recruiter_id, label, account_email, last_used_at FROM encrypted_google_tokens ORDER BY label NULLS LAST, account_email'
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        recruiterId: row.recruiter_id,
+        label: row.label || row.account_email || row.id,
+        accountEmail: row.account_email || row.id,
+        lastUsedAt: row.last_used_at,
+      }));
     },
 
     async deleteGoogleToken(recruiterId) {
@@ -512,8 +555,8 @@ export function createPostgresStore(config, tokenCipher) {
     async createOAuthState(record) {
       const result = await query(
         `INSERT INTO oauth_states (
-          state_hash, slack_user_id, team_id, token_owner_id, source, created_at, expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+          state_hash, slack_user_id, team_id, token_owner_id, source, account_email, account_label, created_at, expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *`,
         [
           record.stateHash,
@@ -521,6 +564,8 @@ export function createPostgresStore(config, tokenCipher) {
           record.teamId || '',
           record.tokenOwnerId,
           record.source || 'slack',
+          record.accountEmail || '',
+          record.accountLabel || '',
           record.createdAt,
           record.expiresAt,
         ],
@@ -777,6 +822,7 @@ export function createPostgresStore(config, tokenCipher) {
           feedback_email = $50,
           feedback_email_status = $51,
           legal_hold = $52,
+          google_account_id = $53,
           updated_at = now()
         WHERE id = $1
         RETURNING *`,
@@ -833,6 +879,7 @@ export function createPostgresStore(config, tokenCipher) {
           serializeJson(merged.feedbackEmail),
           merged.feedbackEmailStatus || null,
           Boolean(merged.legalHold),
+          merged.googleAccountId || null,
         ],
       );
       return rowToCase(result.rows[0]);
@@ -1074,6 +1121,8 @@ function oauthStateRow(row) {
     teamId: row.team_id,
     tokenOwnerId: row.token_owner_id,
     source: row.source,
+    accountEmail: row.account_email || '',
+    accountLabel: row.account_label || '',
     createdAt: row.created_at?.toISOString?.() || row.created_at,
     expiresAt: row.expires_at?.toISOString?.() || row.expires_at,
     consumedAt: row.consumed_at?.toISOString?.() || row.consumed_at,

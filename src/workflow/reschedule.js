@@ -47,21 +47,17 @@ export function visibleCaseActions(caseRecord) {
       return [
         'view_custom_invite_emails',
         ...(hasPendingCustomInviteDeliveries(caseRecord) ? ['retry_custom_invites'] : []),
-        ...(caseRecord.calendarEventId ? ['view_calendar_details'] : []),
       ]
     }
-    return ['edit_schedule_case', 'open_finalize_modal']
+    return ['edit_schedule_case']
   }
 
   if (caseRecord.rescheduleStatus === RESCHEDULE_STATUSES.CANCELLED) {
-    return caseRecord.calendarEventId ? ['view_calendar_details'] : []
+    return []
   }
 
   if (caseRecord.status === 'Completed') {
-    return [
-      ...(caseRecord.resumeLink ? ['view_resume'] : []),
-      ...(caseRecord.calendarEventId ? ['view_calendar_details'] : []),
-    ]
+    return []
   }
 
   if (isScheduledCase(caseRecord)) {
@@ -69,26 +65,15 @@ export function visibleCaseActions(caseRecord) {
       'open_reschedule_modal',
       'cancel_interview',
       'send_reminder',
-      'view_calendar_details',
     ]
-
-    if (caseRecord.resumeLink) {
-      actions.splice(1, 0, 'view_resume')
-    }
 
     return actions
   }
 
   const actions = [
     'edit_schedule_case',
-    'open_candidate_message_modal',
     'scheduling_open',
-    'open_finalize_modal',
   ]
-
-  if (caseRecord.resumeLink) {
-    actions.push('view_resume')
-  }
 
   return actions
 }

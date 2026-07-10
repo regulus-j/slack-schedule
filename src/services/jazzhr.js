@@ -5,10 +5,19 @@ import { fetchWithTimeout } from './http-client.js'
 const BASE = 'https://api.resumatorapi.com/v1';
 const DEFAULT_FETCH_CONCURRENCY = 2;
 const ROLE_SYNC_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_ACCOUNT = 'default';
 const roleSyncCache = new Map();
+
+function resolveApiKey(config, accountKey = DEFAULT_ACCOUNT) {
+  const accounts = config?.jazzhr?.accounts
+  if (!accounts || accounts.length === 0) return ''
+  const account = accounts.find((a) => a.key === accountKey) || accounts[0]
+  return account.apiKey || ''
+}
 const EXCLUDED_APPLICANT_DISPOSITIONS = [
   '1ST INTERVIEW - REJECTED BY RECRUITER',
   'RESUME SCREENING - REJECTED BY RECRUITER',
+  'RESUME SCREENING - REJECTED BY HIRING MANAGER',
   '2ND OR FINAL INTERVIEW - REJECTED BY HIRING MANAGER',
   'REJECTED DUE TO FAILED ASSESSMENT',
   'BLACK LISTED AND NOT CULTURE FIT',
@@ -37,8 +46,12 @@ const INACTIVE_APPLICANT_TERMS = [
   'archived',
   'deleted',
   'closed',
+  'unresponsive',
+  'black listed',
+  'blacklisted',
+  'offboarded',
 ];
-const ALLOWED_APPLICANT_STAGE_KEYS = new Set([
+export const ALLOWED_APPLICANT_STAGE_KEYS = new Set([
   'new',
   'prescreening',
   'resumescreening',
@@ -63,27 +76,28 @@ const ALLOWED_APPLICANT_STAGE_KEYS = new Set([
 ]);
 const INACTIVE_WORKFLOW_CATEGORY_KEYS = new Set(['nothired', 'hired', 'inactive', 'rejected']);
 
-export async function searchCachedApplicants(query) {
-  return searchApplicants(query, getApplicants());
+export async function searchCachedApplicants(query, accountKey = DEFAULT_ACCOUNT) {
+  return searchApplicants(query, getApplicants(accountKey));
 }
 
-export async function hydrateJazzhrCacheFromStore({ store, logger, limit = 50000 } = {}) {
+export async function hydrateJazzhrCacheFromStore({ store, logger, limit = 50000, accountKey = DEFAULT_ACCOUNT } = {}) {
   if (!store?.listJazzhrCandidates && !store?.searchJazzhrCandidates) {
     return { hydrated: false, records: 0 };
   }
 
   try {
     const applicants = store.listJazzhrCandidates
-      ? await store.listJazzhrCandidates({ limit })
-      : await store.searchJazzhrCandidates('', { limit });
-    setApplicants(applicants);
+      ? await store.listJazzhrCandidates({ limit, accountKey })
+      : await store.searchJazzhrCandidates('', { limit, accountKey });
+    setApplicants(applicants, accountKey);
     logger?.info?.('jazzhr_cache_hydrated', {
       records: applicants.length,
       source: 'store',
+      accountKey,
     });
     return { hydrated: applicants.length > 0, records: applicants.length };
   } catch (err) {
-    logger?.warn?.('jazzhr_cache_hydrate_failed', { error: err.message });
+    logger?.warn?.('jazzhr_cache_hydrate_failed', { error: err.message, accountKey });
     return { hydrated: false, records: 0, error: err.message };
   }
 }
@@ -103,30 +117,30 @@ export async function fetchApplicantDetail(apiKey, jazzhrApplicationId, logger, 
   }
 }
 
-export async function refreshJazzhrCache({ config, logger, store, throwOnError = false }) {
-  const apiKey = config.jazzhr.apiKey;
+export async function refreshJazzhrCache({ config, logger, store, throwOnError = false, accountKey = DEFAULT_ACCOUNT }) {
+  const apiKey = resolveApiKey(config, accountKey)
 
   if (!apiKey) {
     const msg = 'JAZZHR_API_KEY is not set';
     if (throwOnError) throw new Error(msg);
-    logger.warn('jazzhr_cache_refresh_skipped', { reason: 'missing_api_key' });
+    logger.warn('jazzhr_cache_refresh_skipped', { reason: 'missing_api_key', accountKey });
     return { refreshed: false, records: 0 };
   }
 
   try {
-    const [applicantResult, users] = await Promise.all([
-      fetchAllApplicants(
-        apiKey,
-        logger,
-        config.jazzhr.applicantMaxPages,
-        config.jazzhr.applicantFetchConcurrency,
-      ),
-      fetchAllUsers(apiKey, logger),
-    ]);
+    // Fetch applicants first (paginated, can be slow), then users.
+    // Sequential avoids doubling up on concurrent API calls to the same rate-limited endpoint.
+    const applicantResult = await fetchAllApplicants(
+      apiKey,
+      logger,
+      config.jazzhr.applicantMaxPages,
+      config.jazzhr.applicantFetchConcurrency,
+    )
+    const users = await fetchAllUsers(apiKey, logger)
     const { applicants, total, unique, pagesFetched, maxPagesReached, excluded, excludedReasons } = applicantResult;
 
-    setApplicants(applicants);
-    setRecruiters(users);
+    setApplicants(applicants, accountKey);
+    setRecruiters(users, accountKey);
     let indexedCandidates = 0;
     if (store?.saveJazzhrCandidates) {
       indexedCandidates = await store.saveJazzhrCandidates(applicants);
@@ -142,12 +156,13 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
       excludedReasons,
       recruiters: users.length,
       indexedCandidates,
+      accountKey,
     });
 
     return { refreshed: true, records: applicants.length, indexedCandidates };
   } catch (err) {
     if (throwOnError) throw err;
-    logger.error('jazzhr_cache_refresh_failed', { error: err.message });
+    logger.error('jazzhr_cache_refresh_failed', { error: err.message, accountKey });
     return { refreshed: false, records: 0 };
   }
 }
@@ -223,6 +238,11 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurr
       processPage(result);
       if (shouldStop) break;
     }
+
+    // Small delay between batches to avoid hammering the JazzHR rate limiter.
+    if (!shouldStop && nextPage <= resolvedMaxPages) {
+      await sleep(300)
+    }
   }
 
   const maxPagesReached = !shouldStop && nextPage > resolvedMaxPages;
@@ -243,26 +263,24 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurr
   };
 }
 
-export async function refreshJazzhrOpenJobs({ config, logger } = {}) {
-  const apiKey = config?.jazzhr?.apiKey
+export async function refreshJazzhrOpenJobs({ config, logger, accountKey = DEFAULT_ACCOUNT } = {}) {
+  const apiKey = resolveApiKey(config, accountKey)
   if (!apiKey) {
-    logger?.info?.('jazzhr_open_jobs_skipped', { reason: 'missing_api_key' })
+    logger?.info?.('jazzhr_open_jobs_skipped', { reason: 'missing_api_key', accountKey })
     return { refreshed: false, records: 0, jobs: [] }
   }
 
   try {
-    const [data, users] = await Promise.all([
-      jazzhrGetWithRetry('/jobs', apiKey, logger),
-      fetchAllUsers(apiKey, logger),
-    ])
+    const data = await jazzhrGetWithRetry('/jobs', apiKey, logger)
+    const users = await fetchAllUsers(apiKey, logger)
     const jobs = extractJobArray(data).map(mapJazzhrJob).filter((job) => job.id)
     const openJobs = jobs.filter((job) => isOpenJobStatus(job.status))
-    setJazzhrJobs(openJobs)
-    setRecruiters(users)
-    logger?.info?.('jazzhr_open_jobs_loaded', { total: jobs.length, open: openJobs.length })
+    setJazzhrJobs(openJobs, accountKey)
+    setRecruiters(users, accountKey)
+    logger?.info?.('jazzhr_open_jobs_loaded', { total: jobs.length, open: openJobs.length, accountKey })
     return { refreshed: true, records: openJobs.length, jobs: openJobs }
   } catch (err) {
-    logger?.warn?.('jazzhr_open_jobs_failed', { error: err.message })
+    logger?.warn?.('jazzhr_open_jobs_failed', { error: err.message, accountKey })
     return { refreshed: false, records: 0, jobs: [], error: err.message }
   }
 }
@@ -274,14 +292,16 @@ export async function syncJazzhrJobCandidates({
   jobId,
   concurrency,
   force = false,
+  accountKey = DEFAULT_ACCOUNT,
 } = {}) {
-  const apiKey = config?.jazzhr?.apiKey
+  const apiKey = resolveApiKey(config, accountKey)
   const resolvedJobId = String(jobId || '').trim()
   if (!apiKey || !resolvedJobId) {
     return { synced: false, mocked: !apiKey, job: null, workflow: null, candidates: [] }
   }
 
-  const existing = roleSyncCache.get(resolvedJobId)
+  const cacheKey = `${accountKey}::${resolvedJobId}`
+  const existing = roleSyncCache.get(cacheKey)
   if (!force && existing?.result && Date.now() - existing.updatedAt < ROLE_SYNC_TTL_MS) {
     return { ...existing.result, cached: true }
   }
@@ -294,21 +314,44 @@ export async function syncJazzhrJobCandidates({
     store,
     resolvedJobId,
     concurrency,
+    accountKey,
   })
-  roleSyncCache.set(resolvedJobId, { promise })
+  roleSyncCache.set(cacheKey, { promise })
 
   try {
     const result = await promise
     if (result.synced && result.complete) {
-      roleSyncCache.set(resolvedJobId, { result, updatedAt: Date.now() })
+      roleSyncCache.set(cacheKey, { result, updatedAt: Date.now() })
     } else {
-      roleSyncCache.delete(resolvedJobId)
+      roleSyncCache.delete(cacheKey)
     }
     return result
   } catch (err) {
-    roleSyncCache.delete(resolvedJobId)
+    roleSyncCache.delete(cacheKey)
     throw err
   }
+}
+
+async function fetchApplicantIdsByJob(apiKey, logger, jobId) {
+  const ids = []
+  let page = 1
+  while (true) {
+    const pathname = `/applicants?job_id=${encodeURIComponent(jobId)}&page=${page}`
+    const data = await jazzhrGetWithRetry(pathname, apiKey, logger)
+    const pageItems = Array.isArray(data) ? data : []
+    for (const item of pageItems) {
+      const id = String(item?.id || '').trim()
+      if (id) {
+        ids.push({
+          id,
+          appliedAt: item.apply_date || item.applied_at || item.date_applied || '',
+        })
+      }
+    }
+    if (pageItems.length < 100) break
+    page++
+  }
+  return ids
 }
 
 async function performJazzhrJobCandidateSync({
@@ -318,11 +361,29 @@ async function performJazzhrJobCandidateSync({
   store,
   resolvedJobId,
   concurrency,
+  accountKey = DEFAULT_ACCOUNT,
 }) {
   try {
-    const data = await jazzhrGetWithRetry(`/jobs/${encodeURIComponent(resolvedJobId)}`, apiKey, logger)
-    const job = mapJazzhrJob(data)
-    const applicationRefs = extractJobApplicantRefs(data)
+    // Fetch applicant IDs via paginated list (efficient — 1-3 calls instead of 1 /jobs call).
+    // The list endpoint only returns 7 fields, so we still need per-applicant detail fetches
+    // for email, stage, workflow, and recruiter fields.
+    const applicationRefs = await fetchApplicantIdsByJob(apiKey, logger, resolvedJobId)
+
+    if (applicationRefs.length === 0) {
+      logger?.info?.('jazzhr_job_candidates_synced', {
+        jobId: resolvedJobId,
+        applicants: 0,
+        candidates: 0,
+        complete: true,
+        accountKey,
+      })
+      return { synced: true, job: { id: resolvedJobId, title: '', status: '', hiringLeadId: '' }, workflow: null, candidates: [], complete: true }
+    }
+
+    // Job metadata: title/status/hiringLeadId come from the open-roles cache (populated at startup).
+    // We pass a minimal job object; mapRoleScopedCandidate only needs job.id and job.title.
+    const job = { id: resolvedJobId, title: '', status: '', hiringLeadId: '' }
+
     const limit = createConcurrencyLimit(positiveInteger(concurrency || config?.jazzhr?.applicantFetchConcurrency, DEFAULT_FETCH_CONCURRENCY))
     const applicationResults = await Promise.all(applicationRefs.map((application, sourceOrder) => limit(async () => {
       const detail = await fetchApplicantDetail(apiKey, application.id, logger, { jobId: resolvedJobId })
@@ -331,7 +392,7 @@ async function performJazzhrJobCandidateSync({
         candidate: detail ? mapRoleScopedCandidate({
           detail,
           application,
-          job: { ...job, id: resolvedJobId },
+          job,
           sourceOrder,
         }) : null,
       }
@@ -345,25 +406,29 @@ async function performJazzhrJobCandidateSync({
       await store.upsertJazzhrCandidates(candidates)
     }
     if (complete) {
-      replaceJobApplicantsInCache(resolvedJobId, candidates)
+      replaceJobApplicantsInCache(resolvedJobId, candidates, accountKey)
     } else {
-      mergeApplicantsIntoCache(candidates)
+      mergeApplicantsIntoCache(candidates, accountKey)
     }
+    const failedCount = applicationRefs.length - applicationResults.filter((r) => r.detail).length
     logger?.info?.('jazzhr_job_candidates_synced', {
       jobId: resolvedJobId,
       applicants: applicationRefs.length,
       candidates: candidates.length,
+      failed: failedCount,
       complete,
+      accountKey,
     })
     return {
       synced: true,
-      job: { ...job, id: resolvedJobId },
-      workflow: data?.workflow || data?.job_workflow || null,
+      job,
+      workflow: null,
       candidates,
       complete,
+      failedCount,
     }
   } catch (err) {
-    logger?.warn?.('jazzhr_job_candidates_sync_failed', { jobId: resolvedJobId, error: err.message })
+    logger?.warn?.('jazzhr_job_candidates_sync_failed', { jobId: resolvedJobId, error: err.message, accountKey })
     return { synced: false, job: null, workflow: null, candidates: [], error: err.message }
   }
 }
@@ -459,6 +524,10 @@ export function inactiveApplicantReason(item) {
     const matchedTerm = INACTIVE_APPLICANT_TERMS.find((term) => normalized.includes(term));
     if (matchedTerm) return matchedTerm;
   }
+  const stage = firstValue(item, ['stage', 'applicantProgress', 'applicant_progress', 'workflowStep', 'workflow_step']);
+  if (stage && !ALLOWED_APPLICANT_STAGE_KEYS.has(applicantStageKey(stage))) {
+    return `unknown-stage:${normalizeStatusText(stage)}`;
+  }
   return '';
 }
 
@@ -530,7 +599,7 @@ function statusKey(value) {
   return normalizeStatusText(value).replace(/[^a-z0-9]+/g, '');
 }
 
-function applicantStageKey(value) {
+export function applicantStageKey(value) {
   return statusKey(String(value || '').replace(/^\s*\d+\s*[.)-]\s*/, ''))
 }
 
@@ -550,18 +619,81 @@ async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function jazzhrGetWithRetry(pathname, apiKey, logger, maxRetries = 3) {
+// ── Shared rate limiter ──
+// All JazzHR API calls gate through this queue to avoid triggering 429s.
+const _limiter = {
+  active: 0,
+  maxConcurrent: 2,
+  minGapMs: 250,
+  lastRequestAt: 0,
+  pausedUntil: 0,
+  queue: [],
+}
+
+function _updateLimiterFromHeaders(res) {
+  const remaining = res.headers.get('x-ratelimit-remaining')
+  const reset = res.headers.get('x-ratelimit-reset')
+  if (remaining !== null && reset !== null) {
+    const rem = parseInt(remaining, 10)
+    const resetSec = parseInt(reset, 10)
+    // If we're running low on quota, pause until the reset window.
+    if (rem <= 5 && resetSec) {
+      const pauseMs = Math.max(0, (resetSec * 1000) - Date.now()) + 1000
+      if (pauseMs > 0 && pauseMs < 60000) {
+        _limiter.pausedUntil = Math.max(_limiter.pausedUntil, Date.now() + pauseMs)
+      }
+    }
+  }
+}
+
+function _enqueue() {
+  return new Promise((resolve) => {
+    _limiter.queue.push(resolve)
+    _flushQueue()
+  })
+}
+
+function _flushQueue() {
+  while (_limiter.queue.length > 0 && _limiter.active < _limiter.maxConcurrent) {
+    if (Date.now() < _limiter.pausedUntil) break
+    const gap = Date.now() - _limiter.lastRequestAt
+    if (gap < _limiter.minGapMs) break
+    const next = _limiter.queue.shift()
+    _limiter.active++
+    _limiter.lastRequestAt = Date.now()
+    next()
+  }
+  // If paused, schedule a flush when the pause ends.
+  if (_limiter.queue.length > 0 && _limiter.pausedUntil > Date.now()) {
+    const delay = _limiter.pausedUntil - Date.now() + 50
+    setTimeout(_flushQueue, delay).unref()
+  }
+}
+
+function _releaseSlot() {
+  _limiter.active = Math.max(0, _limiter.active - 1)
+  // Small gap between requests to avoid burst pressure.
+  setTimeout(_flushQueue, _limiter.minGapMs).unref()
+}
+
+async function jazzhrGetWithRetry(pathname, apiKey, logger, maxRetries = 5) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      return await jazzhrGet(pathname, apiKey);
+      await _enqueue()
+      try {
+        return await jazzhrGet(pathname, apiKey)
+      } finally {
+        _releaseSlot()
+      }
     } catch (err) {
       if (err.message.includes('429') && attempt < maxRetries - 1) {
-        const delay = 2000 * (attempt + 1);
+        const delay = Math.min(2000 * Math.pow(2, attempt), 30000)
+        _limiter.pausedUntil = Math.max(_limiter.pausedUntil, Date.now() + delay)
         logger.warn('jazzhr_rate_limited', { pathname, attempt, retryAfterMs: delay });
-        await sleep(delay);
-        continue;
+        await sleep(delay)
+        continue
       }
-      throw err;
+      throw err
     }
   }
 }
@@ -611,6 +743,7 @@ async function jazzhrGet(pathname, apiKey) {
   const fullUrl = `${url}${sep}apikey=${encodeURIComponent(apiKey)}`;
 
   const res = await fetchWithTimeout(fullUrl);
+  _updateLimiterFromHeaders(res)
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -731,28 +864,6 @@ function isOpenJobStatus(status) {
   return ['open', 'active', 'published'].includes(normalizeStatusText(status))
 }
 
-function extractJobApplicantRefs(data) {
-  const values = Array.isArray(data?.job_applicants)
-    ? data.job_applicants
-    : Array.isArray(data?.applicants)
-      ? data.applicants
-      : []
-  const seen = new Set()
-  const refs = []
-  for (const value of values) {
-    const id = String(typeof value === 'string'
-      ? value
-      : value?.id || value?.applicant_id || value?.prospect_id || '').trim()
-    if (!id || seen.has(id)) continue
-    seen.add(id)
-    refs.push({
-      id,
-      appliedAt: firstValue(value, ['apply_date', 'applyDate', 'date_applied', 'dateApplied']),
-    })
-  }
-  return refs
-}
-
 function mapRoleScopedCandidate({ detail, application, job, sourceOrder }) {
   const nameParts = String(detail.fullName || '').trim().split(/\s+/)
   const firstName = detail.firstName || nameParts.shift() || ''
@@ -785,15 +896,23 @@ function mapRoleScopedCandidate({ detail, application, job, sourceOrder }) {
   return applicantEligibilityReason(candidate) ? null : candidate
 }
 
-function mergeApplicantsIntoCache(candidates) {
-  const byKey = new Map(getApplicants().map((candidate) => [candidate.candidateKey || candidate.id, candidate]))
+function mergeApplicantsIntoCache(candidates, accountKey = DEFAULT_ACCOUNT) {
+  const byKey = new Map(getApplicants(accountKey).map((candidate) => [candidate.candidateKey || candidate.id, candidate]))
   for (const candidate of candidates) byKey.set(candidate.candidateKey || candidate.id, candidate)
-  setApplicants([...byKey.values()])
+  setApplicants([...byKey.values()].sort(byAppliedAtDesc), accountKey)
 }
 
-function replaceJobApplicantsInCache(jobId, candidates) {
-  const retained = getApplicants().filter((candidate) => candidate.jazzhrJobId !== jobId)
-  setApplicants([...retained, ...candidates])
+function replaceJobApplicantsInCache(jobId, candidates, accountKey = DEFAULT_ACCOUNT) {
+  const retained = getApplicants(accountKey).filter((candidate) => candidate.jazzhrJobId !== jobId)
+  setApplicants([...retained, ...candidates].sort(byAppliedAtDesc), accountKey)
+}
+
+function byAppliedAtDesc(a, b) {
+  const aTime = Date.parse(a?.appliedAt) || 0
+  const bTime = Date.parse(b?.appliedAt) || 0
+  if (aTime !== bTime) return bTime - aTime
+  if ((a?.sourceOrder ?? 0) !== (b?.sourceOrder ?? 0)) return (a?.sourceOrder ?? 0) - (b?.sourceOrder ?? 0)
+  return (a?.fullName || '').localeCompare(b?.fullName || '')
 }
 
 function createConcurrencyLimit(concurrency) {

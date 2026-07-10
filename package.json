@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node app.js",
     "test": "node --test",
+    "test:pg": "node --test tests/postgres-store.test.js",
     "check": "node --check app.js",
     "migrate": "node scripts/migrate.js",
     "notifications:test": "node scripts/notifications-cli.js",

@@ -8,6 +8,8 @@ export async function issueOAuthState({
   teamId,
   tokenOwnerId,
   source = 'slack',
+  accountEmail = '',
+  accountLabel = '',
   now = new Date(),
   ttlMs = DEFAULT_TTL_MS,
 }) {
@@ -19,6 +21,8 @@ export async function issueOAuthState({
     teamId,
     tokenOwnerId,
     source,
+    accountEmail,
+    accountLabel,
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
   })

@@ -64,9 +64,18 @@ export async function loadTalentDirectory(config, store) {
   const talentRecruiters = mergeRecruiterLists(sheetRecruiters, enrichedBaseRecruiters)
   setTalentRecruiters(talentRecruiters)
   const roleRows = await fetchRoleAssignmentRows({ config, logger })
+  logger.info('role_assignment_rows_fetched', {
+    rawCount: roleRows.length,
+    titles: roleRows.map((r) => r.roleTitle || r['Job Title'] || r['Role Title'] || r['Role'] || '').filter(Boolean).slice(0, 30),
+  })
   const roleAssignments = resolveRoleAssignments(roleRows, {
     recruiters: talentRecruiters,
     hiringManagers: people,
+  })
+  logger.info('role_assignments_resolved', {
+    resolvedCount: roleAssignments.length,
+    titles: roleAssignments.map((a) => a.roleTitle).filter(Boolean).slice(0, 30),
+    hms: roleAssignments.map((a) => a.hiringManagerName).filter(Boolean).slice(0, 30),
   })
   setRoleAssignments(roleAssignments)
 

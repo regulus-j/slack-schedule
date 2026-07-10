@@ -310,8 +310,12 @@ export function createJsonStore(runtimeDir, cipher = '') {
       return searchJazzhrCandidateRecords(state.jazzhrCandidates, query, options);
     },
 
-    async listJazzhrCandidates({ limit = 50000 } = {}) {
-      return searchJazzhrCandidateRecords(state.jazzhrCandidates, '', { limit });
+    async listJazzhrCandidates({ limit = 50000, accountKey } = {}) {
+      let records = state.jazzhrCandidates
+      if (accountKey) {
+        records = records.filter((c) => (c.accountKey || 'default') === accountKey)
+      }
+      return searchJazzhrCandidateRecords(records, '', { limit });
     },
 
     async getJazzhrCandidate(jazzhrApplicationId) {
@@ -344,14 +348,34 @@ export function createJsonStore(runtimeDir, cipher = '') {
 
     async saveGoogleToken(recruiterId, tokenData) {
       const now = new Date().toISOString()
-      state.googleTokens[recruiterId] = {
+      const label = tokenData?.label || null
+      const accountEmail = tokenData?.account_email || tokenData?.email || null
+      const key = accountEmail || recruiterId
+      state.googleTokens[key] = {
         payload: await tokenCipher.encrypt(tokenData),
-        createdAt: state.googleTokens[recruiterId]?.createdAt || now,
+        recruiterId,
+        label,
+        accountEmail,
+        createdAt: state.googleTokens[key]?.createdAt || now,
         updatedAt: now,
         lastUsedAt: now,
       }
       await persist();
       return tokenData;
+    },
+
+    async listGoogleAccounts() {
+      const accounts = []
+      for (const [key, entry] of Object.entries(state.googleTokens || {})) {
+        accounts.push({
+          id: key,
+          recruiterId: entry.recruiterId || key,
+          label: entry.label || entry.accountEmail || key,
+          accountEmail: entry.accountEmail || key,
+          lastUsedAt: entry.lastUsedAt || null,
+        })
+      }
+      return accounts.sort((a, b) => (a.label || '').localeCompare(b.label || ''))
     },
 
     async deleteGoogleToken(recruiterId) {

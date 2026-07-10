@@ -90,21 +90,18 @@ export function homeView({
   myCases,
   teamCases,
   googleConnected = false,
-  googleShared = false,
-  googleCanManage = true,
+  googleAccounts = [],
+  dateFilter = null,
+  myCasesTotal = 0,
+  teamCasesTotal = 0,
+  isAdmin = false,
 }) {
-  const googleAction = googleCanManage
-    ? (googleConnected
-        ? button('Disconnect Google', 'disconnect_google_oauth', 'danger')
-        : button('Connect Google', 'open_google_oauth'))
-    : null
-  const googleText = googleShared
-    ? (googleConnected
-        ? '✅ Google Calendar and Gmail are connected through the shared scheduling account.'
-        : '⚠️ Shared Google Calendar and Gmail are not connected yet. Ask the configured Google owner to connect.')
-    : (googleConnected
-        ? '✅ Google Calendar and Gmail are connected for this Slack user.'
-        : '⚠️ Google is not connected yet. Click Connect Google before final scheduling.')
+  const accountList = googleAccounts.length > 0
+    ? googleAccounts.map((a) => `• *${a.label}* — ${a.accountEmail}`).join('\n')
+    : ''
+  const googleText = googleConnected
+    ? `✅ *Connected Google accounts:*\n${accountList}`
+    : '⚠️ No Google accounts connected. Click *Add Google Account* to connect one.'
 
   return {
     type: 'home',
@@ -114,11 +111,33 @@ export function homeView({
       section(googleText) ,
       actions([
         button('🚀 Start scheduling', 'open_schedule_intake', 'primary'),
-        button('📚 Schedule tracker', 'open_schedule_tracker'),
-        button('📢 Post channel button', 'post_schedule_launcher'),
-        googleAction,
-      ].filter(Boolean)),
+        ...(isAdmin ? [
+          button('➕ Add Google Account', 'open_add_google_account'),
+          ...(googleConnected ? [button('Disconnect All Google', 'disconnect_google_oauth', 'danger')] : []),
+        ] : []),
+      ]),
       divider(),
+      context('📅 *Filter by interview window*'),
+      input('Start date', 'home_date_start_block', {
+        type: 'datepicker',
+        action_id: 'home_date_start',
+        placeholder: plain('Select start date'),
+        ...(dateFilter?.startDate ? { initial_date: dateFilter.startDate } : {}),
+      }, true, true),
+      input('End date', 'home_date_end_block', {
+        type: 'datepicker',
+        action_id: 'home_date_end',
+        placeholder: plain('Select end date'),
+        ...(dateFilter?.endDate ? { initial_date: dateFilter.endDate } : {}),
+      }, true, true),
+      ...(dateFilter ? [actions([
+        button('✕ Clear filter', 'home_clear_filter', 'danger'),
+      ], 'home_filter_actions')] : []),
+      context(
+        dateFilter
+          ? `Showing *${myCases.length}* of *${myCasesTotal}* my cases · *${teamCases.length}* of *${teamCasesTotal}* team cases`
+          : `*${myCasesTotal}* my cases · *${teamCasesTotal}* team cases`
+      ),
       header('👤 My Cases'),
       ...caseListBlocks(myCases, '📋 No active cases assigned to you.'),
       divider(),
@@ -128,7 +147,7 @@ export function homeView({
   };
 }
 
-export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone, recruiters = [], roles = [] }) {
+export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone, recruiters = [], roles = [], accounts = [], selectedAccountKey = '', googleAccounts = [] }) {
   const resolvedTimeZones = timeZones.length > 0 ? timeZones : [SYDNEY_TIME_ZONE]
   const selectedTimeZone = draft.interviewTimezone || defaultTimeZone || resolvedTimeZones[0] || SYDNEY_TIME_ZONE
   const selectedTimeZoneCountry = TIMEZONE_COUNTRY_MAP[selectedTimeZone]
@@ -161,9 +180,10 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     : draft.availableRecruiters
   const zoomLinkOptions = recruiterZoomOptions(zoomLinkRecruiters)
   const zoomLinkInitialOption = initialOption(draft.zoomLinkOption, zoomLinkOptions)
-  const availableRecruiters = draft.availableRecruiters || draft.selectedRecruiters || []
-  const availableHiringManagers = draft.availableHiringManagers ||
-    uniquePeopleById([...(draft.selectedHiringManagers || []), ...(draft.suggestedHiringManagers || [])])
+  const availableRecruiters = draft.availableRecruiters?.length ? draft.availableRecruiters : (draft.selectedRecruiters?.length ? draft.selectedRecruiters : [])
+  const availableHiringManagers = draft.availableHiringManagers?.length
+    ? draft.availableHiringManagers
+    : uniquePeopleById([...(draft.selectedHiringManagers || []), ...(draft.suggestedHiringManagers || [])])
   const remoteUpdateBlocks = draft.remoteUpdateStatus
     ? [
         section(draft.remoteUpdateStatus === 'loading'
@@ -247,6 +267,23 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
     submit: plain(draft.editCaseId ? 'Save' : '➕ Create'),
     close: plain('Cancel'),
     blocks: [
+      ...(accounts.length > 1 ? [
+        input('JazzHR Account', 'account_key_block', {
+          type: 'static_select',
+          action_id: 'account_key_select',
+          placeholder: plain('Select JazzHR account'),
+          options: accounts.map((account) => ({
+            text: plain(account.displayName),
+            value: account.key,
+          })),
+          ...(selectedAccountKey ? {
+            initial_option: {
+              text: plain(accounts.find((a) => a.key === selectedAccountKey)?.displayName || selectedAccountKey.toUpperCase()),
+              value: selectedAccountKey,
+            },
+          } : {}),
+        }, false, true),
+      ] : []),
       input('Event type', 'event_type_block', {
         type: 'static_select',
         action_id: 'event_type_select',
@@ -255,7 +292,29 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ...initialOption(draft.eventTypeOption),
       }, false, true),
       ...remoteUpdateBlocks,
-      ...standardRoleBlocks,
+      ...(accounts.length > 1 && !selectedAccountKey && !draft.accountKey ? [] : standardRoleBlocks),
+      ...((standardEvent || customInvite) && googleAccounts.length > 1 ? [
+        input('Google account', 'google_account_block', {
+          type: 'static_select',
+          action_id: 'google_account_select',
+          placeholder: plain('Choose which Google account to use'),
+          options: googleAccounts.map((acct) => ({
+            text: plain(acct.label),
+            value: acct.id,
+          })),
+          ...(draft.googleAccountId ? {
+            initial_option: {
+              text: plain(googleAccounts.find((a) => a.id === draft.googleAccountId)?.label || draft.googleAccountId),
+              value: draft.googleAccountId,
+            },
+          } : googleAccounts.length === 1 ? {
+            initial_option: {
+              text: plain(googleAccounts[0].label),
+              value: googleAccounts[0].id,
+            },
+          } : {}),
+        }, false, true),
+      ] : []),
       ...(customInvite ? [
         input('What is this invite for?', 'custom_purpose_block', {
           type: 'plain_text_input',
@@ -396,22 +455,24 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         },
         true,
       ),
-      ...(draft.resumeLink ? [
-        section(`*Existing resume:* ${resumeSlackLink(draft)}`),
+      ...(resumeRequired || draft.resumeLink ? [
+        ...(draft.resumeLink ? [
+          section(`*Existing resume:* ${resumeSlackLink(draft)}`),
+        ] : []),
+        input(
+          draft.resumeLink ? 'Replace resume' : 'Resume',
+          'resume_block',
+          {
+            type: 'file_input',
+            action_id: 'resume_file',
+            max_files: 1,
+            filetypes: ['pdf', 'doc', 'docx'],
+          },
+          Boolean(draft.resumeLink) || !resumeRequired,
+          false,
+          draft.resumeLink ? 'Leave this empty to keep the existing resume.' : '',
+        ),
       ] : []),
-      input(
-        draft.resumeLink ? 'Replace resume' : 'Resume',
-        'resume_block',
-        {
-          type: 'file_input',
-          action_id: 'resume_file',
-          max_files: 1,
-          filetypes: ['pdf', 'doc', 'docx'],
-        },
-        Boolean(draft.resumeLink) || !resumeRequired,
-        false,
-        draft.resumeLink ? 'Leave this empty to keep the existing resume.' : '',
-      ),
       input('Interview timezone', 'timezone_block', {
         type: 'external_select',
         action_id: 'timezone_select',
@@ -1225,6 +1286,36 @@ function caseListBlocks(cases, emptyText) {
   ])
 }
 
+export function filterHomeCasesByDateRange(cases, dateFilter) {
+  if (!dateFilter || (!dateFilter.startDate && !dateFilter.endDate)) return cases
+  return cases.filter((caseRecord) => matchesHomeDateRange(caseRecord, dateFilter))
+}
+
+function matchesHomeDateRange(caseRecord, dateFilter) {
+  const caseStart = caseRecord.interviewWindowStartDate || ''
+  const caseEnd = caseRecord.interviewWindowEndDate || ''
+
+  if (!caseStart && !caseEnd) {
+    const schedule = normalizeCaseSchedule(caseRecord).currentSchedule
+    const singleDate = schedule?.date || caseRecord.selectedInterviewDate || ''
+    if (!singleDate) return false
+    return dateInRange(singleDate, dateFilter)
+  }
+
+  const effectiveStart = caseStart || caseEnd
+  const effectiveEnd = caseEnd || caseStart
+  const filterStart = dateFilter.startDate || '0000-00-00'
+  const filterEnd = dateFilter.endDate || '9999-99-99'
+
+  return effectiveStart <= filterEnd && effectiveEnd >= filterStart
+}
+
+function dateInRange(date, dateFilter) {
+  const filterStart = dateFilter.startDate || '0000-00-00'
+  const filterEnd = dateFilter.endDate || '9999-99-99'
+  return date >= filterStart && date <= filterEnd
+}
+
 export function caseDetailsModal(caseRecord) {
   return {
     type: 'modal',
@@ -1342,15 +1433,7 @@ export function actionButtonsForCase(caseRecord, compact = false) {
       undefined,
       caseRecord.id,
     ),
-    open_candidate_message_modal: button(
-      compact ? '✉️ Candidate' : '✉️ Prepare candidate message',
-      'open_candidate_message_modal',
-      undefined,
-      caseRecord.id,
-    ),
     send_reminder: button(compact ? '🔔 Reminder' : '🔔 Send reminder', 'open_reminder_message_modal', undefined, caseRecord.id),
-    view_resume: button(compact ? '📄 Resume' : '📄 View resume', 'view_resume', undefined, caseRecord.id),
-    open_finalize_modal: button(compact ? '📅 Create invite' : '📅 Create calendar invite', 'open_finalize_modal', 'primary', caseRecord.id),
     scheduling_open: button(compact ? '📅 Schedule' : '📅 Schedule Interview', 'scheduling_open', 'primary', caseRecord.id),
     open_reschedule_modal: button(
       compact ? '🔄 Reschedule' : '🔄 Reschedule interview',
@@ -1359,12 +1442,6 @@ export function actionButtonsForCase(caseRecord, compact = false) {
       caseRecord.id,
     ),
     cancel_interview: button(compact ? '❌ Cancel' : '❌ Cancel interview', 'cancel_interview', 'danger', caseRecord.id),
-    view_calendar_details: button(
-      compact ? '📅 Calendar' : '📅 View calendar details',
-      'view_calendar_details',
-      undefined,
-      caseRecord.id,
-    ),
     retry_custom_invites: button(
       compact ? 'Retry invitations' : 'Retry unsent invitations',
       'retry_custom_invites',
@@ -1475,6 +1552,10 @@ function section(text) {
   return { type: 'section', text: mrkdwn(text) };
 }
 
+function context(text) {
+  return { type: 'context', elements: [mrkdwn(text)] };
+}
+
 function input(label, blockId, element, optional = false, dispatchAction = false, hint = '') {
   return {
     type: 'input',
@@ -1583,6 +1664,10 @@ function candidateSearchPaginationButtons(draft) {
   ].filter(Boolean)
 }
 
+function filterFalsyValues(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v))
+}
+
 function applicantDetailBlocks(draft) {
   const hasApplicant = Boolean(draft.applicantId);
 
@@ -1602,7 +1687,7 @@ function applicantDetailBlocks(draft) {
   // Merge base applicant fields with richer JazzHR detail (detail wins on overlap)
   const applicant = draft.applicant || {};
   const detail = draft.applicantDetail || {};
-  const rich = { ...applicant, ...detail };
+  const rich = { ...applicant, ...filterFalsyValues(detail) };
 
   const coreLines = [];
   if (rich.email)     coreLines.push(`📧 *Email:* ${rich.email}`);
@@ -1755,7 +1840,7 @@ function peopleCheckboxBlocks({
   const needsSearch = people.length > Math.max(10, selectedIds.length)
   if (people.length === 0) {
     return [
-      section(`*${label}*\nSelect a JazzHR role to load available ${label.toLowerCase()}.`),
+      section(`*${label}*\nNo ${label.toLowerCase()} found. Check that the talent directory is configured.`),
     ]
   }
   const searchBlock = input(`Search ${label.toLowerCase()}`, searchBlockId, {
@@ -2057,4 +2142,27 @@ function caseProgressHeader(caseRecord, recentAudits = []) {
 
   blocks.push({ type: 'divider' })
   return blocks
+}
+
+export function addGoogleAccountModal() {
+  return {
+    type: 'modal',
+    callback_id: 'add_google_account_submit',
+    title: plain('Add Google Account'),
+    submit: plain('Generate OAuth Link'),
+    close: plain('Cancel'),
+    blocks: [
+      input('Account email', 'google_account_email_block', {
+        type: 'plain_text_input',
+        action_id: 'google_account_email',
+        placeholder: plain('e.g. careers@freedompropertyinvestors.com.au'),
+      }, false),
+      input('Account label', 'google_account_label_block', {
+        type: 'plain_text_input',
+        action_id: 'google_account_label',
+        placeholder: plain('e.g. Onshore - FPI'),
+      }, false),
+      section('You will receive a DM with an OAuth link. Open it and sign in as this Google account to connect it.'),
+    ],
+  }
 }

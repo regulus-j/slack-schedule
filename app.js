@@ -4,6 +4,7 @@ import { createHttpServer } from './src/http-server.js'
 import { createStore } from './src/store/index.js'
 import { registerSlackHandlers } from './src/slack/handlers.js'
 import { logger } from './src/logger.js'
+import { setGoogleAccounts } from './src/data/cache.js'
 import { loadTalentDirectory } from './src/services/talent-directory.js'
 import { applyTestDirectoryData } from './src/services/test-directory-data.js'
 import { hydrateJazzhrCacheFromStore, refreshJazzhrCache, refreshJazzhrOpenJobs } from './src/services/jazzhr.js'
@@ -42,9 +43,29 @@ export async function main() {
   await store.init()
 
   await loadTalentDirectory(config, store)
-  await refreshJazzhrOpenJobs({ config, logger })
-  const jazzhrHydration = await hydrateJazzhrCacheFromStore({ store, logger })
+
+  // Load JazzHR data for each configured account
+  const accounts = config.jazzhr.accounts || []
+  for (const account of accounts) {
+    await refreshJazzhrOpenJobs({ config, logger, accountKey: account.key })
+  }
+  let jazzhrHydration = { records: 0 }
+  for (const account of accounts) {
+    const result = await hydrateJazzhrCacheFromStore({ store, logger, accountKey: account.key })
+    jazzhrHydration.records += result.records
+  }
   applyTestDirectoryData(config, logger)
+
+  // Load connected Google accounts for the intake modal picker
+  if (typeof store.listGoogleAccounts === 'function') {
+    try {
+      const googleAccts = await store.listGoogleAccounts()
+      setGoogleAccounts(googleAccts)
+      logger.info('google_accounts_loaded', { count: googleAccts.length })
+    } catch (err) {
+      logger.warn('google_accounts_load_failed', { error: err.message })
+    }
+  }
 
   const app = new App({
     token: config.slack.botToken,
@@ -88,7 +109,13 @@ export async function main() {
   })
 
   if (config.jazzhr.refreshOnStartup || jazzhrHydration.records === 0) {
-    refreshJazzhrCache({ config, logger, store, throwOnError: false })
+    // Serialize per-account full refreshes to avoid hitting JazzHR rate limits.
+    // Fire-and-forget so the app starts serving requests immediately.
+    (async () => {
+      for (const account of accounts) {
+        await refreshJazzhrCache({ config, logger, store, throwOnError: false, accountKey: account.key })
+      }
+    })().catch((err) => logger.warn('jazzhr_startup_refresh_async_failed', { error: err.message }))
   } else {
     logger.info('jazzhr_startup_refresh_skipped', {
       reason: 'persisted_cache_available',

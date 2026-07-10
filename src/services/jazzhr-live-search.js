@@ -10,6 +10,7 @@ const DEFAULT_MAX_PAGES = 10
 
 export function createJazzhrLiveSearchManager({
   apiKey,
+  accountKey = '',
   logger = console,
   pageSize = DEFAULT_PAGE_SIZE,
   concurrency = DEFAULT_CONCURRENCY,
@@ -34,6 +35,7 @@ export function createJazzhrLiveSearchManager({
       query: String(query || '').trim(),
       normalizedQuery,
       userId,
+      accountKey,
       version: 1,
       pageSize: resolvedPageSize,
       currentPage: 0,
@@ -227,7 +229,7 @@ export async function fetchApplicantListPage({
 function addMatches(session, pageResult) {
   pageResult.items.forEach((item, index) => {
     for (const record of applicantRoleRecords(item)) {
-      if (applicantEligibilityReason(record, { allowUnknown: true })) continue
+      if (applicantEligibilityReason(record)) continue
       const candidate = mapLiveApplicant(record, index)
       if (!candidate) continue
       if (!candidateMatchesFilters(candidate, session.filters)) continue
@@ -287,6 +289,7 @@ function snapshot(session) {
     id: session.id,
     query: session.query,
     userId: session.userId,
+    accountKey: session.accountKey,
     version: session.version,
     pageSize: session.pageSize,
     currentPage: session.currentPage,

@@ -62,7 +62,7 @@ export async function checkFreeBusy({ config, logger, attendees, windows, store,
     return { mocked: true, busy: [] };
   }
 
-  const tokenOwnerId = getGoogleTokenOwner(config, recruiterId);
+  const tokenOwnerId = getGoogleTokenOwner(config, recruiterId, null);
   const accessToken = await resolveAccessToken({ config, store, recruiterId: tokenOwnerId });
   if (!accessToken) {
     logger.warn('calendar_freebusy_skipped', { reason: 'missing_google_token', recruiterId: tokenOwnerId });
@@ -93,14 +93,14 @@ export async function checkFreeBusy({ config, logger, attendees, windows, store,
   return { mocked: false, busy: payload.calendars || {} };
 }
 
-export async function createCalendarEvent({ config, logger, caseRecord, eventInput, store }) {
+export async function createCalendarEvent({ config, logger, caseRecord, eventInput, store, tokenOwnerId }) {
   const eventDraft = buildCalendarEventDraft(eventInput);
   if (!googleReady(config)) {
     logger.warn('calendar_event_mocked', { caseId: caseRecord.id });
     return { mocked: true, eventId: `mock-${caseRecord.id}`, eventDraft };
   }
 
-  const recruiterId = getGoogleTokenOwner(config, getRecruiterId(caseRecord));
+  const recruiterId = tokenOwnerId || getGoogleTokenOwner(config, getRecruiterId(caseRecord), caseRecord);
   const accessToken = await resolveAccessToken({ config, store, recruiterId });
   if (!accessToken) {
     logger.warn('calendar_event_skipped', { caseId: caseRecord.id, reason: 'missing_google_token' });
@@ -129,12 +129,56 @@ export async function createCalendarEvent({ config, logger, caseRecord, eventInp
   return { mocked: false, eventId: payload.id, eventDraft, googleEvent: payload };
 }
 
-export async function updateCalendarEvent({ config, logger, caseRecord, eventInput, store }) {
+export async function deleteCalendarEvent({ config, logger, caseRecord, store, tokenOwnerId }) {
+  const eventId = caseRecord.calendarEventId
+  if (!eventId) {
+    logger.info('calendar_delete_skipped', { caseId: caseRecord.id, reason: 'no_event_id' })
+    return { mocked: true, deleted: false, reason: 'no_event_id' }
+  }
+
+  if (!googleReady(config)) {
+    logger.warn('calendar_delete_mocked', { caseId: caseRecord.id, eventId })
+    return { mocked: true, deleted: true, eventId }
+  }
+
+  const recruiterId = tokenOwnerId || getGoogleTokenOwner(config, getRecruiterId(caseRecord))
+  const accessToken = await resolveAccessToken({ config, store, recruiterId })
+  if (!accessToken) {
+    logger.warn('calendar_delete_skipped', { caseId: caseRecord.id, eventId, reason: 'missing_google_token' })
+    return { mocked: true, deleted: false, reason: 'missing_google_token' }
+  }
+
+  const response = await fetchWithTimeout(
+    `${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'DELETE',
+      headers: buildAuthHeaders(accessToken),
+    },
+  )
+
+  if (!response.ok && response.status !== 410) {
+    const payload = await response.json().catch(() => ({}))
+    const error = googleCalendarRequestError({
+      action: 'delete',
+      payload,
+      status: response.status,
+      calendarId: config.google.sharedCalendarId,
+      eventId,
+    })
+    logger.warn('calendar_delete_failed', { caseId: caseRecord.id, eventId, error: error.message })
+    return { mocked: false, deleted: false, eventId, error: error.message }
+  }
+
+  logger.info('calendar_event_deleted', { caseId: caseRecord.id, eventId, alreadyGone: response.status === 410 })
+  return { mocked: false, deleted: true, eventId }
+}
+
+export async function updateCalendarEvent({ config, logger, caseRecord, eventInput, store, tokenOwnerId }) {
   const eventDraft = buildCalendarEventDraft(eventInput);
   const eventId = caseRecord.calendarEventId || eventInput.eventId;
 
   if (!eventId) {
-    return createCalendarEvent({ config, logger, caseRecord, eventInput, store });
+    return createCalendarEvent({ config, logger, caseRecord, eventInput, store, tokenOwnerId });
   }
 
   if (!googleReady(config)) {
@@ -142,7 +186,7 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
     return { mocked: true, eventId, eventDraft };
   }
 
-  const recruiterId = getGoogleTokenOwner(config, getRecruiterId(caseRecord));
+  const recruiterId = tokenOwnerId || getGoogleTokenOwner(config, getRecruiterId(caseRecord), caseRecord);
   const accessToken = await resolveAccessToken({ config, store, recruiterId });
   if (!accessToken) {
     logger.warn('calendar_event_update_skipped', { caseId: caseRecord.id, eventId, reason: 'missing_google_token' });
@@ -174,7 +218,7 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
   return { mocked: false, eventId: payload.id || eventId, eventDraft, googleEvent: payload };
 }
 
-export async function sendRecruiterEmail({ config, logger, caseRecord, email, store }) {
+export async function sendRecruiterEmail({ config, logger, caseRecord, email, store, tokenOwnerId }) {
   const deliveryEmail = emailForDelivery({ config, logger, caseRecord, email })
 
   if (!googleReady(config)) {
@@ -182,7 +226,7 @@ export async function sendRecruiterEmail({ config, logger, caseRecord, email, st
     return { mocked: true, messageId: `mock-email-${caseRecord.id}`, email: deliveryEmail };
   }
 
-  const recruiterId = getGoogleTokenOwner(config, getRecruiterId(caseRecord));
+  const recruiterId = tokenOwnerId || getGoogleTokenOwner(config, getRecruiterId(caseRecord), caseRecord);
   const accessToken = await resolveAccessToken({ config, store, recruiterId });
   if (!accessToken) {
     logger.warn('gmail_send_skipped', { caseId: caseRecord.id, reason: 'missing_google_token' });
@@ -435,6 +479,7 @@ export function getRecruiterId(caseRecord) {
   return caseRecord.ownerSlackUserId || caseRecord.recruiter?.slackUserId || caseRecord.recruiter?.id || null;
 }
 
-export function getGoogleTokenOwner(config, fallbackRecruiterId) {
+export function getGoogleTokenOwner(config, fallbackRecruiterId, caseRecord) {
+  if (caseRecord?.googleAccountId) return caseRecord.googleAccountId
   return config?.google?.authSlackUserId || fallbackRecruiterId || null
 }

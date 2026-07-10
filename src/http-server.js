@@ -203,11 +203,15 @@ export function createHttpServer({ config, store, logger, slackClient }) {
 
       try {
         const tokenData = await exchangeGoogleOAuthCode({ config, code })
+        if (state.accountEmail) tokenData.account_email = state.accountEmail
+        if (state.accountLabel) tokenData.label = state.accountLabel
         await store.saveGoogleToken(state.tokenOwnerId, tokenData)
 
         logger.info('google_oauth_callback_succeeded', {
           correlationId,
           tokenOwnerId: state.tokenOwnerId,
+          accountEmail: state.accountEmail || undefined,
+          accountLabel: state.accountLabel || undefined,
         })
 
         await sendSlackDm({

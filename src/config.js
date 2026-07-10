@@ -29,6 +29,7 @@ export function loadConfig(env = process.env) {
       user: cleanString(value('CLOUD_SQL_IAM_USER')),
       ipType: cleanString(value('CLOUD_SQL_IP_TYPE')) || 'PRIVATE',
       maxConnections: positiveInteger(value('DATABASE_MAX_CONNECTIONS'), 5),
+      sslMode: value('DATABASE_SSL_MODE') || 'require',
     },
     slack: {
       botToken: value('SLACK_BOT_TOKEN'),
@@ -37,7 +38,8 @@ export function loadConfig(env = process.env) {
       teamId: value('SLACK_TEAM_ID') || null,
     },
     jazzhr: {
-      apiKey: value('JAZZHR_API_KEY'),
+      accounts: buildJazzhrAccounts(env, value),
+      get isMultiAccount() { return this.accounts.length > 1 },
       applicantMaxPages: positiveInteger(value('JAZZHR_APPLICANT_MAX_PAGES'), 500),
       applicantFetchConcurrency: positiveInteger(value('JAZZHR_APPLICANT_FETCH_CONCURRENCY'), 2),
       refreshOnStartup: parseBoolean(value('JAZZHR_REFRESH_ON_STARTUP'), false),
@@ -112,6 +114,27 @@ function secretValue(env, name) {
   return env?.[name]
 }
 
+function buildJazzhrAccounts(env, value) {
+  const accountKeysRaw = value('JAZZHR_ACCOUNT_KEYS')
+  if (accountKeysRaw) {
+    const keys = String(accountKeysRaw)
+      .split(',')
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+    return keys.map((key) => ({
+      key,
+      apiKey: value(`JAZZHR_API_KEY_${key.toUpperCase()}`) || '',
+      displayName: value(`JAZZHR_COMPANY_NAME_${key.toUpperCase()}`) || key.toUpperCase(),
+    }))
+  }
+  // Legacy single-account mode
+  const apiKey = value('JAZZHR_API_KEY')
+  if (apiKey) {
+    return [{ key: 'default', apiKey, displayName: 'OPG' }]
+  }
+  return []
+}
+
 function resolveTimeZoneList(value) {
   if (!value) return DEFAULT_TIME_ZONES;
   const list = String(value)
@@ -140,7 +163,16 @@ export function validateStartupConfig(config) {
 
   if (!config.slack.botToken) missing.push('SLACK_BOT_TOKEN');
   if (!config.slack.appToken) missing.push('SLACK_APP_TOKEN');
-  if (!config.jazzhr.apiKey) missing.push('JAZZHR_API_KEY');
+  if (config.jazzhr.accounts.length === 0) {
+    missing.push('JAZZHR_API_KEY (or JAZZHR_ACCOUNT_KEYS + JAZZHR_API_KEY_*)');
+  } else {
+    for (const account of config.jazzhr.accounts) {
+      if (!account.apiKey) {
+        const suffix = account.key === 'default' ? 'JAZZHR_API_KEY' : `JAZZHR_API_KEY_${account.key.toUpperCase()}`
+        missing.push(suffix)
+      }
+    }
+  }
   if (config.notifications?.enabled && !config.notifications.feedbackFormUrl) {
     missing.push('FEEDBACK_FORM_URL')
   }

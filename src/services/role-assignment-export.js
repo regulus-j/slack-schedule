@@ -72,7 +72,9 @@ export function normalizeRoleAssignmentRow(row) {
     'Position',
     'Position Title',
     'Open Role',
+    'Column A',
   ])
+  const hiringManagerFromColumnB = clean(row?.['Column B'] || '')
   const status = firstClean(row, ['Status', 'Job Status', 'Role Status', 'Opening Status', 'Recruiters  to manage', 'Recruiters to manage'])
   const recruiterName = allClean(row, [
     'Recruiters  to manage 5',
@@ -110,7 +112,8 @@ export function normalizeRoleAssignmentRow(row) {
     'Manager',
     'Second/Final Interviewer',
     'Second/Final Interviewers',
-  ]).join('\n')
+    'Column B',
+  ]).join('\n') || hiringManagerFromColumnB
   const hiringManagerEmail = normalizeEmailList(allClean(row, [
     'Column V',
     'Hiring Manager Email',
@@ -240,7 +243,10 @@ function extractRowsPayload(payload) {
 
 function firstClean(row, keys) {
   const values = allClean(row, keys)
-  return values[0] || ''
+  if (values.length <= 1) return values[0] || ''
+  // Prefer the longest value — a full job title is always longer than a
+  // generic label like "Intern" that might sit in a shorter "Role" column.
+  return values.reduce((longest, value) => value.length > longest.length ? value : longest, values[0])
 }
 
 function allClean(row, keys) {

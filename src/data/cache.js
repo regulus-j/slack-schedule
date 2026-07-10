@@ -1,115 +1,182 @@
-let applicants = [];
-let recruiters = [];
-let hiringManagers = [];
-let talentRecruiters = [];
-let recruitmentSheetPeople = [];
-let slackUsers = [];
-let slackRecruiters = [];
-let roleAssignments = [];
-let jazzhrJobs = [];
-let openRoles = [];
-const applicantDetails = new Map();
+// Global / non-JazzHR data (shared across all accounts)
+let hiringManagers = []
+let talentRecruiters = []
+let recruitmentSheetPeople = []
+let slackUsers = []
+let slackRecruiters = []
+let roleAssignments = []
 
-export function getApplicants() {
-  return applicants;
+// Per-account JazzHR-sourced data
+const accounts = new Map() // Map<string, AccountState>
+
+const DEFAULT_ACCOUNT = 'default'
+
+function getAccountState(accountKey = DEFAULT_ACCOUNT) {
+  if (!accounts.has(accountKey)) {
+    accounts.set(accountKey, {
+      applicants: [],
+      recruiters: [],
+      jazzhrJobs: [],
+      openRoles: [],
+      applicantDetails: new Map(),
+      _allPeopleDirty: true,
+      _allPeopleCache: [],
+    })
+  }
+  return accounts.get(accountKey)
 }
 
-export function getRecruiters() {
-  return recruiters;
+// ── JazzHR-sourced getters (per-account) ──
+
+export function getApplicants(accountKey = DEFAULT_ACCOUNT) {
+  return getAccountState(accountKey).applicants
 }
+
+export function getRecruiters(accountKey = DEFAULT_ACCOUNT) {
+  return getAccountState(accountKey).recruiters
+}
+
+export function getJazzhrJobs(accountKey = DEFAULT_ACCOUNT) {
+  return getAccountState(accountKey).jazzhrJobs
+}
+
+export function getOpenRoles(accountKey = DEFAULT_ACCOUNT) {
+  const state = getAccountState(accountKey)
+  // Lazy fallback: if neither JazzHR jobs nor role assignments have populated this
+  // account's openRoles yet, rebuild from global roleAssignments on first access.
+  if (state.openRoles.length === 0 && state.jazzhrJobs.length === 0) {
+    rebuildOpenRoles(accountKey)
+  }
+  return state.openRoles
+}
+
+export function getApplicantDetail(id, accountKey = DEFAULT_ACCOUNT) {
+  return getAccountState(accountKey).applicantDetails.get(id) || null
+}
+
+// ── JazzHR-sourced setters (per-account) ──
+
+export function setApplicants(data, accountKey = DEFAULT_ACCOUNT) {
+  getAccountState(accountKey).applicants = Array.isArray(data) ? data : []
+}
+
+export function setRecruiters(data, accountKey = DEFAULT_ACCOUNT) {
+  const state = getAccountState(accountKey)
+  state.recruiters = Array.isArray(data) ? data : []
+  state._allPeopleDirty = true
+}
+
+export function setJazzhrJobs(data, accountKey = DEFAULT_ACCOUNT) {
+  const state = getAccountState(accountKey)
+  state.jazzhrJobs = Array.isArray(data) ? data : []
+  rebuildOpenRoles(accountKey)
+}
+
+export function setApplicantDetail(id, data, accountKey = DEFAULT_ACCOUNT) {
+  if (id && data) {
+    getAccountState(accountKey).applicantDetails.set(id, data)
+  }
+}
+
+// ── Global getters (unchanged signatures) ──
 
 export function getHiringManagers() {
-  return hiringManagers;
+  return hiringManagers
 }
 
 export function getTalentRecruiters() {
-  return talentRecruiters;
+  return talentRecruiters
 }
 
 export function getRecruitmentSheetPeople() {
-  return recruitmentSheetPeople;
+  return recruitmentSheetPeople
 }
 
 export function getSlackUsers() {
-  return slackUsers;
+  return slackUsers
 }
 
 export function getSlackRecruiters() {
-  return slackRecruiters;
+  return slackRecruiters
 }
 
 export function getRoleAssignments() {
-  return roleAssignments;
+  return roleAssignments
 }
 
-export function getOpenRoles() {
-  return openRoles;
+let googleAccounts = []
+
+export function getGoogleAccounts() {
+  return googleAccounts
 }
 
-export function getJazzhrJobs() {
-  return jazzhrJobs;
+export function setGoogleAccounts(data) {
+  googleAccounts = Array.isArray(data) ? data : []
 }
 
-export function getAllPeople() {
-  if (_allPeopleDirty) {
-    _allPeopleCache = [...slackUsers, ...talentRecruiters, ...recruiters, ...hiringManagers]
-    _allPeopleDirty = false
+export function getAllPeople(accountKey = DEFAULT_ACCOUNT) {
+  const state = getAccountState(accountKey)
+  if (state._allPeopleDirty) {
+    state._allPeopleCache = [...slackUsers, ...talentRecruiters, ...state.recruiters, ...hiringManagers]
+    state._allPeopleDirty = false
   }
-  return _allPeopleCache
+  return state._allPeopleCache
 }
 
-let _allPeopleCache = []
-let _allPeopleDirty = true
-
-function markAllPeopleDirty() {
-  _allPeopleDirty = true
-}
-
-export function setApplicants(data) {
-  applicants = Array.isArray(data) ? data : [];
-}
-
-export function setRecruiters(data) {
-  recruiters = Array.isArray(data) ? data : [];
-  markAllPeopleDirty()
-}
+// ── Global setters (mostly unchanged) ──
 
 export function setHiringManagers(data) {
-  hiringManagers = Array.isArray(data) ? data : [];
+  hiringManagers = Array.isArray(data) ? data : []
   markAllPeopleDirty()
 }
 
 export function setTalentRecruiters(data) {
-  talentRecruiters = Array.isArray(data) ? data : [];
+  talentRecruiters = Array.isArray(data) ? data : []
   markAllPeopleDirty()
 }
 
 export function setRecruitmentSheetPeople(data) {
-  recruitmentSheetPeople = Array.isArray(data) ? data : [];
+  recruitmentSheetPeople = Array.isArray(data) ? data : []
 }
 
 export function setSlackUsers(data) {
-  slackUsers = Array.isArray(data) ? data : [];
+  slackUsers = Array.isArray(data) ? data : []
   markAllPeopleDirty()
 }
 
 export function setSlackRecruiters(data) {
-  slackRecruiters = Array.isArray(data) ? data : [];
+  slackRecruiters = Array.isArray(data) ? data : []
 }
 
 export function setRoleAssignments(data) {
-  roleAssignments = Array.isArray(data) ? data : [];
-  rebuildOpenRoles()
+  roleAssignments = Array.isArray(data) ? data : []
+  // Rebuild openRoles for all known accounts (roleAssignments is the fallback source)
+  if (accounts.size > 0) {
+    for (const accountKey of accounts.keys()) {
+      rebuildOpenRoles(accountKey)
+    }
+  } else {
+    rebuildOpenRoles(DEFAULT_ACCOUNT)
+  }
 }
 
-export function setJazzhrJobs(data) {
-  jazzhrJobs = Array.isArray(data) ? data : []
-  rebuildOpenRoles()
+// ── Internal helpers ──
+
+function markAllPeopleDirty() {
+  for (const state of accounts.values()) {
+    state._allPeopleDirty = true
+  }
+  // Also dirty the default state if it exists or will be lazily created
+  if (accounts.has(DEFAULT_ACCOUNT)) {
+    accounts.get(DEFAULT_ACCOUNT)._allPeopleDirty = true
+  }
 }
 
-function rebuildOpenRoles() {
-  if (jazzhrJobs.length > 0) {
-    openRoles = jazzhrJobs
+function rebuildOpenRoles(accountKey = DEFAULT_ACCOUNT) {
+  const state = getAccountState(accountKey)
+
+  if (state.jazzhrJobs.length > 0) {
+    state.openRoles = state.jazzhrJobs
       .filter((job) => isOpenJazzhrJob(job))
       .map((job) => ({
         id: job.id,
@@ -122,6 +189,7 @@ function rebuildOpenRoles() {
     return
   }
 
+  // Fall back to global roleAssignments
   const byId = new Map()
   for (const assignment of roleAssignments) {
     const id = assignment.roleId || assignment.roleKey
@@ -134,20 +202,10 @@ function rebuildOpenRoles() {
       status: assignment.status || '',
     })
   }
-  openRoles = [...byId.values()]
+  state.openRoles = [...byId.values()]
 }
 
 function isOpenJazzhrJob(job) {
   const status = String(job?.status || '').trim().toLowerCase()
   return status === 'open' || status === 'active' || status === 'published'
-}
-
-export function getApplicantDetail(id) {
-  return applicantDetails.get(id) || null;
-}
-
-export function setApplicantDetail(id, data) {
-  if (id && data) {
-    applicantDetails.set(id, data);
-  }
 }

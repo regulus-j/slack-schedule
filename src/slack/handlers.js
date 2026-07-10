@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { issueOAuthState } from '../security/oauth-state.js'
 import {
   installSlackSecurityMiddleware,
+  isAdminUser,
   requireAdminSlackUser,
 } from '../security/slack-access.js'
 import {
@@ -14,7 +15,9 @@ import {
   getSlackUsers,
   getOpenRoles,
   getRoleAssignments,
+  getGoogleAccounts,
   setApplicantDetail,
+  setGoogleAccounts,
 } from '../data/cache.js'
 import { searchTimezones } from '../data/timezones.js'
 import {
@@ -38,7 +41,7 @@ import {
   signedEmailBodiesFromPlainText,
   stripSignatureHtml,
 } from '../templates.js'
-import { buildGoogleOAuthUrl, createCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
+import { buildGoogleOAuthUrl, createCalendarEvent, deleteCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
 import { normalizeResumeFile, resolveResumeAttachment } from '../services/resume-attachment.js'
 import {
   applicantEligibilityReason,
@@ -126,6 +129,7 @@ import {
   externalAttendeeModal,
   finalizeEmailPreviewModal,
   finalizeModal,
+  addGoogleAccountModal,
   homeView,
   intakeModal,
   scheduleTrackerModal,
@@ -133,25 +137,72 @@ import {
   rescheduleModal,
   schedulingModal,
   schedulingPhaseTwo,
+  filterHomeCasesByDateRange,
 } from './views.js'
+
+const homeDateFilters = new Map()
+let _config = null
 
 export function registerSlackHandlers(app, context) {
   const { store, logger, config } = context;
+  _config = config
   installSlackSecurityMiddleware(app, { config, store, logger })
   const schedulingTimeZones = resolveSchedulingTimeZones(config)
   const defaultTimeZone = schedulingTimeZones[0] || SYDNEY_TIME_ZONE
-  const liveCandidateSearch = createJazzhrLiveSearchManager({
-    apiKey: config.jazzhr.apiKey,
-    logger,
-    pageSize: config.jazzhr.liveSearch?.pageSize,
-    concurrency: config.jazzhr.liveSearch?.concurrency,
-    maxPages: config.jazzhr.liveSearch?.maxPages,
-    ttlMs: config.jazzhr.liveSearch?.sessionTtlMs,
-  })
+  const liveCandidateSearchManagers = new Map()
+  function getCandidateSearchManager(accountKey) {
+    const key = accountKey || 'default'
+    if (!liveCandidateSearchManagers.has(key)) {
+      const account = (config.jazzhr.accounts || []).find((a) => a.key === key)
+      const apiKey = account?.apiKey || config.jazzhr.accounts?.[0]?.apiKey || ''
+      liveCandidateSearchManagers.set(key, createJazzhrLiveSearchManager({
+        apiKey,
+        accountKey: key,
+        logger,
+        pageSize: config.jazzhr.liveSearch?.pageSize,
+        concurrency: config.jazzhr.liveSearch?.concurrency,
+        maxPages: config.jazzhr.liveSearch?.maxPages,
+        ttlMs: config.jazzhr.liveSearch?.sessionTtlMs,
+      }))
+    }
+    return liveCandidateSearchManagers.get(key)
+  }
+  // Backward-compat alias for existing references
+  const liveCandidateSearch = getCandidateSearchManager('default')
 
   app.event('app_home_opened', async ({ event, client }) => {
     await publishHome({ client, userId: event.user, store, logger, config });
   });
+
+  app.action('home_date_start', async ({ ack, body, client }) => {
+    await ack()
+    const userId = body.user.id
+    const selectedDate = body.actions[0].selected_date
+    if (!selectedDate) return
+    const existing = homeDateFilters.get(userId) || {}
+    homeDateFilters.set(userId, { ...existing, startDate: selectedDate })
+    logger.info('home_date_filter_set', { userId, startDate: selectedDate })
+    await publishHome({ client, userId, store, logger, config })
+  })
+
+  app.action('home_date_end', async ({ ack, body, client }) => {
+    await ack()
+    const userId = body.user.id
+    const selectedDate = body.actions[0].selected_date
+    if (!selectedDate) return
+    const existing = homeDateFilters.get(userId) || {}
+    homeDateFilters.set(userId, { ...existing, endDate: selectedDate })
+    logger.info('home_date_filter_set', { userId, endDate: selectedDate })
+    await publishHome({ client, userId, store, logger, config })
+  })
+
+  app.action('home_clear_filter', async ({ ack, body, client }) => {
+    await ack()
+    const userId = body.user.id
+    homeDateFilters.delete(userId)
+    logger.info('home_date_filter_cleared', { userId })
+    await publishHome({ client, userId, store, logger, config })
+  })
 
   app.command('/schedule-interview', async ({ command, ack, client }) => {
     await ack();
@@ -229,21 +280,27 @@ export function registerSlackHandlers(app, context) {
     const text = (command.text || '').trim().toLowerCase();
 
     if (text === 'refresh-jazz') {
-      const [result, openJobsResult] = await Promise.all([
-        refreshJazzhrCache({ config, logger, store }),
-        refreshJazzhrOpenJobs({ config, logger }),
-      ])
-      const recruiters = getRecruiters();
+      const accounts = config.jazzhr.accounts || []
+      const results = []
+      for (const account of accounts) {
+        const [result, openJobsResult] = await Promise.all([
+          refreshJazzhrCache({ config, logger, store, accountKey: account.key }),
+          refreshJazzhrOpenJobs({ config, logger, accountKey: account.key }),
+        ])
+        const recruiters = getRecruiters(account.key)
+        results.push({ account: account.displayName, result, openJobsResult, recruiters: recruiters.length })
+      }
       await loadTalentDirectory(config, store)
       applyTestDirectoryData(config, logger)
       const talentRecruiters = getTalentRecruiters()
+      const summary = results.map((r) =>
+        `${r.account}: ${r.result.records} applicants, ${r.openJobsResult.records} open roles, ${r.recruiters} users`
+      ).join('\n')
       await postSharedActionMessage({
         client,
         channel: command.channel_id,
         actorSlackUserId: command.user_id,
-        text: result.refreshed && openJobsResult.refreshed
-          ? `JazzHR cache refreshed: ${result.records} applicants, ${result.indexedCandidates || 0} candidate index records, ${openJobsResult.records} open roles, and ${recruiters.length} JazzHR users loaded. Talent recruiters refreshed: ${talentRecruiters.length}.`
-          : 'JazzHR refresh completed with warnings (check logs for details).',
+        text: `JazzHR cache refreshed:\n${summary}\nTalent recruiters: ${talentRecruiters.length}.`,
       });
       return;
     }
@@ -262,8 +319,13 @@ export function registerSlackHandlers(app, context) {
     }
 
     if (text === 'status') {
-      const applicants = getApplicants();
-      const recruiters = getRecruiters();
+      const accounts = config.jazzhr.accounts || []
+      const accountStats = accounts.map((account) => {
+        const applicants = getApplicants(account.key)
+        const recruiters = getRecruiters(account.key)
+        const roles = getOpenRoles(account.key)
+        return `${account.displayName}: ${applicants.length} applicants, ${recruiters.length} recruiters, ${roles.length} open roles`
+      }).join('\n')
       const talentRecruiters = getTalentRecruiters();
       const managers = getHiringManagers();
       const totalPeople = talentRecruiters.length + managers.length
@@ -272,8 +334,7 @@ export function registerSlackHandlers(app, context) {
         user: command.user_id,
         text: [
           `*Cache status:*`,
-          `Applicants: ${applicants.length}`,
-          `Recruiters (JazzHR): ${recruiters.length}`,
+          accountStats,
           `Recruiters (talent directory): ${talentRecruiters.length}`,
           `Hiring Managers (talent directory): ${managers.length}`,
           `Total directory people: ${totalPeople}`,
@@ -410,11 +471,14 @@ export function registerSlackHandlers(app, context) {
   app.action('candidate_search_submit', async ({ ack, body, client }) => {
     await ack();
     const query = body.view?.state?.values?.candidate_search_block?.candidate_search?.value?.trim() || '';
-    const intakeDraft = buildIntakeDraft(body.view?.state?.values || {}, await loadSchedulingTemplates(), parsePrivateMetadata(body.view?.private_metadata) || {})
-    const filters = roleCandidateFilters(intakeDraft)
+    const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const accountKey = metadata.accountKey || 'default'
+    const intakeDraft = buildIntakeDraft(body.view?.state?.values || {}, await loadSchedulingTemplates(), metadata)
+    const filters = roleCandidateFilters(intakeDraft, accountKey)
     const indexedCandidates = query ? await searchCandidateIndex(store, '', query, 100, filters) : []
+    const candidateSearchMgr = getCandidateSearchManager(accountKey)
     const session = query && indexedCandidates.length === 0
-      ? liveCandidateSearch.start({ query, userId: body.user?.id || '', filters })
+      ? candidateSearchMgr.start({ query, userId: body.user?.id || '', filters })
       : null
     const templates = await loadSchedulingTemplates()
     const updateResult = await refreshIntakeModal({
@@ -434,7 +498,7 @@ export function registerSlackHandlers(app, context) {
     });
     if (session && !session.complete) {
       updateLiveCandidateSearchModal({
-        liveCandidateSearch,
+        liveCandidateSearch: candidateSearchMgr,
         client,
         body: bodyWithUpdatedView(body, updateResult),
         templates,
@@ -453,8 +517,9 @@ export function registerSlackHandlers(app, context) {
   app.action('candidate_search_prev', async ({ ack, body, client }) => {
     await ack()
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const accountKey = metadata.accountKey || 'default'
     const page = Math.max(0, Number(metadata.candidateSearchPage || 0) - 1)
-    const session = liveCandidateSearch.get(metadata.candidateSearchSessionId)
+    const session = getCandidateSearchManager(accountKey).get(metadata.candidateSearchSessionId)
     await refreshIntakeModal({
       client,
       body,
@@ -475,14 +540,15 @@ export function registerSlackHandlers(app, context) {
   app.action('candidate_search_next', async ({ ack, body, client }) => {
     await ack()
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const accountKey = metadata.accountKey || 'default'
     const requestedPage = Number(metadata.candidateSearchPage || 0) + 1
     const session = recoverLiveCandidateSearchSession({
-      liveCandidateSearch,
+      liveCandidateSearch: getCandidateSearchManager(accountKey),
       sessionId: metadata.candidateSearchSessionId,
       query: metadata.candidateSearchQuery,
       userId: body.user?.id || '',
       requestedPage,
-      filters: roleCandidateFilters(metadata),
+      filters: roleCandidateFilters(metadata, accountKey),
       logger,
     })
     if (!session) {
@@ -556,10 +622,53 @@ export function registerSlackHandlers(app, context) {
     })
   })
 
+  app.action('account_key_select', async ({ ack, body, client }) => {
+    await ack()
+    const accountKey = selectedOptionValue(body)
+    const templates = await loadSchedulingTemplates()
+    await refreshIntakeModalAfterAsync({
+      client,
+      body,
+      templates,
+      draftOverrides: {
+        accountKey,
+        roleId: '',
+        roleTitle: '',
+        recruiterIds: [],
+        hiringManagerIds: [],
+        zoomLink: '',
+        candidateSearchQuery: '',
+        candidateSearchSessionId: '',
+        candidateSearchPage: 0,
+        candidateSearchResultCount: 0,
+        candidateSearchComplete: false,
+        candidateSearchSearching: false,
+        candidateSearchError: '',
+      },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+      logger,
+    })
+  })
+
+  app.action('google_account_select', async ({ ack, body, client }) => {
+    await ack()
+    const googleAccountId = selectedOptionValue(body)
+    await refreshIntakeModalAfterAsync({
+      client,
+      body,
+      templates: await loadSchedulingTemplates(),
+      draftOverrides: { googleAccountId },
+      timeZones: schedulingTimeZones,
+      defaultTimeZone,
+      logger,
+    })
+  })
+
   app.action('event_type_select', async ({ ack, body, client }) => {
     await ack()
     const eventType = selectedOptionValue(body)
-    await refreshIntakeModal({
+    await refreshIntakeModalAfterAsync({
       client,
       body,
       templates: await loadIntakeTemplates(),
@@ -586,6 +695,7 @@ export function registerSlackHandlers(app, context) {
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
+      logger,
     })
   })
 
@@ -613,12 +723,13 @@ export function registerSlackHandlers(app, context) {
   app.action('role_select', async ({ ack, body, client }) => {
     await ack()
     const roleId = selectedOptionValue(body)
-    const role = roleById(roleId)
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
+    const accountKey = metadata.accountKey || 'default'
+    const role = roleById(roleId, accountKey)
     const eventType = getSelectedOptionValues(body.view?.state?.values, 'event_type_select')[0] || metadata.eventType || ''
-    const roleMatch = resolveRoleAssignmentsForRole(roleId)
-    const recruiters = mappedRecruitersForRole(roleId)
-    const hiringManagers = mappedHiringManagersForRole(roleId)
+    const roleMatch = resolveRoleAssignmentsForRole(roleId, accountKey)
+    const recruiters = mappedRecruitersForRole(roleId, accountKey)
+    const hiringManagers = mappedHiringManagersForRole(roleId, accountKey)
     const { recruiterIds, hiringManagerIds } = roleAutofillSelections(
       eventType,
       recruiters,
@@ -628,14 +739,30 @@ export function registerSlackHandlers(app, context) {
     const selectedHiringManagers = hiringManagers.filter((person) => hiringManagerIds.includes(person.id))
     const zoomLink = resolveZoomLinkForRecruiters(selectedRecruiters)
     const syncRoleCandidates = !isTestDirectoryRoleId(role?.roleId || roleId)
+    const roleFound = Boolean(role)
+    const allAssignments = getRoleAssignments()
     logger.info('role_assignment_match_resolved', {
       roleId: role?.roleId || roleId,
       roleTitle: role?.title || '',
+      roleTitleNormalized: role?.title ? normalizeRoleTitle(role.title) : '',
+      roleFound,
       matchType: roleMatch.matchType,
       matchedTitle: roleMatch.matchedTitle,
       confidence: roleMatch.confidence,
       candidates: roleMatch.candidates,
       assignmentCount: roleMatch.assignments.length,
+      totalAssignmentsInSystem: allAssignments.length,
+      ...(roleMatch.matchType === 'unmatched' ? {
+        allAssignmentTitles: allAssignments.map((a) => a.roleTitle).filter(Boolean).slice(0, 50),
+        allAssignmentNormalized: allAssignments.map((a) => normalizeRoleTitle(a.roleTitle)).filter(Boolean).slice(0, 50),
+      } : {}),
+      matchedRecruiters: recruiters.map((p) => ({ id: p.id, name: p.name, email: p.email })),
+      matchedHiringManagers: hiringManagers.map((p) => ({ id: p.id, name: p.name, email: p.email })),
+      autoselectedRecruiter: selectedRecruiters[0] ? { id: selectedRecruiters[0].id, name: selectedRecruiters[0].name, email: selectedRecruiters[0].email } : null,
+      autoselectedHiringManager: selectedHiringManagers[0] ? { id: selectedHiringManagers[0].id, name: selectedHiringManagers[0].name, email: selectedHiringManagers[0].email } : null,
+      autoselectedRecruiterIds: recruiterIds,
+      autoselectedHiringManagerIds: hiringManagerIds,
+      recruiterSource: recruiters.length > 0 && roleMatch.assignments.length === 0 ? 'fallback' : 'role-assignment',
     })
     const loadingResult = await refreshIntakeModal({
       client,
@@ -676,18 +803,25 @@ export function registerSlackHandlers(app, context) {
     })
     const updatedBody = bodyWithUpdatedView(body, loadingResult)
     if (!syncRoleCandidates) return
-    let remoteUpdateError = ''
+    let remoteUpdateStatus = ''
+    let remoteUpdateMessage = ''
     try {
-      await syncJazzhrJobCandidates({
+      const syncResult = await syncJazzhrJobCandidates({
         config,
         logger,
         store,
         jobId: role?.roleId || roleId,
         concurrency: config.jazzhr.applicantFetchConcurrency,
+        accountKey,
       })
+      if (!syncResult.complete && syncResult.failedCount > 0) {
+        remoteUpdateStatus = 'error'
+        remoteUpdateMessage = `Loaded ${syncResult.candidates.length} of ${syncResult.candidates.length + syncResult.failedCount} candidates — ${syncResult.failedCount} failed. Re-select the role to retry.`
+      }
     } catch (error) {
       logger.warn('intake_role_remote_update_failed', { roleId, error: error.message })
-      remoteUpdateError = 'JazzHR candidate data could not be refreshed. Existing cached options and editable fields remain available.'
+      remoteUpdateStatus = 'error'
+      remoteUpdateMessage = 'JazzHR candidate data could not be refreshed. Existing cached options and editable fields remain available.'
     }
     await refreshIntakeModalAfterAsync({
       client,
@@ -702,8 +836,8 @@ export function registerSlackHandlers(app, context) {
         applicant: '',
         zoomLink,
         zoomLinkAuto: Boolean(zoomLink),
-        remoteUpdateStatus: remoteUpdateError ? 'error' : '',
-        remoteUpdateMessage: remoteUpdateError,
+        remoteUpdateStatus,
+        remoteUpdateMessage,
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
@@ -729,13 +863,16 @@ export function registerSlackHandlers(app, context) {
 
   app.action('applicant_select', async ({ ack, body, client }) => {
     await ack();
-    logger.info('applicant_select_fired', { selectedId: selectedOptionValue(body) });
     const selectedId = selectedOptionValue(body);
+    logger.info('applicant_select_fired', { selectedId, viewId: body.view?.id, hasHash: Boolean(body.view?.hash) });
+    try {
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
-    const liveCandidate = liveCandidateSearch.getCandidate(metadata.candidateSearchSessionId, selectedId)
+    const accountKey = metadata.accountKey || 'default'
+    const candidateSearchMgr = getCandidateSearchManager(accountKey)
+    const liveCandidate = candidateSearchMgr.getCandidate(metadata.candidateSearchSessionId, selectedId)
     const indexedCandidate = await resolveCandidateIndexRecord(store, selectedId);
-    let applicant = findApplicant(selectedId) || applicantFromCandidateIndex(liveCandidate) || applicantFromCandidateIndex(indexedCandidate);
-    const loadingResult = await refreshIntakeModal({
+    let applicant = findApplicant(selectedId, getApplicants(accountKey)) || applicantFromCandidateIndex(liveCandidate) || applicantFromCandidateIndex(indexedCandidate);
+    const loadingResult = await refreshIntakeModalAfterAsync({
       client,
       body,
       templates: await loadSchedulingTemplates(),
@@ -754,14 +891,16 @@ export function registerSlackHandlers(app, context) {
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
+      logger,
     })
     const updatedBody = bodyWithUpdatedView(body, loadingResult)
 
     let detailLoadError = ''
     if (applicant?.jazzhrApplicationId) {
       try {
+        const accountApiKey = (config.jazzhr.accounts || []).find((a) => a.key === accountKey)?.apiKey || config.jazzhr.accounts?.[0]?.apiKey || ''
         const detail = await Promise.race([
-          fetchApplicantDetail(config.jazzhr.apiKey, applicant.jazzhrApplicationId, logger, {
+          fetchApplicantDetail(accountApiKey, applicant.jazzhrApplicationId, logger, {
             jobId: applicant.jazzhrJobId || metadata.roleId || '',
           }),
           new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
@@ -835,6 +974,19 @@ export function registerSlackHandlers(app, context) {
       defaultTimeZone,
       logger,
     });
+    } catch (err) {
+      logger.error('applicant_select_handler_failed', {
+        selectedId,
+        error: err.message,
+        slackError: err?.data?.error,
+        stack: err.stack,
+      })
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, getChannelId(body.view) || body.user.id),
+        user: body.user.id,
+        text: 'Something went wrong loading the candidate details. Please try again.',
+      }).catch(() => {})
+    }
   });
 
   app.action('toggle_applicant_details', async ({ ack, body, client }) => {
@@ -983,7 +1135,7 @@ export function registerSlackHandlers(app, context) {
       : selectedOptionValues(body)
     const selectedId = selectedIds[0] || ''
     const selectedUser = metadata.roleId
-      ? (selectableHiringManagersForRole(metadata.roleId).find((person) => person.id === selectedId) || findMappedPersonById(selectedId))
+      ? (selectableHiringManagersForRole(metadata.roleId, metadata.accountKey || 'default').find((person) => person.id === selectedId) || findMappedPersonById(selectedId))
       : await resolveSlackUser({ client, userId: selectedId, logger })
     await refreshIntakeModal({
       client,
@@ -1143,19 +1295,15 @@ export function registerSlackHandlers(app, context) {
 
   app.action('disconnect_google_oauth', async ({ ack, body, client }) => {
     await ack()
+    if (!await requireAdminSlackUser({
+      config,
+      userId: body.user.id,
+      client,
+      channelId: body.channel?.id,
+      logger,
+      action: 'disconnect_google_oauth',
+    })) return
     if (!await verifyChannel({ config, body, client })) return
-    const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
-    if (
-      config.google.authSlackUserId &&
-      !await requireAdminSlackUser({
-        config,
-        userId: body.user.id,
-        client,
-        channelId: body.channel?.id,
-        logger,
-        action: 'disconnect_google_oauth',
-      })
-    ) return
     if (typeof store.deleteGoogleToken !== 'function') {
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
@@ -1165,39 +1313,120 @@ export function registerSlackHandlers(app, context) {
       return
     }
 
-    await store.deleteGoogleToken(tokenOwnerId)
+    const accounts = await store.listGoogleAccounts()
+    for (const acct of accounts) {
+      await store.deleteGoogleToken(acct.id)
+    }
+    setGoogleAccounts([])
     await client.chat.postEphemeral({
       channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
       user: body.user.id,
-      text: config.google.authSlackUserId
-        ? 'Shared Google Calendar and Gmail have been disconnected.'
-        : 'Google Calendar and Gmail have been disconnected for your Slack user.',
+      text: `${accounts.length} Google account(s) disconnected.`,
     })
     await publishHome({ client, userId: body.user.id, store, logger, config })
   });
 
+  app.action('open_add_google_account', async ({ ack, body, client }) => {
+    await ack()
+    if (!await requireAdminSlackUser({
+      config,
+      userId: body.user.id,
+      client,
+      channelId: body.channel?.id,
+      logger,
+      action: 'open_add_google_account',
+    })) return
+    if (!await verifyChannel({ config, body, client })) return
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: addGoogleAccountModal(),
+    })
+  })
+
+  app.view('add_google_account_submit', async ({ ack, body, view, client }) => {
+    if (!isAdminUser(config, body.user.id)) {
+      await ack({ response_action: 'clear' })
+      await sendAdminDenialDm({ client, userId: body.user.id, logger, action: 'add_google_account_submit' })
+      return
+    }
+    const email = view.state.values.google_account_email_block?.google_account_email?.value?.trim() || ''
+    const label = view.state.values.google_account_label_block?.google_account_label?.value?.trim() || ''
+
+    if (!email || !email.includes('@')) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          google_account_email_block: 'Enter a valid email address for the Google account.',
+        },
+      })
+      return
+    }
+    if (!label) {
+      await ack({
+        response_action: 'errors',
+        errors: {
+          google_account_label_block: 'Enter a label (e.g. Onshore - FPI).',
+        },
+      })
+      return
+    }
+
+    await ack()
+
+    if (!config.google.clientId || !config.google.clientSecret || !config.google.redirectUri) {
+      const dmChannel = await openDm(client, body.user.id)
+      await client.chat.postMessage({
+        channel: dmChannel,
+        text: ':warning: Google OAuth is not configured yet. Set the Google client credentials first.',
+      })
+      return
+    }
+
+    const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
+    const state = await issueOAuthState({
+      store,
+      slackUserId: body.user.id,
+      teamId: body.team?.id || config.slack.teamId || '',
+      tokenOwnerId,
+      source: 'add_google_account',
+      accountEmail: email,
+      accountLabel: label,
+    })
+    const oauthUrl = buildGoogleOAuthUrl(config, state)
+    const dmChannel = await openDm(client, body.user.id)
+    await client.chat.postMessage({
+      channel: dmChannel,
+      text: `:link: Connect *${label}* (${email}) to Google:\n<${oauthUrl}>\n\nOpen this link and sign in as \`${email}\` to grant calendar and Gmail access.`,
+    })
+  })
+
   app.options('applicant_select', async ({ options, ack }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
+    const accountKey = metadata?.accountKey || 'default'
     const liveSessionId = metadata?.candidateSearchSessionId || ''
     const livePage = Number(metadata?.candidateSearchPage || 0)
-    const liveCandidates = liveCandidateSearch.getPageCandidates(liveSessionId, livePage, options.value)
+    const candidateSearchMgr = getCandidateSearchManager(accountKey)
+    const liveCandidates = candidateSearchMgr.getPageCandidates(liveSessionId, livePage, options.value)
     const baseQuery = metadata?.candidateSearchQuery || ''
-    const filters = roleCandidateFilters(metadata || {})
+    const filters = roleCandidateFilters(metadata || {}, accountKey)
     const indexedCandidates = await searchCandidateIndex(store, options.value, baseQuery, 100, filters)
     const candidates = mergeCandidateOptions(indexedCandidates, liveCandidates)
     const resolvedOptions = candidates.length > 0 || baseQuery || liveSessionId
       ? candidates.slice(0, 100).map(candidateToSlackOption)
-      : applicantOptions(options.value, filterApplicants(getApplicants(), filters))
+      : applicantOptions(options.value, filterApplicants(getApplicants(accountKey), filters))
     await ack({ options: resolvedOptions });
   });
 
   app.options('role_select', async ({ options, ack }) => {
-    await ack({ options: roleOptions(options.value) })
+    const metadata = parsePrivateMetadata(options.view?.private_metadata)
+    const accountKey = metadata?.accountKey || 'default'
+    await ack({ options: roleOptions(options.value, accountKey) })
   })
 
   app.options('recruiter_select', async ({ options, ack }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
-    const recruiters = metadata?.roleId ? mappedRecruitersForRole(metadata.roleId) : getTalentRecruiters()
+    const accountKey = metadata?.accountKey || 'default'
+    const recruiters = metadata?.roleId ? mappedRecruitersForRole(metadata.roleId, accountKey) : getTalentRecruiters()
     const slackOptions = metadata?.roleId
       ? compactPersonOptions(options.value, recruiters)
       : personOptions(options.value, recruiters)
@@ -1212,13 +1441,15 @@ export function registerSlackHandlers(app, context) {
 
   app.options('additional_recruiter_select', async ({ options, ack }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
-    await ack({ options: compactPersonOptions(options.value, mappedRecruitersForRole(metadata?.roleId)) })
+    const accountKey = metadata?.accountKey || 'default'
+    await ack({ options: compactPersonOptions(options.value, mappedRecruitersForRole(metadata?.roleId, accountKey)) })
   })
 
   app.options('hm_select', async ({ options, ack, client }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
+    const accountKey = metadata?.accountKey || 'default'
     if (metadata?.roleId) {
-      await ack({ options: compactPersonOptions(options.value, selectableHiringManagersForRole(metadata.roleId)) })
+      await ack({ options: compactPersonOptions(options.value, selectableHiringManagersForRole(metadata.roleId, accountKey)) })
       return
     }
     const { users } = await ensureSlackDirectory({ client, config, logger })
@@ -1227,7 +1458,8 @@ export function registerSlackHandlers(app, context) {
 
   app.options('additional_hm_select', async ({ options, ack }) => {
     const metadata = parsePrivateMetadata(options.view?.private_metadata)
-    await ack({ options: compactPersonOptions(options.value, selectableHiringManagersForRole(metadata?.roleId)) })
+    const accountKey = metadata?.accountKey || 'default'
+    await ack({ options: compactPersonOptions(options.value, selectableHiringManagersForRole(metadata?.roleId, accountKey)) })
   })
 
   app.options('custom_slack_recipients', async ({ options, ack, client }) => {
@@ -1326,6 +1558,8 @@ export function registerSlackHandlers(app, context) {
     }
     const templates = await loadIntakeTemplates();
     const metadata = parsePrivateMetadata(view.private_metadata) || {}
+    const accountKey = metadata.accountKey || 'default'
+    const accountDisplayName = (config.jazzhr.accounts || []).find((a) => a.key === accountKey)?.displayName || 'Outsourced Pro Global'
     const editCase = metadata.editCaseId ? await store.getCase(metadata.editCaseId) : null
     if (metadata.editCaseId && !canEditScheduleCase(editCase)) {
       await ack({
@@ -1440,6 +1674,8 @@ export function registerSlackHandlers(app, context) {
           coordinatorEmail: coordinator?.email || '',
           coordinatorName: coordinator?.name || '',
           customInvitePurpose: customInvite.title,
+          accountKey,
+          accountDisplayName,
         },
       })
 
@@ -1578,6 +1814,8 @@ export function registerSlackHandlers(app, context) {
           eventType: intakeDraft.eventType,
           roleId: intakeDraft.roleId,
           roleTitle: intakeDraft.roleTitle,
+          accountKey,
+          accountDisplayName,
         },
       })
       await store.addAudit({
@@ -1617,6 +1855,8 @@ export function registerSlackHandlers(app, context) {
         roleId: intakeDraft.roleId,
         roleTitle: intakeDraft.roleTitle,
         customInvitePurpose: intakeDraft.customInvitePurpose,
+        accountKey,
+        accountDisplayName,
       },
     });
 
@@ -1912,8 +2152,8 @@ export function registerSlackHandlers(app, context) {
   app.action('scheduling_open', async ({ ack, body, client }) => {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
+    const caseId = body.actions?.[0]?.value || body.view?.private_metadata
     try {
-      const caseId = body.actions?.[0]?.value || body.view?.private_metadata
       const caseRecord = await requireCase(store, caseId)
       if (isCustomInviteCase(caseRecord)) {
         const recentAudits = await store.listAudits(caseRecord.id, 5)
@@ -1933,6 +2173,10 @@ export function registerSlackHandlers(app, context) {
         view: schedulingModal(caseRecord, { phase: 1, stageRules, attendees, stageKey }, recentAudits)
       })
     } catch (error) {
+      if (error instanceof CaseNotFoundError) {
+        await notifyCaseNotFound({ caseId, client, body, config, logger })
+        return
+      }
       const correlationId = crypto.randomUUID()
       logger.error('scheduling_open_error', { error, correlationId })
       error.message = `Reference: ${correlationId}`
@@ -2041,6 +2285,10 @@ export function registerSlackHandlers(app, context) {
         }, recentAudits)
       })
     } catch (error) {
+      if (error instanceof CaseNotFoundError) {
+        await notifyCaseNotFound({ caseId: schedulingCaseId, client, body, config, logger })
+        return
+      }
       const correlationId = crypto.randomUUID()
       logger.error('scheduling_check_availability_error', {
         caseId: schedulingCaseId,
@@ -2070,65 +2318,64 @@ export function registerSlackHandlers(app, context) {
 
   app.action('scheduling_edit_attendees', async ({ ack, body, client }) => {
     await ack()
-    try {
-      const caseId = body.actions?.[0]?.value || body.view?.private_metadata
-      let metadata = {}
-      try { metadata = JSON.parse(body.view?.private_metadata || '{}') } catch (_) { metadata = {} }
-      const resolvedCaseId = caseId || metadata.caseId
+    const caseId = body.actions?.[0]?.value || body.view?.private_metadata
+    let metadata = {}
+    try { metadata = JSON.parse(body.view?.private_metadata || '{}') } catch (_) { metadata = {} }
+    const resolvedCaseId = caseId || metadata.caseId
+    await guardCaseAction({
+      store, caseId: resolvedCaseId, client, body, config, logger,
+      handler: async (caseRecord) => {
+        const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
+        const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
+        const attendees = normalizeAttendees(caseRecord, stageRules)
+        const recentAudits = await store.listAudits(caseRecord.id, 5)
 
-      const caseRecord = await requireCase(store, resolvedCaseId)
-      const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
-      const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
-      const attendees = normalizeAttendees(caseRecord, stageRules)
-      const recentAudits = await store.listAudits(caseRecord.id, 5)
-
-      await client.views.update({
-        view_id: body.view.id,
-        view: schedulingModal(caseRecord, {
-          phase: 1,
-          stageRules,
-          attendees,
-          stageKey,
-          externalAttendees: caseRecord.externalAttendees || []
-        }, recentAudits)
-      })
-    } catch (error) {
-      logger.error('scheduling_edit_attendees_error', { error: error.message })
-    }
+        await client.views.update({
+          view_id: body.view.id,
+          view: schedulingModal(caseRecord, {
+            phase: 1,
+            stageRules,
+            attendees,
+            stageKey,
+            externalAttendees: caseRecord.externalAttendees || []
+          }, recentAudits)
+        })
+      },
+    })
   })
 
   app.action('scheduling_add_external', async ({ ack, body, client }) => {
     await ack()
-    try {
-      const caseId = body.actions?.[0]?.value
-      const caseRecord = await requireCase(store, caseId)
-      const recentAudits = await store.listAudits(caseRecord.id, 5)
+    const caseId = body.actions?.[0]?.value
+    await guardCaseAction({
+      store, caseId, client, body, config, logger,
+      handler: async (caseRecord) => {
+        const recentAudits = await store.listAudits(caseRecord.id, 5)
 
-      await client.views.push({
-        trigger_id: body.trigger_id,
-        view: externalAttendeeModal(caseRecord, recentAudits)
-      })
-    } catch (error) {
-      logger.error('scheduling_add_external_error', { error: error.message })
-    }
+        await client.views.push({
+          trigger_id: body.trigger_id,
+          view: externalAttendeeModal(caseRecord, recentAudits)
+        })
+      },
+    })
   })
 
   app.action('attendee_select', async ({ ack, body, client }) => {
     await ack()
-    try {
-      const caseId = body.view?.private_metadata
-      const caseRecord = await requireCase(store, caseId)
-      const recentAudits = await store.listAudits(caseRecord.id, 5)
-      const person = findPersonById(selectedOptionValue(body))
+    const caseId = body.view?.private_metadata
+    await guardCaseAction({
+      store, caseId, client, body, config, logger,
+      handler: async (caseRecord) => {
+        const recentAudits = await store.listAudits(caseRecord.id, 5)
+        const person = findPersonById(selectedOptionValue(body))
 
-      await client.views.update({
-        view_id: body.view.id,
-        hash: body.view.hash,
-        view: externalAttendeeModal(caseRecord, recentAudits, buildAttendeeDraft(person))
-      })
-    } catch (error) {
-      logger.error('attendee_select_error', { error: error.message })
-    }
+        await client.views.update({
+          view_id: body.view.id,
+          hash: body.view.hash,
+          view: externalAttendeeModal(caseRecord, recentAudits, buildAttendeeDraft(person))
+        })
+      },
+    })
   })
 
   app.view('external_attendee_submit', async ({ ack, body, view, client }) => {
@@ -2189,6 +2436,11 @@ export function registerSlackHandlers(app, context) {
         }, recentAudits)
       })
     } catch (error) {
+      if (error instanceof CaseNotFoundError) {
+        await ack()
+        await notifyCaseNotFound({ caseId: view.private_metadata, client, body, config, logger })
+        return
+      }
       await ack()
       logger.error('external_attendee_submit_error', { error: error.message })
     }
@@ -2352,6 +2604,10 @@ export function registerSlackHandlers(app, context) {
       })
       return;
     } catch (error) {
+      if (error instanceof CaseNotFoundError) {
+        await notifyCaseNotFound({ caseId: caseRecord?.id, client, body, config, logger })
+        return
+      }
       const correlationId = crypto.randomUUID()
       logger.error('scheduling_confirm_error', {
         error,
@@ -3020,26 +3276,37 @@ export function registerSlackHandlers(app, context) {
           ...applyCancelledInterview(caseRecord, body.user.id),
           cancellationEmailStatus: 'sending',
         });
-        const cancellationEmail = buildCancellationEmail(pendingCancellation)
+
+        const [cancellationEmail, calendarResult] = await Promise.all([
+          Promise.resolve().then(() => buildCancellationEmail(pendingCancellation)),
+          deleteCalendarEvent({ config, logger, caseRecord, store }).catch((err) => {
+            logger.warn('calendar_delete_error', { caseId: caseRecord.id, error: err.message })
+            return { deleted: false, error: err.message }
+          }),
+        ])
+
         const cancellationResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingCancellation, email: cancellationEmail, store })
         const updated = await store.updateCase(caseRecord.id, {
           cancellationEmail,
           cancellationEmailStatus: cancellationResult.mocked ? 'mocked' : 'sent',
+          ...(calendarResult.deleted ? { calendarEventId: null } : {}),
         })
         await store.addAudit({
           caseId: caseRecord.id,
           actorSlackUserId: body.user.id,
           action: 'reschedule_cancelled',
           cancellationEmailStatus: updated.cancellationEmailStatus,
+          calendarDeleted: calendarResult.deleted,
         });
         await publishHome({ client, userId: body.user.id, store, logger, config });
+        const calendarNote = calendarResult.deleted ? ' Calendar event removed.' : ''
         await postCaseThreadMessage({
           client,
           config,
           body,
           store,
           caseRecord: updated,
-          text: 'Interview cancelled. Cancellation email sent. Calendar cancellation is not automatic yet.',
+          text: `Interview cancelled. Cancellation email sent.${calendarNote}`,
           blocks: caseMessageBlocks(updated),
         })
       },
@@ -3081,7 +3348,8 @@ export function registerSlackHandlers(app, context) {
   app.action('hiring_manager_checkboxes', async ({ ack, body, client }) => {
     await ack()
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
-    const available = selectableHiringManagersForRole(metadata.roleId)
+    const accountKey = metadata.accountKey || 'default'
+    const available = selectableHiringManagersForRole(metadata.roleId, accountKey)
     const selectedIds = orderedCheckboxSelection(
       metadata.hiringManagerIds,
       selectedOptionValues(body),
@@ -3379,13 +3647,17 @@ async function openIntakeModal({
   ensureSlackDirectory({ client, config, logger }).catch((error) => {
     logger.warn('slack_directory_background_failed', slackApiErrorDetails(error))
   })
-  const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false, manualCandidateMode: false });
+  const accounts = config.jazzhr.accounts || []
+  // In multi-account mode, don't pre-select — user must pick an account first.
+  // In single-account mode, use 'default' so roles load immediately.
+  const initialAccountKey = accounts.length > 1 ? '' : 'default'
+  const meta = JSON.stringify({ channelId: privateMetadata, showDetails: false, manualCandidateMode: false, accountKey: initialAccountKey });
   logger.info('schedule_intake_opened', { templateCount: templates.length });
   try {
     await client.views.open({
       trigger_id: triggerId,
       view: {
-        ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getTalentRecruiters(), roles: getOpenRoles() }),
+        ...intakeModal({ templates, timeZones, defaultTimeZone, recruiters: getTalentRecruiters(), roles: getOpenRoles(initialAccountKey), accounts, selectedAccountKey: initialAccountKey }),
         private_metadata: meta,
       },
     })
@@ -3526,6 +3798,7 @@ function getShowDetails(view, fallback) {
 function buildPrivateMetadata(view, overrides = {}) {
   const parsed = parsePrivateMetadata(view?.private_metadata) || {};
   const channelId = overrides.channelId || parsed.channelId || view?.private_metadata || '';
+  const accountKey = 'accountKey' in overrides ? overrides.accountKey : parsed.accountKey || '';
   const showDetails = 'showDetails' in overrides ? overrides.showDetails : parsed.showDetails;
   const candidateSearchQuery = 'candidateSearchQuery' in overrides ? overrides.candidateSearchQuery : parsed.candidateSearchQuery || '';
   const candidateSearchResultCount = 'candidateSearchResultCount' in overrides
@@ -3592,8 +3865,12 @@ function buildPrivateMetadata(view, overrides = {}) {
   const remoteUpdateMessage = 'remoteUpdateMessage' in overrides
     ? overrides.remoteUpdateMessage
     : parsed.remoteUpdateMessage || ''
+  const applicant = 'applicant' in overrides ? overrides.applicant : parsed.applicant || ''
+  const googleAccountId = 'googleAccountId' in overrides ? overrides.googleAccountId : parsed.googleAccountId || ''
   return JSON.stringify({
+    applicant,
     channelId,
+    accountKey,
     showDetails,
     manualCandidateMode,
     eventType,
@@ -3624,10 +3901,11 @@ function buildPrivateMetadata(view, overrides = {}) {
     candidateSearchComplete,
     candidateSearchSearching,
     candidateSearchError,
+    googleAccountId,
   });
 }
 
-async function refreshIntakeModal({
+export async function refreshIntakeModal({
   client,
   body,
   templates,
@@ -3649,6 +3927,7 @@ async function refreshIntakeModal({
   defaultTimeZone,
   useHash = true,
   draftOverrides = {},
+  logger,
 }) {
   if (!body.view?.id || !body.view?.hash) return;
   const overrides = selectedKey ? { [selectedKey]: selectedId } : {}
@@ -3668,6 +3947,8 @@ async function refreshIntakeModal({
     overrides.candidateSearchError = metadata.candidateSearchError || ''
   }
   for (const key of [
+    'applicant',
+    'accountKey',
     'eventType',
     'editCaseId',
     'customInviteSlackRecipientIds',
@@ -3688,6 +3969,7 @@ async function refreshIntakeModal({
     'customInvitePurpose',
     'remoteUpdateStatus',
     'remoteUpdateMessage',
+    'googleAccountId',
   ]) {
     if (!(key in overrides) && key in metadata) overrides[key] = metadata[key]
   }
@@ -3736,7 +4018,8 @@ async function refreshIntakeModal({
 
   draft.showDetails = resolvedShowDetails;
   if (draft.showDetails && draft.applicantId) {
-    const cachedDetail = getApplicantDetail(draft.applicantId);
+    const accountKey = draft.accountKey || 'default'
+    const cachedDetail = getApplicantDetail(draft.applicantId, accountKey);
     if (cachedDetail) {
       draft.applicantDetail = cachedDetail;
     } else if (draft.applicant) {
@@ -3763,6 +4046,7 @@ async function refreshIntakeModal({
 
   const privateMetadata = buildPrivateMetadata(body.view, {
     channelId: getChannelId(body.view) || body.channel?.id || body.user.id,
+    accountKey: draft.accountKey,
     showDetails: resolvedShowDetails,
     candidateSearchQuery: draft.candidateSearchQuery,
     candidateSearchSessionId: draft.candidateSearchSessionId,
@@ -3792,16 +4076,64 @@ async function refreshIntakeModal({
     resumeFile: draft.resumeFile,
     remoteUpdateStatus: draft.remoteUpdateStatus,
     remoteUpdateMessage: draft.remoteUpdateMessage,
+    applicant: draft.applicantId,
+    googleAccountId: draft.googleAccountId,
   });
 
-  return client.views.update({
-    view_id: body.view.id,
-    ...(useHash ? { hash: body.view.hash } : {}),
-    view: {
-      ...intakeModal({ templates, draft, timeZones, defaultTimeZone, recruiters: getTalentRecruiters(), roles: getOpenRoles() }),
-      private_metadata: privateMetadata,
-    },
-  });
+  const correlationId = crypto.randomUUID()
+  try {
+    return await client.views.update({
+      view_id: body.view.id,
+      ...(useHash ? { hash: body.view.hash } : {}),
+      view: {
+        ...intakeModal({
+          templates,
+          draft,
+          timeZones,
+          defaultTimeZone,
+          recruiters: getTalentRecruiters(),
+          roles: getOpenRoles(draft.accountKey || 'default'),
+          accounts: (_config?.jazzhr?.accounts) || [],
+          selectedAccountKey: draft.accountKey || '',
+          googleAccounts: getGoogleAccounts(),
+        }),
+        private_metadata: privateMetadata,
+      },
+    })
+  } catch (error) {
+    if (error?.data?.error === 'hash_conflict' && error.data.view?.id && error.data.view?.hash) {
+      logger?.info?.('intake_modal_hash_conflict_recovered', { viewId: error.data.view.id })
+      return refreshIntakeModal({
+        client,
+        body: { ...body, view: { ...body.view, ...error.data.view } },
+        templates,
+        selectedKey,
+        selectedId,
+        selectedPerson,
+        selectedApplicant,
+        showDetails,
+        candidateSearchQuery,
+        candidateSearchSessionId,
+        candidateSearchPage,
+        candidateSearchResultCount,
+        candidateSearchPageSize,
+        candidateSearchComplete,
+        candidateSearchSearching,
+        candidateSearchError,
+        manualCandidateMode,
+        timeZones,
+        defaultTimeZone,
+        useHash: true,
+        draftOverrides,
+        logger,
+      })
+    }
+    logger?.error?.('intake_modal_update_failed', {
+      slackError: error?.data?.error || error.message,
+      correlationId,
+    })
+    throw error
+  }
 }
 
 async function refreshIntakeModalAfterAsync(options) {
@@ -3818,7 +4150,10 @@ async function refreshIntakeModalAfterAsync(options) {
       ...options,
       body: {
         ...options.body,
-        view: latestView,
+        view: {
+          ...options.body?.view,
+          ...latestView,
+        },
       },
     })
   }
@@ -3959,14 +4294,37 @@ async function refreshSchedulingModal({ client, body, store, selectedStageKey })
 async function publishHome({ client, userId, store, logger, config }) {
   const [myCases, allCases] = await Promise.all([store.listCasesForUser(userId), store.listCases()]);
   const teamCases = allCases.filter((item) => item.ownerSlackUserId !== userId && item.status !== 'Scheduled');
-  const googleTokenOwnerId = getGoogleTokenOwner(config, userId)
-  const googleShared = Boolean(config?.google?.authSlackUserId)
-  const googleCanManage = googleTokenOwnerId === userId
-  const googleConnected = typeof store.hasGoogleToken === 'function' ? await store.hasGoogleToken(googleTokenOwnerId) : false;
+
+  const dateFilter = homeDateFilters.get(userId) || null
+  const myCasesTotal = myCases.length
+  const teamCasesTotal = teamCases.length
+  const filteredMyCases = filterHomeCasesByDateRange(myCases, dateFilter)
+  const filteredTeamCases = filterHomeCasesByDateRange(teamCases, dateFilter)
+
+  let googleAccounts = []
+  if (typeof store.listGoogleAccounts === 'function') {
+    try { googleAccounts = await store.listGoogleAccounts() } catch {}
+  }
+  const googleConnected = googleAccounts.length > 0
+  const isAdmin = isAdminUser(config, userId)
+
+  logger.info('home_view_published', {
+    userId,
+    googleAccountCount: googleAccounts.length,
+  })
   try {
     await client.views.publish({
       user_id: userId,
-      view: homeView({ myCases, teamCases, googleConnected, googleShared, googleCanManage }),
+      view: homeView({
+        myCases: filteredMyCases,
+        teamCases: filteredTeamCases,
+        googleConnected,
+        googleAccounts,
+        dateFilter,
+        isAdmin,
+        myCasesTotal,
+        teamCasesTotal,
+      }),
     });
   } catch (error) {
     logger.error('home_publish_failed', { userId, error: error.message });
@@ -4405,7 +4763,7 @@ export function buildTemplateVariables(caseRecord) {
     applicant_first_name: caseRecord.applicant?.firstName || '',
     applicant_full_name: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
     job_title: caseRecord.applicant?.jobTitle || '',
-    company_name: 'Outsourced Pro Global',
+    company_name: caseRecord.autofill?.accountDisplayName || 'Outsourced Pro Global',
     interview_stage: interviewStage,
     date,
     Date: date,
@@ -4708,14 +5066,15 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     : baseHiringManager
   const selectedRecruiters = standardEventType ? recruiterIds.map(findMappedPersonById).filter(Boolean).map(asRecruiter) : (recruiter ? [recruiter] : [])
   const selectedHiringManagers = standardHiringManagersAllowed ? hiringManagerIds.map(findMappedPersonById).filter(Boolean).map(asHiringManager) : (hiringManager ? [hiringManager] : [])
+  const accountKey = overrides.accountKey || 'default'
   const suggestedHiringManagers = standardHiringManagersAllowed
-    ? mappedHiringManagersForRole(roleId)
+    ? mappedHiringManagersForRole(roleId, accountKey)
     : []
   const availableRecruiters = standardEventType
-    ? mappedRecruitersForRole(roleId)
+    ? mappedRecruitersForRole(roleId, accountKey)
     : getTalentRecruiters()
   const availableHiringManagers = standardHiringManagersAllowed
-    ? selectableHiringManagersForRole(roleId)
+    ? selectableHiringManagersForRole(roleId, accountKey)
     : []
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
@@ -4723,6 +5082,9 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     : undefined;
   const eventTypeOption = eventType ? toSlackOption(eventTypeLabel(eventType), eventType) : undefined
   const roleOption = role ? toSlackOption(role.title, canonicalRoleId(role)) : undefined
+  const googleAccountId = overrides.googleAccountId !== undefined
+    ? overrides.googleAccountId
+    : getSelectedOptionValues(values, 'google_account_select')[0] || getGoogleAccounts()[0]?.id || ''
   const zoomLink = overrides.zoomLink !== undefined ? overrides.zoomLink : getInputValue(values, 'zoom_link')
   const zoomLinkAuto = Boolean(overrides.zoomLinkAuto)
   const zoomLinkRevision = Number(overrides.zoomLinkRevision || 0)
@@ -4811,6 +5173,12 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     interviewWindowStartDate: '',
     interviewWindowEndDate: '',
     interviewTimezone,
+    accountKey: overrides.accountKey || '',
+    googleAccountId,
+    googleAccountOption: googleAccountId ? toSlackOption(
+      getGoogleAccounts().find((a) => a.id === googleAccountId)?.label || googleAccountId,
+      googleAccountId,
+    ) : undefined,
   };
 }
 
@@ -4898,10 +5266,10 @@ function hasInputElement(values, actionId) {
   return false
 }
 
-function hasCheckboxSelection(values, actionId) {
+export function hasCheckboxSelection(values, actionId) {
   for (const block of Object.values(values || {})) {
     const element = findElementByActionId(block, actionId)
-    if (element && 'selected_options' in element) return true
+    if (element && Array.isArray(element.selected_options) && element.selected_options.length > 0) return true
   }
   return false
 }
@@ -5188,14 +5556,14 @@ function findMappedPersonById(id) {
   return undefined
 }
 
-function roleById(id) {
+function roleById(id, accountKey = 'default') {
   const value = String(id || '').trim()
   if (!value) return null
-  return getOpenRoles().find((role) => role.id === value || role.roleId === value || role.roleKey === value) || null
+  return getOpenRoles(accountKey).find((role) => role.id === value || role.roleId === value || role.roleKey === value) || null
 }
 
-export function resolveRoleAssignmentsForRole(roleId) {
-  const role = roleById(roleId)
+export function resolveRoleAssignmentsForRole(roleId, accountKey = 'default') {
+  const role = roleById(roleId, accountKey)
   if (!role) {
     return {
       assignments: [],
@@ -5208,13 +5576,13 @@ export function resolveRoleAssignmentsForRole(roleId) {
   return matchRoleAssignments(role, getRoleAssignments())
 }
 
-function roleAssignmentsForRole(roleId) {
-  return resolveRoleAssignmentsForRole(roleId).assignments
+function roleAssignmentsForRole(roleId, accountKey = 'default') {
+  return resolveRoleAssignmentsForRole(roleId, accountKey).assignments
 }
 
-export function mappedRecruitersForRole(roleId) {
+export function mappedRecruitersForRole(roleId, accountKey = 'default') {
   const mapped = uniquePeople(
-    roleAssignmentsForRole(roleId)
+    roleAssignmentsForRole(roleId, accountKey)
       .map((assignment) => assignment.recruiter)
       .filter(Boolean)
       .map(enrichRecruiterFromDirectory)
@@ -5222,17 +5590,19 @@ export function mappedRecruitersForRole(roleId) {
   )
   if (mapped.length > 0) return mapped
 
-  const role = roleById(roleId)
-  const jazzhrLead = getRecruiters().find((person) =>
+  const role = roleById(roleId, accountKey)
+  const jazzhrLead = getRecruiters(accountKey).find((person) =>
     person.id === `rec-${role?.hiringLeadId}` ||
     person.id === role?.hiringLeadId
   )
-  if (jazzhrLead) {
-    const enriched = getTalentRecruiters().find((person) => personIdentityMatches(person, jazzhrLead))
-    return [asRecruiter(enriched || jazzhrLead)]
-  }
+  const lead = jazzhrLead
+    ? asRecruiter(getTalentRecruiters().find((p) => personIdentityMatches(p, jazzhrLead)) || jazzhrLead)
+    : null
 
-  return getRoleAssignments().length > 0 ? [] : getTalentRecruiters()
+  const talentRecruiters = getTalentRecruiters()
+  const jazzhrRecruiters = getRecruiters(accountKey).map(asRecruiter)
+  const slackRecruiters = getSlackRecruiters().map(asRecruiter)
+  return uniquePeople([lead, ...talentRecruiters, ...jazzhrRecruiters, ...slackRecruiters].filter(Boolean))
 }
 
 function enrichRecruiterFromDirectory(recruiter) {
@@ -5247,23 +5617,34 @@ function enrichRecruiterFromDirectory(recruiter) {
   }
 }
 
-export function mappedHiringManagersForRole(roleId) {
-  return uniquePeople(roleAssignmentsForRole(roleId).map((assignment) => assignment.hiringManager).filter(Boolean).map(asHiringManager))
+export function mappedHiringManagersForRole(roleId, accountKey = 'default') {
+  return uniquePeople(roleAssignmentsForRole(roleId, accountKey).map((assignment) => assignment.hiringManager).filter(Boolean).map(asHiringManager))
 }
 
-export function selectableHiringManagersForRole(roleId) {
-  const mapped = mappedHiringManagersForRole(roleId)
+export function selectableHiringManagersForRole(roleId, accountKey = 'default') {
+  const mapped = mappedHiringManagersForRole(roleId, accountKey)
   if (mapped.length > 0) return mapped
 
-  const directoryManagers = getHiringManagers().map(asHiringManager)
+  const recruiterEmails = new Set(getTalentRecruiters().map((person) => person?.email?.toLowerCase()).filter(Boolean))
+  const directoryManagers = getHiringManagers()
+    .filter((person) => !recruiterEmails.has(person?.email?.toLowerCase()))
+    .map(asHiringManager)
   if (directoryManagers.length > 0) return directoryManagers
 
-  return uniquePeople(
+  const assignmentManagers = uniquePeople(
     getRoleAssignments()
       .map((assignment) => assignment.hiringManager)
       .filter(Boolean)
       .map(asHiringManager),
   )
+  if (assignmentManagers.length > 0) return assignmentManagers
+
+  const slackHiringManagers = getSlackUsers()
+    .filter((user) => !recruiterEmails.has(user?.email?.toLowerCase()))
+    .map(asHiringManager)
+  if (slackHiringManagers.length > 0) return slackHiringManagers
+
+  return []
 }
 
 function uniquePeople(people) {
@@ -5278,9 +5659,9 @@ function uniquePeople(people) {
   return result
 }
 
-function roleOptions(query = '') {
+function roleOptions(query = '', accountKey = 'default') {
   const normalized = String(query || '').trim().toLowerCase()
-  return getOpenRoles()
+  return getOpenRoles(accountKey)
     .filter((role) => !normalized || [role.title, role.roleId, role.roleKey].join(' ').toLowerCase().includes(normalized))
     .filter(canonicalRoleId)
     .slice(0, 100)
@@ -5291,8 +5672,8 @@ function canonicalRoleId(role) {
   return String(role?.id || role?.roleId || role?.roleKey || '').trim()
 }
 
-function roleCandidateFilters(draftOrMetadata = {}) {
-  const role = roleById(draftOrMetadata.roleId)
+function roleCandidateFilters(draftOrMetadata = {}, accountKey = 'default') {
+  const role = roleById(draftOrMetadata.roleId, accountKey)
   const selectedRecruiters = (draftOrMetadata.recruiterIds || [])
     .map(findMappedPersonById)
     .filter(Boolean)
@@ -5481,6 +5862,20 @@ function completionActionValue(value) {
   return { caseId: String(value || ''), scheduleVersion: undefined }
 }
 
+export function resumeDisplayFilename(originalFilename, caseRecord) {
+  const match = String(originalFilename || '').toLowerCase().match(/\.([a-z0-9]+)$/)
+  const extension = match ? match[1] : ''
+  const name = caseRecord?.applicant
+    ? [caseRecord.applicant.firstName, caseRecord.applicant.lastName].filter(Boolean).join(' ').trim()
+    : ''
+  const role = String(caseRecord?.applicant?.jobTitle || '').trim()
+  const base = [name, role].filter(Boolean).join(' - ').trim()
+  if (!base) return originalFilename
+  const safeBase = base.replace(/[\\/]/g, '-').replace(/[\r\n"]/g, '').trim()
+  if (!safeBase) return originalFilename
+  return extension ? `${safeBase}.${extension}` : safeBase
+}
+
 async function addRequiredResumeAttachment({ email, caseRecord, client, config, logger }) {
   if (!stageRequiresResumeLink(caseRecord.stageKey)) return email
   const attachment = await resolveResumeAttachment({
@@ -5491,6 +5886,7 @@ async function addRequiredResumeAttachment({ email, caseRecord, client, config, 
     logger,
   })
   if (attachment) {
+    attachment.filename = resumeDisplayFilename(attachment.filename, caseRecord)
     email.attachments = [attachment]
   } else {
     logger?.warn?.('resume_attachment_unavailable', {
@@ -5505,6 +5901,18 @@ async function addRequiredResumeAttachment({ email, caseRecord, client, config, 
 async function openDm(client, userId) {
   const result = await client.conversations.open({ users: userId })
   return result.channel.id
+}
+
+async function sendAdminDenialDm({ client, userId, logger, action }) {
+  try {
+    const channel = await openDm(client, userId)
+    await client.chat.postMessage({
+      channel,
+      text: `This operation is restricted to scheduler administrators.`,
+    })
+  } catch (error) {
+    logger.warn('slack_admin_denial_dm_failed', { userId, action, error: error.message })
+  }
 }
 
 function hasUnresolvedSchedulePlaceholders(value) {

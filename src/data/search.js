@@ -80,10 +80,10 @@ export function searchPeople(query, people = getAllPeople()) {
 
 export function searchRecords(query, records, toHaystack) {
   const normalized = String(query || '').trim().toLowerCase();
-  if (!normalized) return records.slice(0, 20);
+  if (!normalized) return records.slice(0, 100);
   return records
     .filter((record) => toHaystack(record).toLowerCase().includes(normalized))
-    .slice(0, 20);
+    .slice(0, 100);
 }
 
 export function findApplicant(id, applicants = getApplicants()) {
