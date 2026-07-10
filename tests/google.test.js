@@ -31,53 +31,78 @@ test('builds a recruiter-scoped google oauth url', () => {
   assert.match(parsed.searchParams.get('scope') || '', /gmail\.send/);
 });
 
-test('home view includes a connect google action', () => {
-  const view = homeView({ myCases: [], teamCases: [] });
+test('home view includes add google account action for admins', () => {
+  const view = homeView({ myCases: [], teamCases: [], isAdmin: true });
   const actionButtons = view.blocks
     .filter((block) => block.type === 'actions')
     .flatMap((block) => block.elements)
     .filter((element) => element.type === 'button');
 
-  assert.ok(actionButtons.some((button) => button.action_id === 'open_google_oauth'));
+  assert.ok(actionButtons.some((button) => button.action_id === 'open_add_google_account'));
 });
 
-test('home view includes a disconnect google action when connected', () => {
-  const view = homeView({ myCases: [], teamCases: [], googleConnected: true });
+test('home view shows add google account button and no disconnect when no accounts for admins', () => {
+  const view = homeView({ myCases: [], teamCases: [], googleConnected: false, googleAccounts: [], isAdmin: true });
+  const actionButtons = view.blocks
+    .filter((block) => block.type === 'actions')
+    .flatMap((block) => block.elements)
+    .filter((element) => element.type === 'button');
+
+  assert.ok(actionButtons.some((button) => button.action_id === 'open_add_google_account'));
+  assert.ok(!actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
+  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('No Google accounts connected')));
+});
+
+test('home view shows connected accounts with disconnect button for admins', () => {
+  const view = homeView({
+    myCases: [], teamCases: [],
+    googleConnected: true,
+    googleAccounts: [
+      { id: 'careers@fpi.com', accountEmail: 'careers@fpi.com', label: 'Onshore - FPI' },
+      { id: 'recruitment@opg.com', accountEmail: 'recruitment@opg.com', label: 'Offshore - OPG' },
+    ],
+    isAdmin: true,
+  });
   const actionButtons = view.blocks
     .filter((block) => block.type === 'actions')
     .flatMap((block) => block.elements)
     .filter((element) => element.type === 'button');
 
   assert.ok(actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
-  assert.ok(!actionButtons.some((button) => button.action_id === 'open_google_oauth'));
+  assert.ok(actionButtons.some((button) => button.action_id === 'open_add_google_account'));
+  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('Connected Google accounts')));
+  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('Onshore - FPI')));
+  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('Offshore - OPG')));
 });
 
-test('home view keeps connect google action when disconnected', () => {
-  const view = homeView({ myCases: [], teamCases: [], googleConnected: false });
+test('home view hides google account buttons from non-admin users', () => {
+  const view = homeView({
+    myCases: [], teamCases: [],
+    googleConnected: true,
+    googleAccounts: [
+      { id: 'careers@fpi.com', accountEmail: 'careers@fpi.com', label: 'Onshore - FPI' },
+    ],
+    isAdmin: false,
+  });
   const actionButtons = view.blocks
     .filter((block) => block.type === 'actions')
     .flatMap((block) => block.elements)
     .filter((element) => element.type === 'button');
 
-  assert.ok(actionButtons.some((button) => button.action_id === 'open_google_oauth'));
+  assert.ok(!actionButtons.some((button) => button.action_id === 'open_add_google_account'));
   assert.ok(!actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
+  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('Connected Google accounts')));
 });
 
-test('home view hides google connect action for shared connected account users', () => {
-  const view = homeView({ myCases: [], teamCases: [], googleConnected: true, googleShared: true, googleCanManage: false });
+test('home view hides google buttons from non-admin users with no accounts', () => {
+  const view = homeView({ myCases: [], teamCases: [], isAdmin: false });
   const actionButtons = view.blocks
     .filter((block) => block.type === 'actions')
     .flatMap((block) => block.elements)
     .filter((element) => element.type === 'button');
 
-  assert.ok(!actionButtons.some((button) => button.action_id === 'open_google_oauth'));
+  assert.ok(!actionButtons.some((button) => button.action_id === 'open_add_google_account'));
   assert.ok(!actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
-  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('shared scheduling account')));
-});
-
-test('home view shows when google is not connected', () => {
-  const view = homeView({ myCases: [], teamCases: [], googleConnected: false });
-  assert.ok(view.blocks.some((block) => block.type === 'section' && block.text?.text?.includes('Google is not connected yet')));
 });
 
 test('prefers the case owner slack id for google token lookup', () => {

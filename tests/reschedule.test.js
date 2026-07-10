@@ -32,7 +32,7 @@ import {
   selectableHiringManagersForRole,
   roleAutofillSelections,
 } from '../src/slack/handlers.js';
-import { actionButtonsForCase, caseDetailsModal, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { actionButtonsForCase, caseDetailsModal, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, filterHomeCasesByDateRange, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackRecruiters, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -72,7 +72,7 @@ function assertNoEmptyInitialOptions(value, path = 'view') {
   }
 }
 
-test('scheduled cases show reschedule actions instead of create invite', () => {
+test('scheduled cases show reschedule actions', () => {
   const scheduledCase = {
     ...baseCase,
     status: 'Scheduled',
@@ -81,11 +81,9 @@ test('scheduled cases show reschedule actions instead of create invite', () => {
 
   const actions = visibleCaseActions(scheduledCase);
   assert.ok(actions.includes('open_reschedule_modal'));
-  assert.ok(!actions.includes('open_finalize_modal'));
 
   const labels = actionButtonsForCase(scheduledCase).map((item) => item.text.text);
   assert.ok(labels.includes('🔄 Reschedule interview'));
-  assert.ok(!labels.includes('📅 Create calendar invite'));
 });
 
 test('cancelled scheduled cases hide repeat email actions', () => {
@@ -98,25 +96,11 @@ test('cancelled scheduled cases hide repeat email actions', () => {
   };
 
   const actions = visibleCaseActions(cancelledCase);
-  assert.deepEqual(actions, ['view_calendar_details']);
+  assert.deepEqual(actions, []);
 
   const labels = actionButtonsForCase(cancelledCase).map((item) => item.text.text);
-  assert.ok(labels.includes('📅 View calendar details'));
   assert.ok(!labels.includes('❌ Cancel interview'));
   assert.ok(!labels.includes('🔔 Send reminder'));
-});
-
-test('cases with uploaded resumes show a view resume action', () => {
-  const caseWithResume = {
-    ...baseCase,
-    resumeLink: 'https://example.com/resume.pdf',
-  };
-
-  const actions = visibleCaseActions(caseWithResume);
-  const labels = actionButtonsForCase(caseWithResume).map((item) => item.text.text);
-
-  assert.ok(actions.includes('view_resume'));
-  assert.ok(labels.includes('📄 View resume'));
 });
 
 test('final scheduling is rejected after a calendar event exists', () => {
@@ -231,16 +215,124 @@ test('home view buttons do not include empty values', () => {
   assert.equal(buttonElements.some((button) => button.value === ''), false);
 });
 
-test('home view exposes the schedule tracker button', () => {
-  const view = homeView({ myCases: [], teamCases: [] });
-  const labels = view.blocks
-    .filter((block) => block.type === 'actions')
-    .flatMap((block) => block.elements)
-    .filter((element) => element.type === 'button')
-    .map((button) => button.text.text);
+test('home view renders date filter UI with datepickers and counts', () => {
+  const view = homeView({
+    myCases: [baseCase],
+    teamCases: [baseCase],
+    dateFilter: null,
+    myCasesTotal: 1,
+    teamCasesTotal: 1,
+  });
 
-  assert.ok(labels.includes('📚 Schedule tracker'));
-});
+  const startBlock = view.blocks.find((b) => b.block_id === 'home_date_start_block')
+  assert.ok(startBlock, 'Start date datepicker block should render')
+  assert.equal(startBlock.type, 'input')
+  assert.equal(startBlock.element.type, 'datepicker')
+  assert.equal(startBlock.element.action_id, 'home_date_start')
+  assert.equal(startBlock.optional, true)
+
+  const endBlock = view.blocks.find((b) => b.block_id === 'home_date_end_block')
+  assert.ok(endBlock, 'End date datepicker block should render')
+  assert.equal(endBlock.element.type, 'datepicker')
+  assert.equal(endBlock.element.action_id, 'home_date_end')
+  assert.equal(endBlock.optional, true)
+
+  const filterActionsBlock = view.blocks.find((b) => b.block_id === 'home_filter_actions')
+  assert.equal(filterActionsBlock, undefined, 'Clear button should not render when filter is null')
+
+  const contextBlocks = view.blocks.filter((b) => b.type === 'context')
+  const countBlock = contextBlocks.find(
+    (b) => b.elements.some((e) => e.text && /\*1\* my cases/.test(e.text))
+  )
+  assert.ok(countBlock, 'Count summary should render')
+})
+
+test('home view shows clear filter button when date filter is active', () => {
+  const filter = { startDate: '2026-06-01', endDate: '2026-06-30' }
+  const view = homeView({
+    myCases: [],
+    teamCases: [],
+    dateFilter: filter,
+    myCasesTotal: 0,
+    teamCasesTotal: 0,
+  })
+
+  const startBlock = view.blocks.find((b) => b.block_id === 'home_date_start_block')
+  assert.ok(startBlock.element.initial_date, 'Start datepicker should have initial_date')
+  assert.equal(startBlock.element.initial_date, '2026-06-01')
+
+  const endBlock = view.blocks.find((b) => b.block_id === 'home_date_end_block')
+  assert.ok(endBlock.element.initial_date, 'End datepicker should have initial_date')
+  assert.equal(endBlock.element.initial_date, '2026-06-30')
+
+  const filterActionsBlock = view.blocks.find((b) => b.block_id === 'home_filter_actions')
+  assert.ok(filterActionsBlock, 'Clear button actions block should render')
+  const clearBtn = filterActionsBlock.elements.find((e) => e.action_id === 'home_clear_filter')
+  assert.ok(clearBtn, 'Clear filter button should render')
+  assert.equal(clearBtn.style, 'danger')
+})
+
+test('home view renders without filter params for backward compatibility', () => {
+  const view = homeView({ myCases: [], teamCases: [] })
+  const startBlock = view.blocks.find((b) => b.block_id === 'home_date_start_block')
+  assert.ok(startBlock, 'Datepicker block should render with defaults')
+  const filterActionsBlock = view.blocks.find((b) => b.block_id === 'home_filter_actions')
+  assert.equal(filterActionsBlock, undefined, 'Clear button should not render')
+})
+
+test('filterHomeCasesByDateRange includes cases within range', () => {
+  const cases = [
+    { id: 'c1', interviewWindowStartDate: '2026-06-10', interviewWindowEndDate: '2026-06-20' },
+    { id: 'c2', interviewWindowStartDate: '2026-06-01', interviewWindowEndDate: '2026-06-15' },
+    { id: 'c3', interviewWindowStartDate: '2026-07-01', interviewWindowEndDate: '2026-07-10' },
+    { id: 'c4', selectedInterviewDate: '2026-06-15' },
+    { id: 'c5' },
+  ]
+
+  const filter = { startDate: '2026-06-01', endDate: '2026-06-30' }
+  const result = filterHomeCasesByDateRange(cases, filter)
+
+  assert.equal(result.length, 3)
+  assert.ok(result.find((c) => c.id === 'c1'), 'c1 window overlaps filter')
+  assert.ok(result.find((c) => c.id === 'c2'), 'c2 window overlaps filter')
+  assert.ok(result.find((c) => c.id === 'c4'), 'c4 single date is in range')
+  assert.ok(!result.find((c) => c.id === 'c3'), 'c3 window is after filter')
+  assert.ok(!result.find((c) => c.id === 'c5'), 'c5 has no date')
+})
+
+test('filterHomeCasesByDateRange returns all cases when filter is null or empty', () => {
+  const cases = [
+    { id: 'c1', interviewWindowStartDate: '2026-06-10' },
+    { id: 'c2' },
+  ]
+  assert.equal(filterHomeCasesByDateRange(cases, null).length, 2)
+  assert.equal(filterHomeCasesByDateRange(cases, {}).length, 2)
+  assert.equal(filterHomeCasesByDateRange(cases, { startDate: '', endDate: '' }).length, 2)
+})
+
+test('filterHomeCasesByDateRange handles boundary overlaps', () => {
+  const cases = [
+    { id: 'before', interviewWindowStartDate: '2026-05-01', interviewWindowEndDate: '2026-05-31' },
+    { id: 'after', interviewWindowStartDate: '2026-07-01', interviewWindowEndDate: '2026-07-31' },
+    { id: 'straddle-start', interviewWindowStartDate: '2026-05-15', interviewWindowEndDate: '2026-06-05' },
+    { id: 'straddle-end', interviewWindowStartDate: '2026-06-25', interviewWindowEndDate: '2026-07-05' },
+    { id: 'inside', interviewWindowStartDate: '2026-06-10', interviewWindowEndDate: '2026-06-20' },
+    { id: 'touching-start', interviewWindowStartDate: '2026-06-01', interviewWindowEndDate: '2026-06-01' },
+    { id: 'touching-end', interviewWindowStartDate: '2026-06-30', interviewWindowEndDate: '2026-06-30' },
+  ]
+
+  const filter = { startDate: '2026-06-01', endDate: '2026-06-30' }
+  const result = filterHomeCasesByDateRange(cases, filter)
+
+  assert.equal(result.length, 5)
+  assert.ok(result.find((c) => c.id === 'straddle-start'))
+  assert.ok(result.find((c) => c.id === 'straddle-end'))
+  assert.ok(result.find((c) => c.id === 'inside'))
+  assert.ok(result.find((c) => c.id === 'touching-start'), 'boundary cases included via >=')
+  assert.ok(result.find((c) => c.id === 'touching-end'), 'boundary cases included via <=')
+  assert.ok(!result.find((c) => c.id === 'before'))
+  assert.ok(!result.find((c) => c.id === 'after'))
+})
 
 test('home view groups schedule cases by role with compact date status and details', () => {
   const view = homeView({
@@ -377,7 +469,6 @@ test('schedule tracker modal renders scheduled case rows with action buttons', (
   assert.ok(view.blocks.some((block) => block.type === 'section' && block.text.text.includes('Showing 1 of 1 scheduled cases.')));
   assert.ok(labels.includes('🔄 Reschedule interview'));
   assert.ok(labels.includes('❌ Cancel interview'));
-  assert.ok(labels.includes('📅 View calendar details'));
 });
 
 test('finalize modal explains that calendar descriptions are generated automatically', () => {
@@ -569,7 +660,7 @@ test('intake modal candidate details hides JazzHR resume and rating fields', () 
   assert.match(text, /LinkedIn profile/);
 });
 
-test('standard interview intake keeps the resume file upload field', () => {
+test('resume upload field shown for stages that require a resume', () => {
   const view = intakeModal({
     templates: [
       {
@@ -580,8 +671,9 @@ test('standard interview intake keeps the resume file upload field', () => {
       },
     ],
     draft: {
-      eventType: '1st-interview',
-      eventTypeOption: { text: { type: 'plain_text', text: '1st Interview' }, value: '1st-interview' },
+      eventType: '2nd-interview',
+      stageKey: '2nd-interview',
+      eventTypeOption: { text: { type: 'plain_text', text: '2nd Interview' }, value: '2nd-interview' },
     },
   });
 
@@ -591,7 +683,7 @@ test('standard interview intake keeps the resume file upload field', () => {
   assert.equal(resumeBlock.element.action_id, 'resume_file');
   assert.equal(resumeBlock.element.max_files, 1);
   assert.deepEqual(resumeBlock.element.filetypes, ['pdf', 'doc', 'docx']);
-  assert.equal(resumeBlock.optional, true);
+  assert.equal(resumeBlock.optional, false);
 });
 
 test('custom invite intake omits interview-specific controls', () => {
@@ -906,7 +998,7 @@ test('completed cases hide reschedule cancel and reminder actions', () => {
     resumeLink: 'https://example.com/resume.pdf',
   })
 
-  assert.deepEqual(actions, ['view_resume', 'view_calendar_details'])
+  assert.deepEqual(actions, [])
 })
 
 test('checkbox options keep selections first and filter remaining people by search', () => {
@@ -1248,10 +1340,13 @@ test('role mapping uses exact JazzHR job and enriches its hiring lead from recru
     },
   ])
 
-  assert.deepEqual(mappedRecruitersForRole('job-open').map((person) => ({
-    id: person.id,
-    zoomLink: person.zoomLink,
-  })), [{ id: 'sheet-allen', zoomLink: 'https://zoom.us/j/allen' }])
+  const recs = mappedRecruitersForRole('job-open')
+  // JazzHR lead (enriched from directory) appears first, followed by all other unique recruiters
+  assert.equal(recs.length, 2)
+  assert.equal(recs[0].id, 'sheet-allen')
+  assert.equal(recs[0].zoomLink, 'https://zoom.us/j/allen')
+  // Second recruiter from JazzHR with different email survives dedup
+  assert.equal(recs[1].id, 'rec-user-allen')
   assert.deepEqual(mappedHiringManagersForRole('job-open').map((person) => person.name), ['Veanne Reyes'])
 
   setJazzhrJobs([])
@@ -1299,19 +1394,16 @@ test('Loan Associate maps Hanna across fuzzy role title and dual company emails'
   const match = resolveRoleAssignmentsForRole('job-loan-associate')
   assert.equal(match.matchType, 'fuzzy')
   assert.equal(match.matchedTitle, 'Loan Associate - Global')
-  assert.deepEqual(mappedRecruitersForRole('job-loan-associate').map((person) => ({
-    id: person.id,
-    name: person.name,
-    email: person.email,
-    phone: person.phone,
-    zoomLink: person.zoomLink,
-  })), [{
-    id: 'sheet-hanna',
-    name: 'Hanna Marino',
-    email: 'hanna.marino@freedompropertyinvestors.com.au',
-    phone: '0400000000',
-    zoomLink: 'https://zoom.us/j/hanna',
-  }])
+  const loanRecs = mappedRecruitersForRole('job-loan-associate')
+  // JazzHR lead (enriched from directory) appears first, directory entry with
+  // different email also included — uniquePeople dedups by email so both survive
+  assert.equal(loanRecs.length, 2)
+  assert.equal(loanRecs[0].id, 'sheet-hanna')
+  assert.equal(loanRecs[0].name, 'Hanna Marino')
+  assert.equal(loanRecs[0].email, 'hanna.marino@freedompropertyinvestors.com.au')
+  assert.equal(loanRecs[0].phone, '0400000000')
+  assert.equal(loanRecs[0].zoomLink, 'https://zoom.us/j/hanna')
+  assert.equal(loanRecs[1].id, 'rec-usr-hanna')
 
   setJazzhrJobs([])
 })

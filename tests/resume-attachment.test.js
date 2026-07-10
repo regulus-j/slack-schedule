@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveResumeAttachment } from '../src/services/resume-attachment.js'
+import { resumeDisplayFilename } from '../src/slack/handlers.js'
 
 test('downloads a private Slack resume with bot authentication', async () => {
   let authorization = ''
@@ -388,4 +389,87 @@ test('retry is skipped when files.info was never called (no hasFreshUrl)', async
   // No client was provided, so files.info was never called.
   // Should fail immediately without retrying.
   assert.equal(fetchCount, 1)
+})
+
+test('resumeDisplayFilename formats name - role with extension', () => {
+  assert.equal(
+    resumeDisplayFilename('resume.pdf', {
+      applicant: { firstName: 'Jamal', lastName: 'Al Badi', jobTitle: 'Support Specialist' },
+    }),
+    'Jamal Al Badi - Support Specialist.pdf',
+  )
+})
+
+test('resumeDisplayFilename works with .docx extension', () => {
+  assert.equal(
+    resumeDisplayFilename('CV.docx', {
+      applicant: { firstName: 'Maria', lastName: 'Santos', jobTitle: 'Software Engineer' },
+    }),
+    'Maria Santos - Software Engineer.docx',
+  )
+})
+
+test('resumeDisplayFilename falls back to name only when role is missing', () => {
+  assert.equal(
+    resumeDisplayFilename('resume.pdf', {
+      applicant: { firstName: 'Alex', lastName: 'Reyes', jobTitle: '' },
+    }),
+    'Alex Reyes.pdf',
+  )
+})
+
+test('resumeDisplayFilename falls back to role only when name is missing', () => {
+  assert.equal(
+    resumeDisplayFilename('file.pdf', {
+      applicant: { firstName: '', lastName: '', jobTitle: 'Support Specialist' },
+    }),
+    'Support Specialist.pdf',
+  )
+})
+
+test('resumeDisplayFilename returns original when name and role are both missing', () => {
+  assert.equal(
+    resumeDisplayFilename('original-file.pdf', {
+      applicant: { firstName: '', lastName: '', jobTitle: '' },
+    }),
+    'original-file.pdf',
+  )
+})
+
+test('resumeDisplayFilename returns original when applicant is missing', () => {
+  assert.equal(
+    resumeDisplayFilename('resume.pdf', {}),
+    'resume.pdf',
+  )
+  assert.equal(
+    resumeDisplayFilename('resume.pdf', { applicant: null }),
+    'resume.pdf',
+  )
+})
+
+test('resumeDisplayFilename handles multiple dots in filename', () => {
+  assert.equal(
+    resumeDisplayFilename('john.doe.resume.backup.pdf', {
+      applicant: { firstName: 'John', lastName: 'Doe', jobTitle: 'Developer' },
+    }),
+    'John Doe - Developer.pdf',
+  )
+})
+
+test('resumeDisplayFilename handles filename with no extension', () => {
+  assert.equal(
+    resumeDisplayFilename('resume', {
+      applicant: { firstName: 'Jane', lastName: 'Smith', jobTitle: 'Manager' },
+    }),
+    'Jane Smith - Manager',
+  )
+})
+
+test('resumeDisplayFilename sanitizes slashes and special chars in name', () => {
+  assert.equal(
+    resumeDisplayFilename('file.pdf', {
+      applicant: { firstName: 'Jane\r\n', lastName: 'Smith/Backup', jobTitle: 'Manager' },
+    }),
+    'Jane Smith-Backup - Manager.pdf',
+  )
 })
