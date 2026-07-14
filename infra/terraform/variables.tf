@@ -12,11 +12,36 @@ variable "environment" {
 
 variable "region" {
   type    = string
-  default = "australia-southeast1"
+  default = "us-central1"
 }
 
 variable "container_image" {
   type = string
+}
+
+variable "app_machine_type" {
+  type    = string
+  default = "e2-small"
+}
+variable "db_machine_type" {
+  type    = string
+  default = "e2-micro"
+}
+variable "db_disk_gb" {
+  type    = number
+  default = 30
+}
+variable "database_name" {
+  type    = string
+  default = "scheduler"
+}
+variable "database_user" {
+  type    = string
+  default = "scheduler"
+}
+variable "backup_retention_days" {
+  type    = number
+  default = 30
 }
 
 variable "github_repository" {
@@ -87,6 +112,8 @@ variable "secret_next_rotation_time" {
 variable "secret_names" {
   type = map(string)
   default = {
+    DATABASE_URL                 = "database-url"
+    DATABASE_PASSWORD            = "database-password"
     SLACK_BOT_TOKEN              = "slack-bot-token"
     SLACK_APP_TOKEN              = "slack-app-token"
     JAZZHR_API_KEY               = "jazzhr-api-key"

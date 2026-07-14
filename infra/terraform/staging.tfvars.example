@@ -1,7 +1,7 @@
 project_id       = "replace-with-staging-project"
 environment      = "staging"
-region           = "australia-southeast1"
-container_image  = "australia-southeast1-docker.pkg.dev/replace-with-staging-project/slack-scheduler/app:bootstrap"
+region           = "us-central1"
+container_image  = "us-central1-docker.pkg.dev/replace-with-staging-project/slack-scheduler-image/app:bootstrap"
 github_repository = "regulus-j/slack-schedule"
 
 public_base_url             = "https://replace-with-staging-cloud-run-url"

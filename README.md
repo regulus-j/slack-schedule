@@ -80,7 +80,7 @@ CI also runs full-history Gitleaks scanning and CodeQL.
 
 Production infrastructure is defined under `infra/terraform`:
 
-- Cloud Run in `australia-southeast1`
+- Cloud Run in `us-central1`
 - Cloud SQL PostgreSQL 16
 - Secret Manager
 - Cloud KMS

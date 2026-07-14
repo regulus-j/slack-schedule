@@ -1,7 +1,7 @@
 project_id       = "replace-with-production-project"
 environment      = "production"
-region           = "australia-southeast1"
-container_image  = "australia-southeast1-docker.pkg.dev/replace-with-production-project/slack-scheduler/app:bootstrap"
+region           = "us-central1"
+container_image  = "us-central1-docker.pkg.dev/replace-with-production-project/slack-scheduler-image/app:bootstrap"
 github_repository = "regulus-j/slack-schedule"
 
 public_base_url             = "https://replace-with-production-cloud-run-url"

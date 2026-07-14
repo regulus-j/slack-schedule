@@ -2,23 +2,23 @@
 
 ## Environments
 
-Use separate staging and production GCP projects in `australia-southeast1`, with separate Slack apps, Cloud SQL instances, Secret Manager secrets, KMS keys, and service accounts.
+Use separate staging and production GCP projects in `us-central1`, with separate Slack apps, private PostgreSQL VMs, Secret Manager secrets, KMS keys, and service accounts.
 
 ## Bootstrap
 
 1. Create a GCS Terraform state bucket per environment.
 2. Apply `infra/terraform` with the matching example tfvars.
-3. Add secret values manually to the Secret Manager containers output by Terraform.
+3. Add secret values manually to Secret Manager, including `DATABASE_URL` and `DATABASE_PASSWORD`.
 4. Configure GitHub environment variables used by `.github/workflows/deploy-gcp.yml`.
 5. Configure the GitHub Workload Identity provider/service account outputs.
 6. Apply `infra/github` using a GitHub token with repository administration permission.
 7. Add the real Platform/Security GitHub team to `CODEOWNERS`.
 
-Secret values are never Terraform variables or state entries. Cloud Run receives them as read-only files and the app reads `NAME_FILE`.
+Secret values are never Terraform variables or state entries. Cloud Run reads them through Secret Manager references.
 
 ## Database privileges
 
-After the migration identity creates the schema, grant the runtime IAM database user only the required table/sequence CRUD privileges. Do not grant schema ownership, `CREATE`, `DROP`, or migration privileges to runtime.
+After the migration job creates the schema, grant the runtime database user only the required table/sequence CRUD privileges. Do not grant schema ownership, `CREATE`, `DROP`, or migration privileges to runtime.
 
 ## Deployment
 
@@ -42,11 +42,11 @@ Production environment approval must be enabled in GitHub.
 
 ## Availability
 
-Cloud Run runs exactly one always-on instance with instance-based CPU. This is an accepted initial risk because Socket Mode and transient sessions are process-local. Cloud Run may reconnect the Socket Mode WebSocket periodically. Do not increase maximum instances until transient state and connection ownership are externalized and tested.
+Cloud Run runs at most one instance with instance-based CPU during Monday-Friday business hours (`Australia/Sydney`, 09:00-18:00). Scheduler jobs start PostgreSQL at 08:30, enable Cloud Run at 08:45, disable it at 18:30, and stop PostgreSQL at 19:00. Socket Mode reconnects on the next workday.
 
 ## Backup and restore
 
-- Production Cloud SQL uses regional HA, PITR, and 35 retained backups.
-- Run the restore-test workflow against a dedicated staging restore instance.
+- PostgreSQL VM backups are nightly `pg_dump` files in a lifecycle-managed GCS bucket.
+- Run restore tests against a disposable PostgreSQL VM.
 - Validate migrations, row counts, case state, notification locks, and KMS token decryption.
 - Never point the restore workflow at the active staging or production instance.

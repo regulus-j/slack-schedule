@@ -190,8 +190,11 @@ export function validateStartupConfig(config) {
     if (!config.database.user) missing.push('CLOUD_SQL_IAM_USER')
     if (!config.security?.kmsKeyName) missing.push('GOOGLE_KMS_KEY_NAME')
   }
-  if (config.env === 'production' && config.database?.backend !== 'cloudsql') {
-    missing.push('DATABASE_BACKEND=cloudsql')
+  if (config.env === 'production' && !['cloudsql', 'postgres'].includes(config.database?.backend)) {
+    missing.push('DATABASE_BACKEND=postgres')
+  }
+  if (config.env === 'production' && config.database?.backend === 'postgres' && !config.databaseUrl) {
+    missing.push('DATABASE_URL')
   }
 
   if (missing.length > 0) {

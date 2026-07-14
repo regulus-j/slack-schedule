@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq postgresql postgresql-contrib google-cloud-cli unattended-upgrades
+systemctl enable --now postgresql
+DATA_DISK=$$(findmnt -nr -o SOURCE /var/lib/postgresql || true)
+if [ -z "$${DATA_DISK}" ]; then
+  mkdir -p /var/lib/postgresql-data
+  chown postgres:postgres /var/lib/postgresql-data
+fi
+DB_PASSWORD=$(gcloud secrets versions access latest --secret="${db_password_secret}" --format='get(payload.data)' | base64 -d)
+sudo -u postgres psql -v ON_ERROR_STOP=1 --set=db_password="$${DB_PASSWORD}" <<'SQL'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${db_user}') THEN CREATE ROLE ${db_user} LOGIN PASSWORD :'db_password'; ELSE ALTER ROLE ${db_user} PASSWORD :'db_password'; END IF;
+END $$;
+SQL
+sudo -u postgres createdb -O ${db_user} ${db_name} 2>/dev/null || true
+sed -i "s/^#listen_addresses =.*/listen_addresses = '*' /" /etc/postgresql/*/main/postgresql.conf
+echo 'host ${db_name} ${db_user} ${db_ip}/32 scram-sha-256' >> /etc/postgresql/*/main/pg_hba.conf
+systemctl restart postgresql
+cat > /usr/local/bin/slack-scheduler-db-backup <<'BACKUP'
+#!/bin/bash
+set -euo pipefail
+file="/tmp/scheduler-$(date -u +%Y%m%dT%H%M%SZ).dump"
+sudo -u postgres pg_dump -Fc ${db_name} > "$file"
+gcloud storage cp "$file" "gs://${backup_bucket}/$(basename "$file")"
+rm -f "$file"
+BACKUP
+chmod 700 /usr/local/bin/slack-scheduler-db-backup
+echo '0 3 * * * root /usr/local/bin/slack-scheduler-db-backup' > /etc/cron.d/slack-scheduler-backup

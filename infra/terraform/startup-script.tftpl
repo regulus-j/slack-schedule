@@ -1,171 +1,68 @@
 #!/bin/bash
-set -e -o pipefail
-
-LOG="/var/log/slack-scheduler-startup.log"
-echo "[$(date)] Starting slack-scheduler VM setup" >> "$LOG"
-
+set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-
-# ── 1. Install Docker CE ──────────────────────────────────────────────
-if ! command -v docker >/dev/null 2>&1; then
-  apt-get update -qq
-  apt-get install -y -qq ca-certificates curl
+apt-get update -qq
+apt-get install -y -qq ca-certificates curl gpg unattended-upgrades
+if ! command -v gcloud >/dev/null; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update -qq && apt-get install -y -qq google-cloud-cli
+fi
+if ! command -v docker >/dev/null; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  chmod a+r /etc/apt/keyrings/docker.asc
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
-    > /etc/apt/sources.list.d/docker.list
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
   apt-get update -qq
   apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
-  echo "[$(date)] Docker installed" >> "$LOG"
-else
-  echo "[$(date)] Docker already installed" >> "$LOG"
 fi
-
-# ── 2. Install gcloud CLI ─────────────────────────────────────────────
-if ! command -v gcloud >/dev/null 2>&1; then
-  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
-  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-    > /etc/apt/sources.list.d/google-cloud-sdk.list
-  apt-get update -qq
-  apt-get install -y -qq google-cloud-cli
-  echo "[$(date)] gcloud CLI installed" >> "$LOG"
-else
-  echo "[$(date)] gcloud CLI already installed" >> "$LOG"
-fi
-
-# ── 3. Install Ops Agent for Cloud Logging ────────────────────────────
-if ! command -v google-cloud-ops-agent >/dev/null 2>&1; then
-  curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-  bash add-google-cloud-ops-agent-repo.sh --also-install
-  rm -f add-google-cloud-ops-agent-repo.sh
-  echo "[$(date)] Ops Agent installed" >> "$LOG"
-else
-  echo "[$(date)] Ops Agent already installed" >> "$LOG"
-fi
-
-# ── 4. Fetch secrets from Secret Manager ──────────────────────────────
-mkdir -p /secrets
-chmod 755 /secrets
-
-# The secret_names mapping is embedded by Terraform templatefile()
+mkdir -p /secrets /opt/slack-scheduler
 %{ for var_name, secret_id in secret_names ~}
 mkdir -p "/secrets/${var_name}"
-if gcloud secrets versions access latest \
-  --secret="${secret_id}" \
-  --format='get(payload.data)' 2>>"$LOG" | base64 -d > "/secrets/${var_name}/${var_name}"; then
-  chmod 400 "/secrets/${var_name}/${var_name}"
-  chown 1000:1000 "/secrets/${var_name}/${var_name}"
-  echo "[$(date)] Fetched secret: ${var_name}" >> "$LOG"
-else
-  echo "[$(date)] WARNING: Failed to fetch secret ${var_name} (secret ID: ${secret_id})" >> "$LOG"
-fi
+gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | base64 -d > "/secrets/${var_name}/${var_name}"
+chmod 400 "/secrets/${var_name}/${var_name}"
+chown 1000:1000 "/secrets/${var_name}/${var_name}"
 %{ endfor ~}
-
-# ── 5. Pull the app Docker image ──────────────────────────────────────
-docker pull ${container_image}
-echo "[$(date)] Pulled image: ${container_image}" >> "$LOG"
-
-# ── 6. Write Docker Compose file ──────────────────────────────────────
-mkdir -p /opt/slack-scheduler
-
-cat > /opt/slack-scheduler/docker-compose.yml << 'COMPOSE_EOF'
-version: "3.8"
-
-networks:
-  slack-net:
-    driver: bridge
-
-volumes:
-  caddy_data:
-  caddy_config:
-
+cat > /opt/slack-scheduler/docker-compose.yml <<'COMPOSE_EOF'
 services:
   app:
     image: ${container_image}
     container_name: slack-scheduler
     restart: unless-stopped
-    networks:
-      - slack-net
-    ports:
-      - "127.0.0.1:3000:3000"
-    volumes:
-      - /secrets:/secrets:ro
+    ports: ["127.0.0.1:3000:3000"]
+    volumes: ["/secrets:/secrets:ro"]
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - PUBLIC_BASE_URL=${public_base_url}
-      - DATABASE_BACKEND=cloudsql
-      - CLOUD_SQL_INSTANCE=${cloud_sql_connection_name}
-      - CLOUD_SQL_DATABASE=${database_name}
-      - CLOUD_SQL_IAM_USER=${iam_user}
-      - CLOUD_SQL_IP_TYPE=PRIVATE
-      - GOOGLE_KMS_KEY_NAME=${kms_key_name}
-      - SLACK_BOT_TOKEN_FILE=/secrets/SLACK_BOT_TOKEN/SLACK_BOT_TOKEN
-      - SLACK_APP_TOKEN_FILE=/secrets/SLACK_APP_TOKEN/SLACK_APP_TOKEN
-      - JAZZHR_API_KEY_FILE=/secrets/JAZZHR_API_KEY/JAZZHR_API_KEY
-      - GOOGLE_CLIENT_SECRET_FILE=/secrets/GOOGLE_CLIENT_SECRET/GOOGLE_CLIENT_SECRET
-      - RECRUITER_PHONE_EXPORT_TOKEN_FILE=/secrets/RECRUITER_PHONE_EXPORT_TOKEN/RECRUITER_PHONE_EXPORT_TOKEN
-      - ROLE_ASSIGNMENT_EXPORT_TOKEN_FILE=/secrets/ROLE_ASSIGNMENT_EXPORT_TOKEN/ROLE_ASSIGNMENT_EXPORT_TOKEN
-      - SLACK_TEAM_ID=${slack_team_id}
-      - SLACK_POSTING_CHANNEL_ID=${slack_posting_channel_id}
-      - SLACK_RECRUITMENT_USER_IDS=${slack_recruitment_user_ids}
-      - SLACK_ADMIN_USER_IDS=${slack_admin_user_ids}
-      - SLACK_ALERT_USER_IDS=${slack_alert_user_ids}
-      - ACCESS_CONTROL_ENFORCED=true
-      - GOOGLE_CLIENT_ID=${google_client_id}
-      - GOOGLE_REDIRECT_URI=${google_redirect_uri}
-      - GOOGLE_SHARED_CALENDAR_ID=${google_shared_calendar_id}
-      - GOOGLE_AUTH_SLACK_USER_ID=${google_auth_slack_user_id}
-      - RETENTION_COMPLETED_CASE_DAYS=365
-      - RETENTION_CANDIDATE_CACHE_DAYS=30
-      - RETENTION_GOOGLE_TOKEN_INACTIVE_DAYS=90
-      - RETENTION_OAUTH_STATE_HOURS=24
-
+      NODE_ENV: production
+      PORT: "3000"
+      PUBLIC_BASE_URL: ${public_base_url}
+      DATABASE_BACKEND: postgres
+      DATABASE_URL: postgresql://${database_user}@${db_ip}:5432/${database_name}
+      GOOGLE_KMS_KEY_NAME: ${kms_key_name}
+      SLACK_BOT_TOKEN_FILE: /secrets/SLACK_BOT_TOKEN/SLACK_BOT_TOKEN
+      SLACK_APP_TOKEN_FILE: /secrets/SLACK_APP_TOKEN/SLACK_APP_TOKEN
+      JAZZHR_API_KEY_FILE: /secrets/JAZZHR_API_KEY/JAZZHR_API_KEY
+      GOOGLE_CLIENT_SECRET_FILE: /secrets/GOOGLE_CLIENT_SECRET/GOOGLE_CLIENT_SECRET
+      RECRUITER_PHONE_EXPORT_TOKEN_FILE: /secrets/RECRUITER_PHONE_EXPORT_TOKEN/RECRUITER_PHONE_EXPORT_TOKEN
+      ROLE_ASSIGNMENT_EXPORT_TOKEN_FILE: /secrets/ROLE_ASSIGNMENT_EXPORT_TOKEN/ROLE_ASSIGNMENT_EXPORT_TOKEN
+      SLACK_TEAM_ID: ${slack_team_id}
+      SLACK_POSTING_CHANNEL_ID: ${slack_posting_channel_id}
+      SLACK_RECRUITMENT_USER_IDS: ${slack_recruitment_user_ids}
+      SLACK_ADMIN_USER_IDS: ${slack_admin_user_ids}
+      SLACK_ALERT_USER_IDS: ${slack_alert_user_ids}
+      ACCESS_CONTROL_ENFORCED: "true"
+      GOOGLE_CLIENT_ID: ${google_client_id}
+      GOOGLE_REDIRECT_URI: ${google_redirect_uri}
+      GOOGLE_SHARED_CALENDAR_ID: ${google_shared_calendar_id}
+      GOOGLE_AUTH_SLACK_USER_ID: ${google_auth_slack_user_id}
   caddy:
     image: caddy:2-alpine
-    container_name: caddy
     restart: unless-stopped
-    depends_on:
-      - app
-    networks:
-      - slack-net
-    ports:
-      - "0.0.0.0:80:80"
-      - "0.0.0.0:443:443"
-    volumes:
-      - /opt/slack-scheduler/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    volumes: ["/opt/slack-scheduler/Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+volumes: { caddy_data: {}, caddy_config: {} }
 COMPOSE_EOF
-
-# ── 7. Write Caddyfile ────────────────────────────────────────────────
-cat > /opt/slack-scheduler/Caddyfile << CADDY_EOF
-${public_base_url_domain} {
-    reverse_proxy app:3000
-
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Referrer-Policy "no-referrer"
-    }
-}
+cat > /opt/slack-scheduler/Caddyfile <<'CADDY_EOF'
+${public_base_url_domain} { reverse_proxy app:3000 }
 CADDY_EOF
-
-# ── 8. Start containers ───────────────────────────────────────────────
 cd /opt/slack-scheduler
 docker compose up -d
-echo "[$(date)] Containers started" >> "$LOG"
-
-# ── 9. Enable unattended-upgrades for security patches ────────────────
-apt-get install -y -qq unattended-upgrades 2>/dev/null || true
-cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'UNATTENDED'
-Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}-security";
-};
-Unattended-Upgrade::Automatic-Reboot "false";
-UNATTENDED
-
-echo "[$(date)] Startup complete" >> "$LOG"

@@ -1,60 +1,20 @@
 locals {
-  service_name      = "slack-scheduler"
-  database_name     = "scheduler"
-  runtime_sa_name   = "scheduler-runtime"
-  migrate_sa_name   = "scheduler-migrate"
-  scheduler_sa_name = "scheduler-jobs"
-  common_env = {
-    NODE_ENV                             = "production"
-    PORT                                 = "3000"
-    PUBLIC_BASE_URL                      = var.public_base_url
-    DATABASE_BACKEND                     = "cloudsql"
-    CLOUD_SQL_INSTANCE                   = google_sql_database_instance.postgres.connection_name
-    CLOUD_SQL_DATABASE                   = google_sql_database.app.name
-    CLOUD_SQL_IAM_USER                   = trimsuffix(google_service_account.runtime.email, ".gserviceaccount.com")
-    CLOUD_SQL_IP_TYPE                    = "PRIVATE"
-    GOOGLE_KMS_KEY_NAME                  = google_kms_crypto_key.oauth_tokens.id
-    SLACK_TEAM_ID                        = var.slack_team_id
-    SLACK_POSTING_CHANNEL_ID             = var.slack_posting_channel_id
-    SLACK_RECRUITMENT_USER_IDS           = var.slack_recruitment_user_ids
-    SLACK_ADMIN_USER_IDS                 = var.slack_admin_user_ids
-    SLACK_ALERT_USER_IDS                 = var.slack_alert_user_ids
-    ACCESS_CONTROL_ENFORCED              = "true"
-    GOOGLE_CLIENT_ID                     = var.google_client_id
-    GOOGLE_REDIRECT_URI                  = var.google_redirect_uri
-    GOOGLE_SHARED_CALENDAR_ID            = var.google_shared_calendar_id
-    GOOGLE_AUTH_SLACK_USER_ID            = var.google_auth_slack_user_id
-    RETENTION_COMPLETED_CASE_DAYS        = "365"
-    RETENTION_CANDIDATE_CACHE_DAYS       = "30"
-    RETENTION_GOOGLE_TOKEN_INACTIVE_DAYS = "90"
-    RETENTION_OAUTH_STATE_HOURS          = "24"
-  }
+  service_name   = "slack-scheduler"
+  app_sa_name    = "scheduler-runtime"
+  db_sa_name     = "scheduler-postgres"
+  backup_sa_name = "scheduler-backup"
+  secret_ids     = var.secret_names
 }
 
 resource "google_project_service" "apis" {
-  for_each = toset([
-    "artifactregistry.googleapis.com",
-    "cloudkms.googleapis.com",
-    "cloudscheduler.googleapis.com",
-    "compute.googleapis.com",
-    "iamcredentials.googleapis.com",
-    "iap.googleapis.com",
-    "logging.googleapis.com",
-    "monitoring.googleapis.com",
-    "oslogin.googleapis.com",
-    "pubsub.googleapis.com",
-    "run.googleapis.com",
-    "secretmanager.googleapis.com",
-    "servicenetworking.googleapis.com",
-    "sqladmin.googleapis.com",
-  ])
+  for_each           = toset(["artifactregistry.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com", "run.googleapis.com", "secretmanager.googleapis.com", "storage.googleapis.com", "vpcaccess.googleapis.com", "cloudscheduler.googleapis.com", "serviceusage.googleapis.com"])
   service            = each.value
   disable_on_destroy = false
 }
 
 resource "google_artifact_registry_repository" "app" {
   location      = var.region
-  repository_id = local.service_name
+  repository_id = "slack-scheduler-image"
   format        = "DOCKER"
   depends_on    = [google_project_service.apis]
 }
@@ -64,342 +24,288 @@ resource "google_compute_network" "private" {
   auto_create_subnetworks = false
 }
 
-resource "google_compute_subnetwork" "run" {
-  name          = "${local.service_name}-run"
+resource "google_compute_subnetwork" "app" {
+  name          = "${local.service_name}-app"
   region        = var.region
   network       = google_compute_network.private.id
   ip_cidr_range = "10.20.0.0/24"
 }
 
-resource "google_compute_global_address" "private_services" {
-  name          = "${local.service_name}-private-services"
-  purpose       = "VPC_PEERING"
-  address_type  = "INTERNAL"
-  prefix_length = 16
-  network       = google_compute_network.private.id
-}
-
-resource "google_service_networking_connection" "private_vpc" {
-  network                 = google_compute_network.private.id
-  service                 = "servicenetworking.googleapis.com"
-  reserved_peering_ranges = [google_compute_global_address.private_services.name]
-  depends_on              = [google_project_service.apis]
-}
-
-resource "google_service_account" "runtime" {
-  account_id   = local.runtime_sa_name
+resource "google_service_account" "app" {
+  account_id   = local.app_sa_name
   display_name = "Slack Scheduler runtime"
 }
 
-resource "google_service_account" "migration" {
-  account_id   = local.migrate_sa_name
-  display_name = "Slack Scheduler migrations"
+resource "google_service_account" "db" {
+  account_id   = local.db_sa_name
+  display_name = "Slack Scheduler PostgreSQL"
 }
 
-resource "google_service_account" "scheduler" {
-  account_id   = local.scheduler_sa_name
-  display_name = "Slack Scheduler scheduled jobs"
+resource "google_service_account" "backup" {
+  account_id   = local.backup_sa_name
+  display_name = "Slack Scheduler PostgreSQL backups"
 }
 
-resource "google_sql_database_instance" "postgres" {
-  name                = "${local.service_name}-${var.environment}"
-  database_version    = "POSTGRES_16"
-  region              = var.region
-  deletion_protection = var.environment == "production"
-
-  settings {
-    tier              = var.environment == "production" ? "db-custom-2-7680" : "db-f1-micro"
-    availability_type = var.environment == "production" ? "REGIONAL" : "ZONAL"
-    disk_autoresize   = true
-    disk_type         = "PD_SSD"
-
-    ip_configuration {
-      ipv4_enabled    = false
-      private_network = google_compute_network.private.id
-      ssl_mode        = "ENCRYPTED_ONLY"
+resource "google_storage_bucket" "backups" {
+  name                        = "${var.project_id}-${local.service_name}-postgres-backups"
+  location                    = var.region
+  uniform_bucket_level_access = true
+  force_destroy               = false
+  lifecycle_rule {
+    condition {
+      age = var.backup_retention_days
     }
-
-    backup_configuration {
-      enabled                        = true
-      point_in_time_recovery_enabled = true
-      transaction_log_retention_days = 7
-      backup_retention_settings {
-        retained_backups = 35
-        retention_unit   = "COUNT"
-      }
-    }
-
-    insights_config {
-      query_insights_enabled  = true
-      record_application_tags = true
+    action {
+      type = "Delete"
     }
   }
-
-  depends_on = [google_service_networking_connection.private_vpc]
 }
 
-resource "google_sql_database" "app" {
-  name     = local.database_name
-  instance = google_sql_database_instance.postgres.name
-}
-
-resource "google_sql_user" "runtime" {
-  name     = trimsuffix(google_service_account.runtime.email, ".gserviceaccount.com")
-  instance = google_sql_database_instance.postgres.name
-  type     = "CLOUD_IAM_SERVICE_ACCOUNT"
-}
-
-resource "google_sql_user" "migration" {
-  name     = trimsuffix(google_service_account.migration.email, ".gserviceaccount.com")
-  instance = google_sql_database_instance.postgres.name
-  type     = "CLOUD_IAM_SERVICE_ACCOUNT"
+resource "google_storage_bucket_iam_member" "backup_writer" {
+  bucket = google_storage_bucket.backups.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${google_service_account.backup.email}"
 }
 
 resource "google_secret_manager_secret" "app" {
-  for_each  = var.secret_names
+  for_each  = local.secret_ids
   secret_id = "${each.value}-${var.environment}"
   replication {
     auto {}
   }
-  dynamic "rotation" {
-    for_each = var.secret_next_rotation_time == "" ? [] : [1]
-    content {
-      rotation_period    = "7776000s"
-      next_rotation_time = var.secret_next_rotation_time
-    }
-  }
-  topics {
-    name = google_pubsub_topic.secret_rotation.id
-  }
 }
 
-resource "google_pubsub_topic" "secret_rotation" {
-  name = "${local.service_name}-secret-rotation"
+resource "google_secret_manager_secret_iam_member" "app_access" {
+  for_each  = google_secret_manager_secret.app
+  secret_id = each.value.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app.email}"
 }
-
-resource "google_project_service_identity" "secretmanager" {
-  provider = google-beta
-  service  = "secretmanager.googleapis.com"
-}
-
-resource "google_pubsub_topic_iam_member" "secretmanager_publisher" {
-  topic  = google_pubsub_topic.secret_rotation.name
-  role   = "roles/pubsub.publisher"
-  member = "serviceAccount:${google_project_service_identity.secretmanager.email}"
+resource "google_secret_manager_secret_iam_member" "db_password_access" {
+  secret_id = google_secret_manager_secret.app["DATABASE_PASSWORD"].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.db.email}"
 }
 
 resource "google_kms_key_ring" "app" {
   name     = "${local.service_name}-${var.environment}"
   location = var.region
 }
-
 resource "google_kms_crypto_key" "oauth_tokens" {
   name            = "oauth-token-encryption"
   key_ring        = google_kms_key_ring.app.id
   rotation_period = "7776000s"
-  lifecycle {
-    prevent_destroy = true
-  }
+  lifecycle { prevent_destroy = true }
 }
-
-resource "google_project_iam_member" "runtime_roles" {
-  for_each = toset([
-    "roles/cloudsql.client",
-    "roles/cloudsql.instanceUser",
-    "roles/logging.logWriter",
-    "roles/monitoring.metricWriter",
-  ])
-  project = var.project_id
-  role    = each.value
-  member  = "serviceAccount:${google_service_account.runtime.email}"
-}
-
-resource "google_project_iam_member" "migration_roles" {
-  for_each = toset([
-    "roles/cloudsql.client",
-    "roles/cloudsql.instanceUser",
-    "roles/logging.logWriter",
-  ])
-  project = var.project_id
-  role    = each.value
-  member  = "serviceAccount:${google_service_account.migration.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "runtime_secret_access" {
-  for_each  = google_secret_manager_secret.app
-  secret_id = each.value.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.runtime.email}"
-}
-
-resource "google_secret_manager_secret_iam_member" "migration_secret_access" {
-  for_each  = google_secret_manager_secret.app
-  secret_id = each.value.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.migration.email}"
-}
-
-resource "google_kms_crypto_key_iam_member" "runtime_kms" {
+resource "google_kms_crypto_key_iam_member" "app" {
   crypto_key_id = google_kms_crypto_key.oauth_tokens.id
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
-  member        = "serviceAccount:${google_service_account.runtime.email}"
+  member        = "serviceAccount:${google_service_account.app.email}"
 }
 
-resource "google_kms_crypto_key_iam_member" "migration_kms" {
-  crypto_key_id = google_kms_crypto_key.oauth_tokens.id
-  role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
-  member        = "serviceAccount:${google_service_account.migration.email}"
+resource "google_compute_address" "db" {
+  name         = "${local.service_name}-${var.environment}-db"
+  address_type = "INTERNAL"
+  subnetwork   = google_compute_subnetwork.app.id
+  region       = var.region
 }
 
-# ── Compute Engine VM ──────────────────────────────────────────────────
-
-resource "google_compute_address" "app" {
-  name   = "${local.service_name}-${var.environment}"
-  region = var.region
-}
-
-resource "google_compute_firewall" "allow_https" {
-  name    = "${local.service_name}-${var.environment}-allow-https"
-  network = google_compute_network.private.name
-  allow {
-    protocol = "tcp"
-    ports    = ["443"]
-  }
-  source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["slack-scheduler-vm"]
-}
-
-resource "google_compute_firewall" "allow_http" {
-  name    = "${local.service_name}-${var.environment}-allow-http"
-  network = google_compute_network.private.name
-  allow {
-    protocol = "tcp"
-    ports    = ["80"]
-  }
-  source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["slack-scheduler-vm"]
-}
-
-resource "google_compute_firewall" "allow_ssh_iap" {
-  name    = "${local.service_name}-${var.environment}-allow-ssh-iap"
+resource "google_compute_firewall" "iap_ssh" {
+  name    = "${local.service_name}-${var.environment}-iap-ssh"
   network = google_compute_network.private.name
   allow {
     protocol = "tcp"
     ports    = ["22"]
   }
   source_ranges = ["35.235.240.0/20"]
-  target_tags   = ["ssh-iap"]
+  target_tags   = ["slack-scheduler-ssh"]
 }
-
-resource "google_compute_firewall" "allow_health_checks" {
-  name    = "${local.service_name}-${var.environment}-allow-health-checks"
+resource "google_compute_firewall" "postgres" {
+  name    = "${local.service_name}-${var.environment}-postgres"
   network = google_compute_network.private.name
   allow {
     protocol = "tcp"
-    ports    = ["3000"]
+    ports    = ["5432"]
   }
-  source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
-  target_tags   = ["slack-scheduler-vm"]
+  source_ranges = ["10.8.0.0/28"]
+  target_tags   = ["slack-scheduler-db"]
 }
 
-resource "google_compute_instance" "app" {
-  name         = "${local.service_name}-${var.environment}"
-  machine_type = "e2-micro"
+resource "google_compute_instance" "db" {
+  name         = "${local.service_name}-${var.environment}-db"
+  machine_type = var.db_machine_type
   zone         = "${var.region}-a"
-
-  tags = ["slack-scheduler-vm", "ssh-iap"]
-
+  tags         = ["slack-scheduler-db", "slack-scheduler-ssh"]
   boot_disk {
     initialize_params {
       image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
-      size  = 50
+      size  = 20
       type  = "pd-balanced"
     }
-    auto_delete = false
   }
-
-  network_interface {
-    subnetwork = google_compute_subnetwork.run.self_link
-    access_config {
-      nat_ip = google_compute_address.app.address
-    }
-  }
-
+  attached_disk { source = google_compute_disk.db_data.id }
+  network_interface { subnetwork = google_compute_subnetwork.app.id }
   service_account {
-    email  = google_service_account.runtime.email
+    email  = google_service_account.db.email
     scopes = ["cloud-platform"]
   }
+  metadata = { startup-script = templatefile("${path.module}/postgres-startup-script.tftpl", { db_ip = google_compute_address.db.address, db_name = var.database_name, db_user = var.database_user, db_password_secret = google_secret_manager_secret.app["DATABASE_PASSWORD"].secret_id, backup_bucket = google_storage_bucket.backups.name }) }
+}
+resource "google_compute_disk" "db_data" {
+  name = "${local.service_name}-${var.environment}-db-data"
+  type = "pd-balanced"
+  zone = "${var.region}-a"
+  size = var.db_disk_gb
+}
 
-  metadata = {
-    enable-oslogin = "TRUE"
-    startup-script = templatefile("${path.module}/startup-script.tftpl", {
-      container_image           = var.container_image
-      cloud_sql_connection_name = google_sql_database_instance.postgres.connection_name
-      database_name             = google_sql_database.app.name
-      iam_user                  = trimsuffix(google_service_account.runtime.email, ".gserviceaccount.com")
-      kms_key_name              = google_kms_crypto_key.oauth_tokens.id
-      public_base_url           = var.public_base_url
-      public_base_url_domain    = replace(replace(var.public_base_url, "https://", ""), "/", "")
-      slack_team_id             = var.slack_team_id
-      slack_posting_channel_id  = var.slack_posting_channel_id
-      slack_recruitment_user_ids = var.slack_recruitment_user_ids
-      slack_admin_user_ids      = var.slack_admin_user_ids
-      slack_alert_user_ids      = var.slack_alert_user_ids
-      google_client_id          = var.google_client_id
-      google_redirect_uri       = var.google_redirect_uri
-      google_shared_calendar_id = var.google_shared_calendar_id
-      google_auth_slack_user_id = var.google_auth_slack_user_id
-      secret_names = {
-        SLACK_BOT_TOKEN              = google_secret_manager_secret.app["SLACK_BOT_TOKEN"].secret_id
-        SLACK_APP_TOKEN              = google_secret_manager_secret.app["SLACK_APP_TOKEN"].secret_id
-        JAZZHR_API_KEY               = google_secret_manager_secret.app["JAZZHR_API_KEY"].secret_id
-        GOOGLE_CLIENT_SECRET         = google_secret_manager_secret.app["GOOGLE_CLIENT_SECRET"].secret_id
-        RECRUITER_PHONE_EXPORT_TOKEN = google_secret_manager_secret.app["RECRUITER_PHONE_EXPORT_TOKEN"].secret_id
-        ROLE_ASSIGNMENT_EXPORT_TOKEN = google_secret_manager_secret.app["ROLE_ASSIGNMENT_EXPORT_TOKEN"].secret_id
-      }
-    })
-  }
+resource "google_project_iam_member" "backup_logging" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.backup.email}"
+}
 
+resource "google_vpc_access_connector" "run" {
+  name          = "${local.service_name}-${var.environment}"
+  region        = var.region
+  network       = google_compute_network.private.name
+  ip_cidr_range = "10.8.0.0/28"
+  min_instances = 2
+  max_instances = 3
+}
+
+resource "google_cloud_run_v2_service" "app" {
+  name                = local.service_name
+  location            = var.region
   deletion_protection = var.environment == "production"
-
-  depends_on = [
-    google_project_service.apis,
-    google_sql_user.runtime,
-    google_secret_manager_secret_iam_member.runtime_secret_access,
-  ]
+  template {
+    service_account = google_service_account.app.email
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 1
+    }
+    max_instance_request_concurrency = 80
+    containers {
+      image = var.container_image
+      resources {
+        limits   = { cpu = "1", memory = "512Mi" }
+        cpu_idle = false
+      }
+      ports { container_port = 3000 }
+      env {
+        name  = "NODE_ENV"
+        value = "production"
+      }
+      env {
+        name  = "PORT"
+        value = "3000"
+      }
+      env {
+        name  = "DATABASE_BACKEND"
+        value = "postgres"
+      }
+      env {
+        name  = "GOOGLE_KMS_KEY_NAME"
+        value = google_kms_crypto_key.oauth_tokens.id
+      }
+      env {
+        name  = "PUBLIC_BASE_URL"
+        value = var.public_base_url
+      }
+      env {
+        name  = "SLACK_TEAM_ID"
+        value = var.slack_team_id
+      }
+      env {
+        name  = "SLACK_POSTING_CHANNEL_ID"
+        value = var.slack_posting_channel_id
+      }
+      env {
+        name  = "SLACK_RECRUITMENT_USER_IDS"
+        value = var.slack_recruitment_user_ids
+      }
+      env {
+        name  = "SLACK_ADMIN_USER_IDS"
+        value = var.slack_admin_user_ids
+      }
+      env {
+        name  = "SLACK_ALERT_USER_IDS"
+        value = var.slack_alert_user_ids
+      }
+      env {
+        name  = "ACCESS_CONTROL_ENFORCED"
+        value = "true"
+      }
+      env {
+        name  = "GOOGLE_CLIENT_ID"
+        value = var.google_client_id
+      }
+      env {
+        name  = "GOOGLE_REDIRECT_URI"
+        value = var.google_redirect_uri
+      }
+      env {
+        name  = "GOOGLE_SHARED_CALENDAR_ID"
+        value = var.google_shared_calendar_id
+      }
+      env {
+        name  = "GOOGLE_AUTH_SLACK_USER_ID"
+        value = var.google_auth_slack_user_id
+      }
+      dynamic "env" {
+        for_each = ["DATABASE_URL", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "JAZZHR_API_KEY", "GOOGLE_CLIENT_SECRET", "RECRUITER_PHONE_EXPORT_TOKEN", "ROLE_ASSIGNMENT_EXPORT_TOKEN"]
+        content {
+          name = env.value
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.app[env.value].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+    }
+    vpc_access {
+      connector = google_vpc_access_connector.run.id
+      egress    = "PRIVATE_RANGES_ONLY"
+    }
+  }
+  depends_on = [google_secret_manager_secret_iam_member.app_access]
 }
 
 resource "google_cloud_run_v2_job" "migrate" {
   name     = "${local.service_name}-migrate"
   location = var.region
-
   template {
     template {
-      service_account = google_service_account.migration.email
-      timeout         = "1800s"
-      max_retries     = 0
-
-      vpc_access {
-        network_interfaces {
-          network    = google_compute_network.private.name
-          subnetwork = google_compute_subnetwork.run.name
-        }
-        egress = "PRIVATE_RANGES_ONLY"
-      }
-
+      service_account = google_service_account.app.email
       containers {
         image   = var.container_image
         command = ["npm", "run", "migrate"]
-        dynamic "env" {
-          for_each = merge(local.common_env, {
-            CLOUD_SQL_IAM_USER         = trimsuffix(google_service_account.migration.email, ".gserviceaccount.com")
-            RUNTIME_CLOUD_SQL_IAM_USER = trimsuffix(google_service_account.runtime.email, ".gserviceaccount.com")
-          })
-          content {
-            name  = env.key
-            value = env.value
+        env {
+          name  = "NODE_ENV"
+          value = "production"
+        }
+        env {
+          name  = "DATABASE_BACKEND"
+          value = "postgres"
+        }
+        env {
+          name  = "GOOGLE_KMS_KEY_NAME"
+          value = google_kms_crypto_key.oauth_tokens.id
+        }
+        env {
+          name = "DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.app["DATABASE_URL"].secret_id
+              version = "latest"
+            }
           }
         }
+      }
+      vpc_access {
+        connector = google_vpc_access_connector.run.id
+        egress    = "PRIVATE_RANGES_ONLY"
       }
     }
   }
@@ -408,166 +314,145 @@ resource "google_cloud_run_v2_job" "migrate" {
 resource "google_cloud_run_v2_job" "retention" {
   name     = "${local.service_name}-retention"
   location = var.region
-
   template {
     template {
-      service_account = google_service_account.runtime.email
-      timeout         = "900s"
-      max_retries     = 1
-      vpc_access {
-        network_interfaces {
-          network    = google_compute_network.private.name
-          subnetwork = google_compute_subnetwork.run.name
-        }
-        egress = "PRIVATE_RANGES_ONLY"
-      }
+      service_account = google_service_account.app.email
       containers {
         image   = var.container_image
         command = ["npm", "run", "retention"]
-        dynamic "env" {
-          for_each = local.common_env
-          content {
-            name  = env.key
-            value = env.value
+        env {
+          name  = "NODE_ENV"
+          value = "production"
+        }
+        env {
+          name  = "DATABASE_BACKEND"
+          value = "postgres"
+        }
+        env {
+          name  = "GOOGLE_KMS_KEY_NAME"
+          value = google_kms_crypto_key.oauth_tokens.id
+        }
+        env {
+          name = "DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.app["DATABASE_URL"].secret_id
+              version = "latest"
+            }
           }
         }
+      }
+      vpc_access {
+        connector = google_vpc_access_connector.run.id
+        egress    = "PRIVATE_RANGES_ONLY"
       }
     }
   }
 }
 
-resource "google_project_iam_member" "scheduler_run_jobs" {
+resource "google_service_account" "scheduler" {
+  account_id   = "scheduler-jobs"
+  display_name = "Slack Scheduler schedule control"
+}
+resource "google_project_iam_member" "scheduler_compute" {
+  project = var.project_id
+  role    = "roles/compute.instanceAdmin.v1"
+  member  = "serviceAccount:${google_service_account.scheduler.email}"
+}
+resource "google_project_iam_member" "scheduler_run" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:${google_service_account.scheduler.email}"
+}
+resource "google_project_iam_member" "scheduler_invoker" {
   project = var.project_id
   role    = "roles/run.invoker"
   member  = "serviceAccount:${google_service_account.scheduler.email}"
 }
-
+resource "google_cloud_scheduler_job" "db_start" {
+  name      = "${local.service_name}-db-start"
+  region    = var.region
+  schedule  = "30 8 * * 1-5"
+  time_zone = "Australia/Sydney"
+  http_target {
+    uri         = "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/zones/${var.region}-a/instances/${google_compute_instance.db.name}/start"
+    http_method = "POST"
+    oauth_token { service_account_email = google_service_account.scheduler.email }
+  }
+}
+resource "google_cloud_scheduler_job" "run_on" {
+  name      = "${local.service_name}-run-on"
+  region    = var.region
+  schedule  = "45 8 * * 1-5"
+  time_zone = "Australia/Sydney"
+  http_target {
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.app.name}?updateMask=template.scaling.minInstanceCount"
+    http_method = "PATCH"
+    body        = base64encode(jsonencode({ template = { scaling = { minInstanceCount = 1 } } }))
+    headers     = { "Content-Type" = "application/json" }
+    oauth_token { service_account_email = google_service_account.scheduler.email }
+  }
+}
+resource "google_cloud_scheduler_job" "run_off" {
+  name      = "${local.service_name}-run-off"
+  region    = var.region
+  schedule  = "30 18 * * 1-5"
+  time_zone = "Australia/Sydney"
+  http_target {
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.app.name}?updateMask=template.scaling.minInstanceCount"
+    http_method = "PATCH"
+    body        = base64encode(jsonencode({ template = { scaling = { minInstanceCount = 0 } } }))
+    headers     = { "Content-Type" = "application/json" }
+    oauth_token { service_account_email = google_service_account.scheduler.email }
+  }
+}
+resource "google_cloud_scheduler_job" "db_stop" {
+  name      = "${local.service_name}-db-stop"
+  region    = var.region
+  schedule  = "0 19 * * 1-5"
+  time_zone = "Australia/Sydney"
+  http_target {
+    uri         = "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/zones/${var.region}-a/instances/${google_compute_instance.db.name}/stop"
+    http_method = "POST"
+    oauth_token { service_account_email = google_service_account.scheduler.email }
+  }
+}
 resource "google_cloud_scheduler_job" "retention" {
   name      = "${local.service_name}-retention"
   region    = var.region
-  schedule  = "15 3 * * *"
+  schedule  = "0 17 * * 1-5"
   time_zone = "Australia/Sydney"
-
   http_target {
-    http_method = "POST"
     uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/jobs/${google_cloud_run_v2_job.retention.name}:run"
-    oauth_token {
-      service_account_email = google_service_account.scheduler.email
-    }
+    http_method = "POST"
+    oauth_token { service_account_email = google_service_account.scheduler.email }
   }
-}
-
-resource "google_monitoring_uptime_check_config" "health" {
-  display_name = "${local.service_name}-${var.environment}-health"
-  timeout      = "10s"
-  period       = "60s"
-
-  http_check {
-    path         = "/health"
-    port         = 443
-    use_ssl      = true
-    validate_ssl = true
-  }
-
-  monitored_resource {
-    type = "uptime_url"
-    labels = {
-      host       = replace(var.public_base_url, "https://", "")
-      project_id = var.project_id
-    }
-  }
-}
-
-resource "google_logging_project_bucket_config" "default" {
-  project        = var.project_id
-  location       = "global"
-  retention_days = 90
-  bucket_id      = "_Default"
-}
-
-resource "google_monitoring_notification_channel" "email" {
-  count        = var.monitoring_email == "" ? 0 : 1
-  display_name = "${local.service_name}-${var.environment}-email"
-  type         = "email"
-  labels = {
-    email_address = var.monitoring_email
-  }
-}
-
-resource "google_logging_metric" "application_errors" {
-  name   = "${local.service_name}_${var.environment}_errors"
-  filter = "resource.type=\"gce_instance\" AND jsonPayload.severity>=ERROR"
-  metric_descriptor {
-    metric_kind = "DELTA"
-    value_type  = "INT64"
-  }
-}
-
-resource "google_monitoring_alert_policy" "application_errors" {
-  display_name = "${local.service_name}-${var.environment}-application-errors"
-  combiner     = "OR"
-  conditions {
-    display_name = "Application errors"
-    condition_threshold {
-      filter          = "metric.type=\"logging.googleapis.com/user/${google_logging_metric.application_errors.name}\" AND resource.type=\"gce_instance\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "0s"
-      aggregations {
-        alignment_period   = "60s"
-        per_series_aligner = "ALIGN_RATE"
-      }
-    }
-  }
-  notification_channels = google_monitoring_notification_channel.email[*].name
 }
 
 resource "google_iam_workload_identity_pool" "github" {
   workload_identity_pool_id = "github-actions"
   display_name              = "GitHub Actions"
 }
-
 resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
   workload_identity_pool_provider_id = "github"
   display_name                       = "GitHub"
-  attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.repository" = "assertion.repository"
-  }
-  attribute_condition = "assertion.repository == '${var.github_repository}'"
-  oidc {
-    issuer_uri = "https://token.actions.githubusercontent.com"
-  }
+  attribute_mapping                  = { "google.subject" = "assertion.sub", "attribute.repository" = "assertion.repository" }
+  attribute_condition                = "assertion.repository == '${var.github_repository}'"
+  oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
-
 resource "google_service_account" "deploy" {
   account_id   = "scheduler-deploy"
   display_name = "Slack Scheduler deployment"
 }
-
 resource "google_service_account_iam_member" "github_deploy" {
   service_account_id = google_service_account.deploy.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
 }
-
 resource "google_project_iam_member" "deploy_roles" {
-  for_each = toset([
-    "roles/artifactregistry.writer",
-    "roles/cloudkms.admin",
-    "roles/cloudsql.admin",
-    "roles/compute.instanceAdmin.v1",
-    "roles/compute.networkAdmin",
-    "roles/iam.serviceAccountAdmin",
-    "roles/iam.serviceAccountUser",
-    "roles/iap.tunnelResourceAccessor",
-    "roles/resourcemanager.projectIamAdmin",
-    "roles/run.admin",
-    "roles/secretmanager.admin",
-    "roles/serviceusage.serviceUsageAdmin",
-  ])
-  project = var.project_id
-  role    = each.value
-  member  = "serviceAccount:${google_service_account.deploy.email}"
+  for_each = toset(["roles/artifactregistry.writer", "roles/compute.instanceAdmin.v1", "roles/compute.networkAdmin", "roles/iam.serviceAccountUser", "roles/resourcemanager.projectIamAdmin", "roles/secretmanager.admin", "roles/serviceusage.serviceUsageAdmin"])
+  project  = var.project_id
+  role     = each.value
+  member   = "serviceAccount:${google_service_account.deploy.email}"
 }

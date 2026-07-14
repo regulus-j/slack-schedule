@@ -1,9 +1,7 @@
-output "vm_static_ip" {
-  value = google_compute_address.app.address
-}
+output "cloud_run_service" { value = google_cloud_run_v2_service.app.uri }
 
-output "cloud_sql_instance" {
-  value = google_sql_database_instance.postgres.connection_name
+output "database_private_ip" {
+  value = google_compute_address.db.address
 }
 
 output "artifact_repository" {

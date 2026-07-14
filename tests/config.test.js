@@ -66,7 +66,7 @@ test('security configuration parses Slack user allow-lists and secret file paths
   assert.equal(config.security.accessControlEnforced, true)
 })
 
-test('production validation requires Cloud SQL, KMS, and access-control lists', () => {
+test('production validation requires PostgreSQL, KMS, and access-control lists', () => {
   const config = loadConfig({
     NODE_ENV: 'production',
     SLACK_BOT_TOKEN: 'bot',
@@ -76,8 +76,18 @@ test('production validation requires Cloud SQL, KMS, and access-control lists', 
   })
   assert.throws(
     () => validateStartupConfig(config),
-    /SLACK_RECRUITMENT_USER_IDS.*SLACK_ADMIN_USER_IDS.*SLACK_ALERT_USER_IDS.*DATABASE_BACKEND=cloudsql/,
+    /SLACK_RECRUITMENT_USER_IDS.*SLACK_ADMIN_USER_IDS.*SLACK_ALERT_USER_IDS.*DATABASE_BACKEND=postgres/,
   )
+})
+
+test('production PostgreSQL validation accepts a database URL', () => {
+  const config = loadConfig({
+    NODE_ENV: 'production', DATABASE_BACKEND: 'postgres', DATABASE_URL: 'postgresql://app@10.0.0.2/scheduler',
+    SLACK_BOT_TOKEN: 'bot', SLACK_APP_TOKEN: 'app', JAZZHR_API_KEY: 'jazz',
+    GOOGLE_KMS_KEY_NAME: 'projects/p/locations/a/keyRings/r/cryptoKeys/k',
+    SLACK_RECRUITMENT_USER_IDS: 'U1', SLACK_ADMIN_USER_IDS: 'U2', SLACK_ALERT_USER_IDS: 'U3',
+  })
+  assert.doesNotThrow(() => validateStartupConfig(config))
 })
 
 test('google redirectUri falls back to PUBLIC_BASE_URL when GOOGLE_REDIRECT_URI is unset', () => {

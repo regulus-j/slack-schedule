@@ -20,6 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test and audit
+        run: |
+          npm ci
+          npm test
+          node --check app.js
+          npm audit --omit=dev --audit-level=moderate
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -33,14 +39,32 @@ jobs:
           terraform apply -auto-approve -target=google_artifact_registry_repository.app \
             -var="project_id=${{ vars.GCP_PROJECT_ID }}" \
             -var="environment=${{ inputs.environment || 'staging' }}" \
-            -var="region=australia-southeast1" \
+            -var="region=us-central1" \
             -var="github_repository=${{ github.repository }}" \
-            -var="container_image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"
+            -var="container_image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}"
       - name: Build and push image
         run: |
           gcloud auth configure-docker "${{ vars.GCP_REGION }}-docker.pkg.dev" --quiet
-          docker build -t "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}" .
-          docker push "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"
+          docker build -t "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}" .
+          docker push "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}"
+      - name: Terraform plan
+        working-directory: infra/terraform
+        run: |
+          terraform plan \
+            -var="project_id=${{ vars.GCP_PROJECT_ID }}" \
+            -var="environment=${{ inputs.environment || 'staging' }}" \
+            -var="region=${{ vars.GCP_REGION }}" \
+            -var="github_repository=${{ github.repository }}" \
+            -var="container_image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}" \
+            -var="public_base_url=${{ vars.PUBLIC_BASE_URL }}" \
+            -var="slack_team_id=${{ vars.SLACK_TEAM_ID }}" \
+            -var="slack_recruitment_user_ids=${{ vars.SLACK_RECRUITMENT_USER_IDS }}" \
+            -var="slack_admin_user_ids=${{ vars.SLACK_ADMIN_USER_IDS }}" \
+            -var="slack_alert_user_ids=${{ vars.SLACK_ALERT_USER_IDS }}" \
+            -var="google_client_id=${{ vars.GOOGLE_CLIENT_ID }}" \
+            -var="google_redirect_uri=${{ vars.GOOGLE_REDIRECT_URI }}" \
+            -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}" \
+            -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}"
       - name: Terraform apply
         working-directory: infra/terraform
         run: |
@@ -49,7 +73,7 @@ jobs:
             -var="environment=${{ inputs.environment || 'staging' }}" \
             -var="region=${{ vars.GCP_REGION }}" \
             -var="github_repository=${{ github.repository }}" \
-            -var="container_image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}" \
+            -var="container_image=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}" \
             -var="public_base_url=${{ vars.PUBLIC_BASE_URL }}" \
             -var="slack_team_id=${{ vars.SLACK_TEAM_ID }}" \
             -var="slack_posting_channel_id=${{ vars.SLACK_POSTING_CHANNEL_ID }}" \
@@ -62,17 +86,11 @@ jobs:
             -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}" \
             -var="monitoring_email=${{ vars.MONITORING_EMAIL }}" \
             -var="secret_next_rotation_time=${{ vars.SECRET_NEXT_ROTATION_TIME }}"
-      - name: Run migrations
-        run: gcloud run jobs execute slack-scheduler-migrate --region "${{ vars.GCP_REGION }}" --wait
-      - name: Deploy to Compute Engine
+      - name: Deploy to Cloud Run
         run: |
-          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler/app:${{ github.sha }}"
-          gcloud compute ssh "slack-scheduler-${{ inputs.environment || 'staging' }}" \
-            --zone="${{ vars.GCP_REGION }}-a" \
-            --tunnel-through-iap \
-            --command="
-              sudo docker pull ${IMAGE} &&
-              cd /opt/slack-scheduler &&
-              sudo sed -i \"s|image: .*|image: ${IMAGE}|\" docker-compose.yml &&
-              sudo docker compose up -d app
-            "
+          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}"
+          gcloud run deploy slack-scheduler --region "${{ vars.GCP_REGION }}" --image "${IMAGE}" --quiet
+          gcloud run jobs execute slack-scheduler-migrate --region "${{ vars.GCP_REGION }}" --wait
+          URL=$(gcloud run services describe slack-scheduler --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
+          curl --fail --silent "${URL}/health"
+          echo "Deployed ${IMAGE} to ${URL}"
