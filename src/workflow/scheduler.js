@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { BUSINESS_DAY_START, BUSINESS_DAY_END, SYDNEY_TIME_ZONE, formatDateForInput, localDateTimeToUtc } from '../time.js'
+import { BUSINESS_DAY_START, BUSINESS_DAY_END, SYDNEY_TIME_ZONE, formatDateForInput, localDateTimeToUtc } from '../ti me.js'
 import { checkFreeBusy } from '../services/google.js'
 import { normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from './stage-rules.js'
 import { normalizeAttendees, includedAttendees, attendeesForFreeBusy } from './attendees.js'
