@@ -1414,7 +1414,10 @@ export function registerSlackHandlers(app, context) {
     const candidates = mergeCandidateOptions(indexedCandidates, liveCandidates)
     const resolvedOptions = candidates.length > 0 || baseQuery || liveSessionId
       ? candidates.slice(0, 100).map(candidateToSlackOption)
-      : applicantOptions(options.value, filterApplicants(getApplicants(accountKey), filters))
+      : applicantOptions(
+        options.value,
+        filterEligibleApplicants(filterApplicants(getApplicants(accountKey), filters)),
+      )
     await ack({ options: resolvedOptions });
   });
 
