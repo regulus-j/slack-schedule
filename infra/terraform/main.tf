@@ -174,9 +174,10 @@ resource "google_vpc_access_connector" "run" {
 }
 
 resource "google_cloud_run_v2_service" "app" {
-  name                = local.service_name
-  location            = var.region
-  deletion_protection = var.environment == "production"
+  name                 = local.service_name
+  location             = var.region
+  deletion_protection  = var.environment == "production"
+  invoker_iam_disabled = true
   template {
     service_account = google_service_account.app.email
     scaling {
@@ -196,12 +197,12 @@ resource "google_cloud_run_v2_service" "app" {
         value = "production"
       }
       env {
-        name  = "PORT"
-        value = "3000"
-      }
-      env {
         name  = "DATABASE_BACKEND"
         value = "postgres"
+      }
+      env {
+        name  = "DATABASE_SSL_MODE"
+        value = "no-verify"
       }
       env {
         name  = "GOOGLE_KMS_KEY_NAME"
@@ -290,6 +291,10 @@ resource "google_cloud_run_v2_job" "migrate" {
           value = "postgres"
         }
         env {
+          name  = "DATABASE_SSL_MODE"
+          value = "no-verify"
+        }
+        env {
           name  = "GOOGLE_KMS_KEY_NAME"
           value = google_kms_crypto_key.oauth_tokens.id
         }
@@ -327,6 +332,10 @@ resource "google_cloud_run_v2_job" "retention" {
         env {
           name  = "DATABASE_BACKEND"
           value = "postgres"
+        }
+        env {
+          name  = "DATABASE_SSL_MODE"
+          value = "no-verify"
         }
         env {
           name  = "GOOGLE_KMS_KEY_NAME"

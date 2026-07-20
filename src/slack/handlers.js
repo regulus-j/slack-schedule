@@ -45,6 +45,7 @@ import { buildGoogleOAuthUrl, createCalendarEvent, deleteCalendarEvent, getGoogl
 import { normalizeResumeFile, resolveResumeAttachment } from '../services/resume-attachment.js'
 import {
   applicantEligibilityReason,
+  filterEligibleApplicants,
   fetchApplicantDetail,
   refreshJazzhrCache,
   refreshJazzhrOpenJobs,
@@ -5326,7 +5327,8 @@ export function isScheduleWorkflowTrigger(text) {
 
 async function searchCandidateIndex(store, query, baseQuery = '', limit = 20, filters = {}) {
   if (!store?.searchJazzhrCandidates) return []
-  return store.searchJazzhrCandidates(query, { baseQuery, limit, ...filters })
+  const candidates = await store.searchJazzhrCandidates(query, { baseQuery, limit, ...filters })
+  return filterEligibleApplicants(candidates)
 }
 
 function mergeCandidateOptions(...groups) {

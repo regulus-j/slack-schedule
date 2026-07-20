@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applicantEligibilityReason,
   fetchAllApplicants,
+  filterEligibleApplicants,
   filterActiveApplicants,
   hydrateJazzhrCacheFromStore,
   inactiveApplicantReason,
@@ -68,6 +69,16 @@ test('applicant eligibility accepts configured active stages and spelling varian
   assert.equal(applicantEligibilityReason({ stage: 'Good for Future hire' }), 'disposition:good for future hire')
   assert.equal(applicantEligibilityReason({ stage: 'Unknown Review' }), 'unknown-stage:unknown review')
   assert.equal(applicantEligibilityReason({ stage: 'Completed 1st Interview', workflowCategory: 'Not Hired' }), 'workflow-category:not hired')
+})
+
+test('filterEligibleApplicants removes inactive indexed candidates', () => {
+  const results = filterEligibleApplicants([
+    applicant({ id: 'active', stage: '1st Interview' }),
+    applicant({ id: 'rejected', stage: 'Auto Rejected Due to Lack of Experience' }),
+    applicant({ id: 'withdrawn', status: 'Withdrawn' }),
+  ])
+
+  assert.deepEqual(results.map((item) => item.id), ['active'])
 })
 
 test('inactiveApplicantReason excludes configured JazzHR not-hired dispositions', () => {
