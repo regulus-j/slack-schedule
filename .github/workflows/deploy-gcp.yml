@@ -14,6 +14,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: gcp-deploy-${{ inputs.environment || 'production' }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     environment: ${{ inputs.environment || 'production' }}
