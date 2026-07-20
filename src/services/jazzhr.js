@@ -10,7 +10,7 @@ const roleSyncCache = new Map();
 
 function resolveApiKey(config, accountKey = DEFAULT_ACCOUNT) {
   const accounts = config?.jazzhr?.accounts
-  if (!accounts || accounts.length === 0) return ''
+  if (!accounts || accounts.length === 0) return config?.jazzhr?.apiKey || ''
   const account = accounts.find((a) => a.key === accountKey) || accounts[0]
   return account.apiKey || ''
 }
@@ -65,6 +65,7 @@ export const ALLOWED_APPLICANT_STAGE_KEYS = new Set([
   'assessment',
   'assesment',
   'submittedtohiringmanager',
+  'hiringmanagerreview',
   'pre2ndinterview',
   '2ndinterview',
   'finalinterview',
@@ -168,6 +169,7 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
 }
 
 export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurrency = DEFAULT_FETCH_CONCURRENCY) {
+  _limiter.maxConcurrent = Math.max(_limiter.maxConcurrent, positiveInteger(concurrency, DEFAULT_FETCH_CONCURRENCY))
   const all = [];
   const seenIds = new Set();
   const perPage = 100;
@@ -339,6 +341,16 @@ async function fetchApplicantIdsByJob(apiKey, logger, jobId) {
     const pathname = `/applicants?job_id=${encodeURIComponent(jobId)}&page=${page}`
     const data = await jazzhrGetWithRetry(pathname, apiKey, logger)
     const pageItems = Array.isArray(data) ? data : []
+    if (page === 1 && pageItems.length === 0) {
+      const jobData = await jazzhrGetWithRetry(`/jobs/${encodeURIComponent(jobId)}`, apiKey, logger)
+      const jobApplicants = Array.isArray(jobData?.job_applicants) ? jobData.job_applicants : []
+      return jobApplicants
+        .map((item) => ({
+          id: String(item?.id || item?.prospect_id || item?.applicant_id || '').trim(),
+          appliedAt: item?.apply_date || item?.applied_at || item?.date_applied || '',
+        }))
+        .filter((item) => item.id)
+    }
     for (const item of pageItems) {
       const id = String(item?.id || '').trim()
       if (id) {
@@ -546,8 +558,8 @@ export function applicantEligibilityReason(item, { allowUnknown = false } = {}) 
   return ALLOWED_APPLICANT_STAGE_KEYS.has(applicantStageKey(stage)) ? '' : `unknown-stage:${normalizeStatusText(stage)}`
 }
 
-export function filterEligibleApplicants(items) {
-  return (items || []).filter((item) => !applicantEligibilityReason(item))
+export function filterEligibleApplicants(items, { allowUnknown = true } = {}) {
+  return (items || []).filter((item) => !applicantEligibilityReason(item, { allowUnknown }))
 }
 
 function applicantStatusValues(item) {
@@ -635,8 +647,10 @@ const _limiter = {
 }
 
 function _updateLimiterFromHeaders(res) {
-  const remaining = res.headers.get('x-ratelimit-remaining')
-  const reset = res.headers.get('x-ratelimit-reset')
+  const headers = res?.headers
+  if (!headers?.get) return
+  const remaining = headers.get('x-ratelimit-remaining')
+  const reset = headers.get('x-ratelimit-reset')
   if (remaining !== null && reset !== null) {
     const rem = parseInt(remaining, 10)
     const resetSec = parseInt(reset, 10)
@@ -661,7 +675,7 @@ function _flushQueue() {
   while (_limiter.queue.length > 0 && _limiter.active < _limiter.maxConcurrent) {
     if (Date.now() < _limiter.pausedUntil) break
     const gap = Date.now() - _limiter.lastRequestAt
-    if (gap < _limiter.minGapMs) break
+    if (_limiter.active === 0 && gap < _limiter.minGapMs) break
     const next = _limiter.queue.shift()
     _limiter.active++
     _limiter.lastRequestAt = Date.now()
@@ -670,14 +684,14 @@ function _flushQueue() {
   // If paused, schedule a flush when the pause ends.
   if (_limiter.queue.length > 0 && _limiter.pausedUntil > Date.now()) {
     const delay = _limiter.pausedUntil - Date.now() + 50
-    setTimeout(_flushQueue, delay).unref()
+    setTimeout(_flushQueue, delay)
   }
 }
 
 function _releaseSlot() {
   _limiter.active = Math.max(0, _limiter.active - 1)
   // Small gap between requests to avoid burst pressure.
-  setTimeout(_flushQueue, _limiter.minGapMs).unref()
+  setTimeout(_flushQueue, _limiter.minGapMs)
 }
 
 async function jazzhrGetWithRetry(pathname, apiKey, logger, maxRetries = 5) {

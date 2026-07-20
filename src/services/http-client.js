@@ -27,10 +27,16 @@ async function fetchOnce(url, options, { timeoutMs, fetchImpl }) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(new Error(`HTTP request timed out after ${timeoutMs}ms`)), timeoutMs)
   timeout.unref?.()
+  const callerSignal = options.signal
+  const abortCaller = () => controller.abort(callerSignal.reason)
+  if (callerSignal) {
+    if (callerSignal.aborted) abortCaller()
+    else callerSignal.addEventListener('abort', abortCaller, { once: true })
+  }
   try {
     return await fetchImpl(url, {
       ...options,
-      signal: options.signal || controller.signal,
+      signal: controller.signal,
     })
   } catch (error) {
     if (controller.signal.aborted) {
@@ -41,6 +47,7 @@ async function fetchOnce(url, options, { timeoutMs, fetchImpl }) {
     throw error
   } finally {
     clearTimeout(timeout)
+    callerSignal?.removeEventListener('abort', abortCaller)
   }
 }
 

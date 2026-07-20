@@ -229,7 +229,7 @@ export async function fetchApplicantListPage({
 function addMatches(session, pageResult) {
   pageResult.items.forEach((item, index) => {
     for (const record of applicantRoleRecords(item)) {
-      if (applicantEligibilityReason(record)) continue
+      if (applicantEligibilityReason(record, { allowUnknown: true })) continue
       const candidate = mapLiveApplicant(record, index)
       if (!candidate) continue
       if (!candidateMatchesFilters(candidate, session.filters)) continue

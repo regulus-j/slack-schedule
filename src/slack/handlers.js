@@ -146,6 +146,9 @@ let _config = null
 
 export function registerSlackHandlers(app, context) {
   const { store, logger, config } = context;
+  if ((!Array.isArray(config.jazzhr.accounts) || config.jazzhr.accounts.length === 0) && config.jazzhr.apiKey) {
+    config.jazzhr.accounts = [{ key: 'default', apiKey: config.jazzhr.apiKey, displayName: 'Default' }]
+  }
   _config = config
   installSlackSecurityMiddleware(app, { config, store, logger })
   const schedulingTimeZones = resolveSchedulingTimeZones(config)

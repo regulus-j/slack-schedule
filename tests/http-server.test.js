@@ -79,6 +79,7 @@ test('OAuth callback consumes opaque state once and rejects replay with HTML', a
     globalThis.fetch = originalFetch
     server.close()
     await once(server, 'close')
+    await store.close()
     await rm(runtimeDir, { recursive: true, force: true })
   }
 })
@@ -217,6 +218,7 @@ test('OAuth callback dispatches Slack DM on success and failure', async () => {
     globalThis.fetch = originalFetch
     server.close()
     await once(server, 'close')
+    await store.close()
     await rm(runtimeDir, { recursive: true, force: true })
   }
 })
@@ -273,6 +275,7 @@ test('OAuth callback handles Google error with DM when state is valid', async ()
   } finally {
     server.close()
     await once(server, 'close')
+    await store.close()
     await rm(runtimeDir, { recursive: true, force: true })
   }
 })
