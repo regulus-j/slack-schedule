@@ -101,6 +101,36 @@ test('JSON store enforces persisted fixed-window rate limits', async () => {
   }
 })
 
+test('JSON store allows 60 admin commands and blocks the 61st', async () => {
+  const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'security-admin-rate-limit-'))
+  const store = createJsonStore(runtimeDir)
+  try {
+    await store.init()
+    for (let attempt = 1; attempt <= 60; attempt += 1) {
+      const result = await store.consumeRateLimit({
+        userId: 'UADMIN',
+        bucket: 'admin',
+        limit: 60,
+        windowMs: 10 * 60 * 1000,
+        now: '2026-06-23T00:00:00.000Z',
+      })
+      assert.equal(result.allowed, true, `admin attempt ${attempt} should be allowed`)
+    }
+
+    const blocked = await store.consumeRateLimit({
+      userId: 'UADMIN',
+      bucket: 'admin',
+      limit: 60,
+      windowMs: 10 * 60 * 1000,
+      now: '2026-06-23T00:00:01.000Z',
+    })
+    assert.equal(blocked.allowed, false)
+  } finally {
+    await store.close()
+    await rm(runtimeDir, { recursive: true, force: true })
+  }
+})
+
 test('JSON store recovers from backup when state file is truncated', async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'security-json-recovery-'))
   try {

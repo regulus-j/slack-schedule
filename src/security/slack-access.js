@@ -4,7 +4,7 @@ const RATE_LIMITS = {
   read: { limit: 60, windowMs: 60 * 1000 },
   mutation: { limit: 20, windowMs: 5 * 60 * 1000 },
   sideEffect: { limit: 10, windowMs: 10 * 60 * 1000 },
-  admin: { limit: 3, windowMs: 10 * 60 * 1000 },
+  admin: { limit: 60, windowMs: 10 * 60 * 1000 },
 }
 
 const SIDE_EFFECT_ACTIONS = new Set([

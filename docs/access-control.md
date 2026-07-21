@@ -34,6 +34,6 @@ Production requires all three lists and `ACCESS_CONTROL_ENFORCED=true`.
 | Reads/searches | 60/minute/user |
 | Case mutations | 20/5 minutes/user |
 | Calendar, email, retry, cancel, complete | 10/10 minutes/user |
-| Administrative commands | 3/10 minutes/user |
+| Administrative commands | 60/10 minutes/user |
 
 Rate limiting does not replace duplicate-send and state-transition guards.
