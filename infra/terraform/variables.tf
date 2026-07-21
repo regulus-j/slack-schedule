@@ -98,6 +98,41 @@ variable "google_auth_slack_user_id" {
   default = ""
 }
 
+variable "recruiter_phone_export_url" {
+  type    = string
+  default = ""
+}
+
+variable "recruiter_phone_export_file_id" {
+  type    = string
+  default = ""
+}
+
+variable "recruiter_phone_export_sheet_name" {
+  type    = string
+  default = ""
+}
+
+variable "role_assignment_export_url" {
+  type    = string
+  default = ""
+}
+
+variable "role_assignment_export_file_id" {
+  type    = string
+  default = ""
+}
+
+variable "role_assignment_export_sheet_name" {
+  type    = string
+  default = ""
+}
+
+variable "role_assignment_export_sheet_gid" {
+  type    = string
+  default = ""
+}
+
 variable "monitoring_email" {
   type    = string
   default = ""

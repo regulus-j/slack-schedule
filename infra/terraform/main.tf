@@ -252,6 +252,34 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "GOOGLE_AUTH_SLACK_USER_ID"
         value = var.google_auth_slack_user_id
       }
+      env {
+        name  = "RECRUITER_PHONE_EXPORT_URL"
+        value = var.recruiter_phone_export_url
+      }
+      env {
+        name  = "RECRUITER_PHONE_EXPORT_FILE_ID"
+        value = var.recruiter_phone_export_file_id
+      }
+      env {
+        name  = "RECRUITER_PHONE_EXPORT_SHEET_NAME"
+        value = var.recruiter_phone_export_sheet_name
+      }
+      env {
+        name  = "ROLE_ASSIGNMENT_EXPORT_URL"
+        value = var.role_assignment_export_url
+      }
+      env {
+        name  = "ROLE_ASSIGNMENT_EXPORT_FILE_ID"
+        value = var.role_assignment_export_file_id
+      }
+      env {
+        name  = "ROLE_ASSIGNMENT_EXPORT_SHEET_NAME"
+        value = var.role_assignment_export_sheet_name
+      }
+      env {
+        name  = "ROLE_ASSIGNMENT_EXPORT_SHEET_GID"
+        value = var.role_assignment_export_sheet_gid
+      }
       dynamic "env" {
         for_each = ["DATABASE_URL", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "JAZZHR_API_KEY", "GOOGLE_CLIENT_SECRET", "RECRUITER_PHONE_EXPORT_TOKEN", "ROLE_ASSIGNMENT_EXPORT_TOKEN"]
         content {

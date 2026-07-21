@@ -74,7 +74,14 @@ jobs:
             -var="google_client_id=${{ vars.GOOGLE_CLIENT_ID }}" \
             -var="google_redirect_uri=${{ vars.GOOGLE_REDIRECT_URI }}" \
             -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}" \
-            -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}"
+            -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}" \
+            -var="recruiter_phone_export_url=${{ vars.RECRUITER_PHONE_EXPORT_URL }}" \
+            -var="recruiter_phone_export_file_id=${{ vars.RECRUITER_PHONE_EXPORT_FILE_ID }}" \
+            -var="recruiter_phone_export_sheet_name=${{ vars.RECRUITER_PHONE_EXPORT_SHEET_NAME }}" \
+            -var="role_assignment_export_url=${{ vars.ROLE_ASSIGNMENT_EXPORT_URL }}" \
+            -var="role_assignment_export_file_id=${{ vars.ROLE_ASSIGNMENT_EXPORT_FILE_ID }}" \
+            -var="role_assignment_export_sheet_name=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME }}" \
+            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}"
       - name: Terraform apply
         working-directory: infra/terraform
         run: |
@@ -95,7 +102,14 @@ jobs:
             -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}" \
             -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}" \
             -var="monitoring_email=${{ vars.MONITORING_EMAIL }}" \
-            -var="secret_next_rotation_time=${{ vars.SECRET_NEXT_ROTATION_TIME }}"
+            -var="secret_next_rotation_time=${{ vars.SECRET_NEXT_ROTATION_TIME }}" \
+            -var="recruiter_phone_export_url=${{ vars.RECRUITER_PHONE_EXPORT_URL }}" \
+            -var="recruiter_phone_export_file_id=${{ vars.RECRUITER_PHONE_EXPORT_FILE_ID }}" \
+            -var="recruiter_phone_export_sheet_name=${{ vars.RECRUITER_PHONE_EXPORT_SHEET_NAME }}" \
+            -var="role_assignment_export_url=${{ vars.ROLE_ASSIGNMENT_EXPORT_URL }}" \
+            -var="role_assignment_export_file_id=${{ vars.ROLE_ASSIGNMENT_EXPORT_FILE_ID }}" \
+            -var="role_assignment_export_sheet_name=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME }}" \
+            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}"
       - name: Deploy to Cloud Run
         run: |
           IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}"
