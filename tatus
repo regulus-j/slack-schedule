@@ -1,0 +1,198 @@
+[1mdiff --git a/package-lock.json b/package-lock.json[m
+[1mindex cfe8408..be6cf00 100644[m
+[1m--- a/package-lock.json[m
+[1m+++ b/package-lock.json[m
+[36m@@ -12,8 +12,11 @@[m
+         "@google-cloud/cloud-sql-connector": "1.11.1",[m
+         "@google-cloud/kms": "5.5.1",[m
+         "@slack/bolt": "4.7.3",[m
+[32m+[m[32m        "body-parser": "^2.3.0",[m
+[32m+[m[32m        "brace-expansion": "^2.1.2",[m
+         "form-data": "4.0.6",[m
+         "pg": "8.22.0",[m
+[32m+[m[32m        "protobufjs": "^7.6.5",[m
+         "qs": "6.15.2",[m
+         "ws": "8.21.0"[m
+       },[m
+[36m@@ -513,16 +516,42 @@[m
+       "license": "MIT"[m
+     },[m
+     "node_modules/axios": {[m
+[31m-      "version": "1.16.0",[m
+[31m-      "resolved": "https://registry.npmjs.org/axios/-/axios-1.16.0.tgz",[m
+[31m-      "integrity": "sha512-6hp5CwvTPlN2A31g5dxnwAX0orzM7pmCRDLnZSX772mv8WDqICwFjowHuPs04Mc8deIld1+ejhtaMn5vp6b+1w==",[m
+[32m+[m[32m      "version": "1.17.0",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/axios/-/axios-1.17.0.tgz",[m
+[32m+[m[32m      "integrity": "sha512-J8SwNxprqqpbfenehxWYXE7CW+wM1BB4w3+N+g+/Wx40xM4rsLrfPmHHxSWIxJLYDgSY/HqlFPIYb2/S3rxafw==",[m
+       "license": "MIT",[m
+       "dependencies": {[m
+         "follow-redirects": "^1.16.0",[m
+         "form-data": "^4.0.5",[m
+[32m+[m[32m        "https-proxy-agent": "^5.0.1",[m
+         "proxy-from-env": "^2.1.0"[m
+       }[m
+     },[m
+[32m+[m[32m    "node_modules/axios/node_modules/agent-base": {[m
+[32m+[m[32m      "version": "6.0.2",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",[m
+[32m+[m[32m      "integrity": "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",[m
+[32m+[m[32m      "license": "MIT",[m
+[32m+[m[32m      "dependencies": {[m
+[32m+[m[32m        "debug": "4"[m
+[32m+[m[32m      },[m
+[32m+[m[32m      "engines": {[m
+[32m+[m[32m        "node": ">= 6.0.0"[m
+[32m+[m[32m      }[m
+[32m+[m[32m    },[m
+[32m+[m[32m    "node_modules/axios/node_modules/https-proxy-agent": {[m
+[32m+[m[32m      "version": "5.0.1",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",[m
+[32m+[m[32m      "integrity": "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",[m
+[32m+[m[32m      "license": "MIT",[m
+[32m+[m[32m      "dependencies": {[m
+[32m+[m[32m        "agent-base": "6",[m
+[32m+[m[32m        "debug": "4"[m
+[32m+[m[32m      },[m
+[32m+[m[32m      "engines": {[m
+[32m+[m[32m        "node": ">= 6"[m
+[32m+[m[32m      }[m
+[32m+[m[32m    },[m
+     "node_modules/balanced-match": {[m
+       "version": "1.0.2",[m
+       "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz",[m
+[36m@@ -559,21 +588,34 @@[m
+       }[m
+     },[m
+     "node_modules/body-parser": {[m
+[31m-      "version": "2.2.2",[m
+[31m-      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-2.2.2.tgz",[m
+[31m-      "integrity": "sha512-oP5VkATKlNwcgvxi0vM0p/D3n2C3EReYVX+DNYs5TjZFn/oQt2j+4sVJtSMr18pdRr8wjTcBl6LoV+FUwzPmNA==",[m
+[32m+[m[32m      "version": "2.3.0",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz",[m
+[32m+[m[32m      "integrity": "sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==",[m
+       "license": "MIT",[m
+       "dependencies": {[m
+         "bytes": "^3.1.2",[m
+[31m-        "content-type": "^1.0.5",[m
+[32m+[m[32m        "content-type": "^2.0.0",[m
+         "debug": "^4.4.3",[m
+[31m-        "http-errors": "^2.0.0",[m
+[31m-        "iconv-lite": "^0.7.0",[m
+[32m+[m[32m        "http-errors": "^2.0.1",[m
+[32m+[m[32m        "iconv-lite": "^0.7.2",[m
+         "on-finished": "^2.4.1",[m
+[31m-        "qs": "^6.14.1",[m
+[31m-        "raw-body": "^3.0.1",[m
+[31m-        "type-is": "^2.0.1"[m
+[32m+[m[32m        "qs": "^6.15.2",[m
+[32m+[m[32m        "raw-body": "^3.0.2",[m
+[32m+[m[32m        "type-is": "^2.1.0"[m
+[32m+[m[32m      },[m
+[32m+[m[32m      "engines": {[m
+[32m+[m[32m        "node": ">=18"[m
+       },[m
+[32m+[m[32m      "funding": {[m
+[32m+[m[32m        "type": "opencollective",[m
+[32m+[m[32m        "url": "https://opencollective.com/express"[m
+[32m+[m[32m      }[m
+[32m+[m[32m    },[m
+[32m+[m[32m    "node_modules/body-parser/node_modules/content-type": {[m
+[32m+[m[32m      "version": "2.0.0",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz",[m
+[32m+[m[32m      "integrity": "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ==",[m
+[32m+[m[32m      "license": "MIT",[m
+       "engines": {[m
+         "node": ">=18"[m
+       },[m
+[36m@@ -583,9 +625,9 @@[m
+       }[m
+     },[m
+     "node_modules/brace-expansion": {[m
+[31m-      "version": "2.1.1",[m
+[31m-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.1.tgz",[m
+[31m-      "integrity": "sha512-WR1cURNjuvBLMZBMbqM0UoE+WAfdUcEV1ccD8PVBVOI+Z3ND4+SZbN8RsfT2bMuG1qwz5RFvPukSZm5fF2D5eA==",[m
+[32m+[m[32m      "version": "2.1.2",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.2.tgz",[m
+[32m+[m[32m      "integrity": "sha512-w5JZcKgdhDOgOwm8H+KgbosopHMuGcl6qbulwjtz3SM7I7P3yW1eAjzMPLrIE+NQ9vjgANKHWeMHnrT0OXW1oA==",[m
+       "license": "MIT",[m
+       "dependencies": {[m
+         "balanced-match": "^1.0.0"[m
+[36m@@ -2209,9 +2251,9 @@[m
+       }[m
+     },[m
+     "node_modules/protobufjs": {[m
+[31m-      "version": "7.6.4",[m
+[31m-      "resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.4.tgz",[m
+[31m-      "integrity": "sha512-RJJPTTpvFfHcWLkIa2JFWK4XvtSzS0yEWDmunqHXli1h3JlkbcQZXDZdcWxv+JK3Xsl5/UFDPZ0iGm7DAengYw==",[m
+[32m+[m[32m      "version": "7.6.5",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.5.tgz",[m
+[32m+[m[32m      "integrity": "sha512-/FPD0nUc9jH6rfFjji9IBqOz4pcSE3CsT1m7Ep6Mdb0LxSUMj8hgl6GomOvZzpNpAqqGaXA0P3VSrZLFzIhQrw==",[m
+       "hasInstallScript": true,[m
+       "license": "BSD-3-Clause",[m
+       "dependencies": {[m
+[36m@@ -2740,17 +2782,34 @@[m
+       }[m
+     },[m
+     "node_modules/type-is": {[m
+[31m-      "version": "2.0.1",[m
+[31m-      "resolved": "https://registry.npmjs.org/type-is/-/type-is-2.0.1.tgz",[m
+[31m-      "integrity": "sha512-OZs6gsjF4vMp32qrCbiVSkrFmXtG/AZhY3t0iAMrMBiAZyV9oALtXO8hsrHbMXF9x6L3grlFuwW2oAz7cav+Gw==",[m
+[32m+[m[32m      "version": "2.1.0",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/type-is/-/type-is-2.1.0.tgz",[m
+[32m+[m[32m      "integrity": "sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==",[m
+       "license": "MIT",[m
+       "dependencies": {[m
+[31m-        "content-type": "^1.0.5",[m
+[32m+[m[32m        "content-type": "^2.0.0",[m
+         "media-typer": "^1.1.0",[m
+         "mime-types": "^3.0.0"[m
+       },[m
+       "engines": {[m
+[31m-        "node": ">= 0.6"[m
+[32m+[m[32m        "node": ">= 18"[m
+[32m+[m[32m      },[m
+[32m+[m[32m      "funding": {[m
+[32m+[m[32m        "type": "opencollective",[m
+[32m+[m[32m        "url": "https://opencollective.com/express"[m
+[32m+[m[32m      }[m
+[32m+[m[32m    },[m
+[32m+[m[32m    "node_modules/type-is/node_modules/content-type": {[m
+[32m+[m[32m      "version": "2.0.0",[m
+[32m+[m[32m      "resolved": "https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz",[m
+[32m+[m[32m      "integrity": "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ==",[m
+[32m+[m[32m      "license": "MIT",[m
+[32m+[m[32m      "engines": {[m
+[32m+[m[32m        "node": ">=18"[m
+[32m+[m[32m      },[m
+[32m+[m[32m      "funding": {[m
+[32m+[m[32m        "type": "opencollective",[m
+[32m+[m[32m        "url": "https://opencollective.com/express"[m
+       }[m
+     },[m
+     "node_modules/undici-types": {[m
+[1mdiff --git a/package.json b/package.json[m
+[1mindex 4d342ab..0a77a54 100644[m
+[1m--- a/package.json[m
+[1m+++ b/package.json[m
+[36m@@ -21,8 +21,11 @@[m
+     "@google-cloud/cloud-sql-connector": "1.11.1",[m
+     "@google-cloud/kms": "5.5.1",[m
+     "@slack/bolt": "4.7.3",[m
+[32m+[m[32m    "body-parser": "^2.3.0",[m
+[32m+[m[32m    "brace-expansion": "^2.1.2",[m
+     "form-data": "4.0.6",[m
+     "pg": "8.22.0",[m
+[32m+[m[32m    "protobufjs": "^7.6.5",[m
+     "qs": "6.15.2",[m
+     "ws": "8.21.0"[m
+   },[m
+[36m@@ -31,5 +34,8 @@[m
+     "@slack/cli-hooks": "^1.3.2",[m
+     "@types/node": "^25.7.0"[m
+   },[m
+[31m-  "author": "regulus-j Jamal A. Al Badi"[m
+[32m+[m[32m  "author": "regulus-j Jamal A. Al Badi",[m
+[32m+[m[32m  "overrides": {[m
+[32m+[m[32m    "axios": "1.17.0"[m
+[32m+[m[32m  }[m
+ }[m
