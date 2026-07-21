@@ -33,7 +33,7 @@ jobs:
       - name: Test and audit
         run: |
           npm ci
-          npm test -- --test-timeout=30000
+          npm test -- --test-timeout=30000 --test-concurrency=1
           node --check app.js
           npm audit --omit=dev --audit-level=moderate
       - uses: google-github-actions/auth@v2
