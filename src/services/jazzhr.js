@@ -558,7 +558,7 @@ export function applicantEligibilityReason(item, { allowUnknown = false } = {}) 
   return ALLOWED_APPLICANT_STAGE_KEYS.has(applicantStageKey(stage)) ? '' : `unknown-stage:${normalizeStatusText(stage)}`
 }
 
-export function filterEligibleApplicants(items, { allowUnknown = true } = {}) {
+export function filterEligibleApplicants(items, { allowUnknown = false } = {}) {
   return (items || []).filter((item) => !applicantEligibilityReason(item, { allowUnknown }))
 }
 
