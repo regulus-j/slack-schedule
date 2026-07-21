@@ -62,7 +62,8 @@ test('Slack middleware blocks an unauthorized forged case action before next han
 
 test('rate-limit classes distinguish reads, mutations, side effects, and admin operations', () => {
   assert.equal(classifyRateLimit({ event: { type: 'app_home_opened' } }), 'read')
-  assert.equal(classifyRateLimit({ action: { action_id: 'candidate_search_submit' } }), 'mutation')
+  assert.equal(classifyRateLimit({ action: { action_id: 'candidate_search_submit' } }), 'read')
+  assert.equal(classifyRateLimit({ action: { action_id: 'applicant_select' } }), 'read')
   assert.equal(classifyRateLimit({ action: { action_id: 'cancel_interview' } }), 'sideEffect')
   assert.equal(classifyRateLimit({ command: { command: '/slack-scheduler' } }), 'admin')
 })

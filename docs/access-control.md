@@ -36,4 +36,6 @@ Production requires all three lists and `ACCESS_CONTROL_ENFORCED=true`.
 | Calendar, email, retry, cancel, complete | 10/10 minutes/user |
 | Administrative commands | 60/10 minutes/user |
 
+Candidate searches, selections, and modal navigation are treated as reads; only submitted state changes and external side effects consume mutation or side-effect limits.
+
 Rate limiting does not replace duplicate-send and state-transition guards.

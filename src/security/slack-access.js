@@ -19,6 +19,48 @@ const SIDE_EFFECT_VIEWS = new Set([
   'reschedule_approval_submit',
 ])
 
+const READ_ACTIONS = new Set([
+  'home_date_start',
+  'home_date_end',
+  'home_clear_filter',
+  'post_schedule_launcher',
+  'open_schedule_intake',
+  'view_case_details',
+  'open_schedule_tracker',
+  'candidate_search_submit',
+  'candidate_search_prev',
+  'candidate_search_next',
+  'applicant_select',
+  'toggle_applicant_details',
+  'account_key_select',
+  'google_account_select',
+  'event_type_select',
+  'custom_email_template_select',
+  'role_select',
+  'manual_candidate_toggle',
+  'stage_select',
+  'recruiter_select',
+  'recruiter_checkboxes',
+  'recruiter_people_search',
+  'hm_select',
+  'additional_recruiters_toggle',
+  'additional_recruiter_select',
+  'additional_hms_toggle',
+  'additional_hm_select',
+  'zoom_link_select',
+  'open_candidate_message_modal',
+  'open_reminder_message_modal',
+  'view_resume',
+  'open_finalize_modal',
+  'scheduling_open',
+  'scheduling_edit_attendees',
+  'scheduling_add_external',
+  'attendee_select',
+  'open_reschedule_modal',
+  'view_custom_invite_emails',
+  'view_calendar_details',
+])
+
 export function installSlackSecurityMiddleware(app, { config, store, logger }) {
   if (typeof app?.use !== 'function') return
   app.use(async (args) => {
@@ -119,6 +161,7 @@ export function classifyRateLimit(args) {
   const name = slackRequestName(args)
   if (name === '/slack-scheduler') return 'admin'
   if (SIDE_EFFECT_ACTIONS.has(name) || SIDE_EFFECT_VIEWS.has(name)) return 'sideEffect'
+  if (READ_ACTIONS.has(name)) return 'read'
   if (args.view || args.command || args.action || args.body?.view || args.body?.actions) return 'mutation'
   return 'read'
 }
