@@ -1,6 +1,11 @@
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import process from 'node:process';
+import {
+  OPERATING_WINDOW_END,
+  OPERATING_WINDOW_START,
+  SYDNEY_TIME_ZONE,
+} from './time.js'
 
 const DEFAULT_RUNTIME_DIR = path.join(process.cwd(), 'data', 'runtime');
 const DEFAULT_TIME_ZONES = [
@@ -84,6 +89,11 @@ export function loadConfig(env = process.env) {
     },
     scheduling: {
       timeZones: resolveTimeZoneList(value('SCHEDULING_TIME_ZONES')),
+    },
+    operatingWindow: {
+      timeZone: SYDNEY_TIME_ZONE,
+      startTime: OPERATING_WINDOW_START,
+      endTime: OPERATING_WINDOW_END,
     },
     notifications: {
       enabled: parseBoolean(value('AUTOMATED_NOTIFICATIONS_ENABLED'), false),

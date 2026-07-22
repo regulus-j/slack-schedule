@@ -27,6 +27,35 @@ test('health response exposes readiness only and sends security headers', async 
   }
 })
 
+test('health reports outside operating hours without touching the store', async () => {
+  let statsCalled = false
+  const server = createHttpServer({
+    config: {
+      port: 0,
+      publicBaseUrl: 'http://localhost',
+      operatingWindow: {
+        timeZone: 'Australia/Sydney',
+        startTime: '08:50',
+        endTime: '18:10',
+        now: '2026-07-20T08:11:00Z',
+      },
+    },
+    store: { async stats() { statsCalled = true; return { cases: 0 } } },
+    logger: silentLogger(),
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/health`)
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { ok: false, error: 'outside_operating_hours' })
+    assert.equal(statsCalled, false)
+  } finally {
+    server.close()
+    await once(server, 'close')
+  }
+})
+
 test('OAuth callback consumes opaque state once and rejects replay with HTML', async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'http-oauth-'))
   const store = createJsonStore(runtimeDir)

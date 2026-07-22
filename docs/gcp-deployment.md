@@ -42,7 +42,13 @@ Production environment approval must be enabled in GitHub.
 
 ## Availability
 
-Cloud Run runs at most one instance with instance-based CPU during Monday-Friday business hours (`Australia/Sydney`, 09:00-18:00). Scheduler jobs start PostgreSQL at 08:30, enable Cloud Run at 08:45, disable it at 18:30, and stop PostgreSQL at 19:00. Socket Mode reconnects on the next workday.
+The application operating window is Monday-Friday, 08:50-18:10 in `Australia/Sydney`. Cloud Scheduler starts PostgreSQL at 08:30, raises Cloud Run minimum instances to 1 at 08:50, lowers it to 0 at 18:10, and stops PostgreSQL at 18:30. The database buffer allows Cloud Run to initialize and shut down cleanly. Socket Mode reconnects on the next workday.
+
+The application rejects Slack commands and interactions outside this window. `/health` returns `503` with `outside_operating_hours` outside the window, and startup skips JazzHR refresh, directory preload, and notification polling. Sydney's IANA timezone is used so daylight-saving transitions are handled automatically.
+
+The schedules reduce runtime compute cost but do not pause every billing item. Persistent disks, VPC Access connectors, Artifact Registry storage, Secret Manager, KMS, GCS backup storage, Cloud Scheduler, and retained static IPs remain billable. Configure a project billing budget separately with the billing account ID; budgets notify on thresholds but do not automatically disable all resources.
+
+To enable the Terraform-managed budget, add these optional GitHub `production` environment variables: `BILLING_ACCOUNT_ID`, `BUDGET_AMOUNT`, and `BUDGET_CURRENCY_CODE`. `BUDGET_AMOUNT=0` leaves budget creation disabled. The currency must match the billing account currency. Threshold notifications are created at 50%, 90%, and 100% of the monthly budget.
 
 ## Backup and restore
 

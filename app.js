@@ -16,6 +16,7 @@ import {
   backfillNotificationJobs,
   startNotificationWorker,
 } from './src/workflow/notifications.js'
+import { isWithinOperatingWindow } from './src/time.js'
 
 export async function main() {
   const config = loadConfig()
@@ -42,22 +43,35 @@ export async function main() {
   const store = await createStore(config)
   await store.init()
 
-  await loadTalentDirectory(config, store)
+  const operatingWindowOpen = isWithinOperatingWindow(new Date(), config.operatingWindow)
+  if (!operatingWindowOpen) {
+    logger.info('application_operating_window_closed', {
+      timeZone: config.operatingWindow.timeZone,
+      startTime: config.operatingWindow.startTime,
+      endTime: config.operatingWindow.endTime,
+    })
+  }
+
+  if (operatingWindowOpen) await loadTalentDirectory(config, store)
 
   // Load JazzHR data for each configured account
   const accounts = config.jazzhr.accounts || []
-  for (const account of accounts) {
-    await refreshJazzhrOpenJobs({ config, logger, accountKey: account.key })
+  if (operatingWindowOpen) {
+    for (const account of accounts) {
+      await refreshJazzhrOpenJobs({ config, logger, accountKey: account.key })
+    }
   }
   let jazzhrHydration = { records: 0 }
-  for (const account of accounts) {
-    const result = await hydrateJazzhrCacheFromStore({ store, logger, accountKey: account.key })
-    jazzhrHydration.records += result.records
+  if (operatingWindowOpen) {
+    for (const account of accounts) {
+      const result = await hydrateJazzhrCacheFromStore({ store, logger, accountKey: account.key })
+      jazzhrHydration.records += result.records
+    }
   }
   applyTestDirectoryData(config, logger)
 
   // Load connected Google accounts for the intake modal picker
-  if (typeof store.listGoogleAccounts === 'function') {
+  if (operatingWindowOpen && typeof store.listGoogleAccounts === 'function') {
     try {
       const googleAccts = await store.listGoogleAccounts()
       setGoogleAccounts(googleAccts)
@@ -98,17 +112,21 @@ export async function main() {
   await app.start()
   logger.info('slack_app_started', { status: 'started' })
 
-  if (config.notifications.enabled) {
+  if (operatingWindowOpen && config.notifications.enabled) {
     const backfill = await backfillNotificationJobs({ store, logger })
     logger.info('notification_jobs_backfilled', backfill)
   }
-  const notificationWorker = startNotificationWorker({ store, client: app.client, config, logger })
+  const notificationWorker = operatingWindowOpen
+    ? startNotificationWorker({ store, client: app.client, config, logger })
+    : { stop() {} }
 
-  ensureSlackDirectory({ client: app.client, config, logger }).catch((error) => {
-    logger.warn('slack_directory_startup_preload_failed', slackApiErrorDetails(error))
-  })
+  if (operatingWindowOpen) {
+    ensureSlackDirectory({ client: app.client, config, logger }).catch((error) => {
+      logger.warn('slack_directory_startup_preload_failed', slackApiErrorDetails(error))
+    })
+  }
 
-  if (config.jazzhr.refreshOnStartup || jazzhrHydration.records === 0) {
+  if (operatingWindowOpen && (config.jazzhr.refreshOnStartup || jazzhrHydration.records === 0)) {
     // Serialize per-account full refreshes to avoid hitting JazzHR rate limits.
     // Fire-and-forget so the app starts serving requests immediately.
     (async () => {
@@ -116,7 +134,7 @@ export async function main() {
         await refreshJazzhrCache({ config, logger, store, throwOnError: false, accountKey: account.key })
       }
     })().catch((err) => logger.warn('jazzhr_startup_refresh_async_failed', { error: err.message }))
-  } else {
+  } else if (operatingWindowOpen) {
     logger.info('jazzhr_startup_refresh_skipped', {
       reason: 'persisted_cache_available',
       records: jazzhrHydration.records,

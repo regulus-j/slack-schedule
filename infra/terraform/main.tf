@@ -6,10 +6,36 @@ locals {
   secret_ids     = var.secret_names
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 resource "google_project_service" "apis" {
-  for_each           = toset(["artifactregistry.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com", "run.googleapis.com", "secretmanager.googleapis.com", "storage.googleapis.com", "vpcaccess.googleapis.com", "cloudscheduler.googleapis.com", "serviceusage.googleapis.com"])
+  for_each           = toset(["artifactregistry.googleapis.com", "billingbudgets.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com", "run.googleapis.com", "secretmanager.googleapis.com", "storage.googleapis.com", "vpcaccess.googleapis.com", "cloudscheduler.googleapis.com", "serviceusage.googleapis.com"])
   service            = each.value
   disable_on_destroy = false
+}
+
+resource "google_billing_budget" "project" {
+  count           = var.billing_account_id != "" && var.budget_amount > 0 ? 1 : 0
+  billing_account = var.billing_account_id
+  display_name    = "${local.service_name}-${var.environment}-monthly"
+
+  budget_filter {
+    projects = ["projects/${data.google_project.current.number}"]
+  }
+
+  amount {
+    specified_amount {
+      currency_code = var.budget_currency_code
+      units         = tostring(var.budget_amount)
+    }
+  }
+
+  threshold_rules { threshold_percent = 0.5 }
+  threshold_rules { threshold_percent = 0.9 }
+  threshold_rules { threshold_percent = 1.0 }
+  depends_on = [google_project_service.apis]
 }
 
 resource "google_artifact_registry_repository" "app" {
@@ -178,10 +204,13 @@ resource "google_cloud_run_v2_service" "app" {
   location             = var.region
   deletion_protection  = var.environment == "production"
   invoker_iam_disabled = true
+  lifecycle {
+    ignore_changes = [template[0].scaling[0].min_instance_count]
+  }
   template {
     service_account = google_service_account.app.email
     scaling {
-      min_instance_count = 1
+      min_instance_count = 0
       max_instance_count = 1
     }
     max_instance_request_concurrency = 80
@@ -420,7 +449,7 @@ resource "google_cloud_scheduler_job" "db_start" {
 resource "google_cloud_scheduler_job" "run_on" {
   name      = "${local.service_name}-run-on"
   region    = var.region
-  schedule  = "45 8 * * 1-5"
+  schedule  = "50 8 * * 1-5"
   time_zone = "Australia/Sydney"
   http_target {
     uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.app.name}?updateMask=template.scaling.minInstanceCount"
@@ -433,7 +462,7 @@ resource "google_cloud_scheduler_job" "run_on" {
 resource "google_cloud_scheduler_job" "run_off" {
   name      = "${local.service_name}-run-off"
   region    = var.region
-  schedule  = "30 18 * * 1-5"
+  schedule  = "10 18 * * 1-5"
   time_zone = "Australia/Sydney"
   http_target {
     uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.app.name}?updateMask=template.scaling.minInstanceCount"
@@ -446,7 +475,7 @@ resource "google_cloud_scheduler_job" "run_off" {
 resource "google_cloud_scheduler_job" "db_stop" {
   name      = "${local.service_name}-db-stop"
   region    = var.region
-  schedule  = "0 19 * * 1-5"
+  schedule  = "30 18 * * 1-5"
   time_zone = "Australia/Sydney"
   http_target {
     uri         = "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/zones/${var.region}-a/instances/${google_compute_instance.db.name}/stop"

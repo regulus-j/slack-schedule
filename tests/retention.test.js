@@ -39,6 +39,7 @@ test('retention dry-run reports records and legal holds prevent deletion', async
     assert.equal(await store.getCase(removable.id), undefined)
     assert.ok(await store.getCase(held.id))
   } finally {
+    await store.close?.()
     await rm(runtimeDir, { recursive: true, force: true })
   }
 })

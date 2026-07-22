@@ -81,7 +81,10 @@ jobs:
             -var="role_assignment_export_url=${{ vars.ROLE_ASSIGNMENT_EXPORT_URL }}" \
             -var="role_assignment_export_file_id=${{ vars.ROLE_ASSIGNMENT_EXPORT_FILE_ID }}" \
             -var="role_assignment_export_sheet_name=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME }}" \
-            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}"
+            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}" \
+            -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
+            -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
+            -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
       - name: Terraform apply
         working-directory: infra/terraform
         run: |
@@ -109,12 +112,23 @@ jobs:
             -var="role_assignment_export_url=${{ vars.ROLE_ASSIGNMENT_EXPORT_URL }}" \
             -var="role_assignment_export_file_id=${{ vars.ROLE_ASSIGNMENT_EXPORT_FILE_ID }}" \
             -var="role_assignment_export_sheet_name=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME }}" \
-            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}"
+            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}" \
+            -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
+            -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
+            -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
       - name: Deploy to Cloud Run
         run: |
           IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}"
           gcloud run deploy slack-scheduler --region "${{ vars.GCP_REGION }}" --image "${IMAGE}" --quiet
           gcloud run jobs execute slack-scheduler-migrate --region "${{ vars.GCP_REGION }}" --wait
           URL=$(gcloud run services describe slack-scheduler --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
-          curl --fail --silent "${URL}/health"
+          SYDNEY_WEEKDAY=$(TZ=Australia/Sydney date +%u)
+          SYDNEY_HOUR=$(TZ=Australia/Sydney date +%H)
+          SYDNEY_MINUTE=$(TZ=Australia/Sydney date +%M)
+          SYDNEY_MINUTES=$((10#${SYDNEY_HOUR} * 60 + 10#${SYDNEY_MINUTE}))
+          if [ "${SYDNEY_WEEKDAY}" -le 5 ] && [ "${SYDNEY_MINUTES}" -ge 530 ] && [ "${SYDNEY_MINUTES}" -le 1090 ]; then
+            curl --fail --silent "${URL}/health"
+          else
+            echo "Outside Australia/Sydney operating window; Cloud Run health endpoint is intentionally not ready."
+          fi
           echo "Deployed ${IMAGE} to ${URL}"

@@ -234,6 +234,9 @@ async function createStoreFixture() {
   return {
     store,
     statePath: path.join(runtimeDir, 'state.json'),
-    cleanup: () => rm(runtimeDir, { recursive: true, force: true }),
+    cleanup: async () => {
+      await store.close?.()
+      await rm(runtimeDir, { recursive: true, force: true })
+    },
   }
 }

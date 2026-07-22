@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { URL } from 'node:url'
 import { exchangeGoogleOAuthCode } from './services/google.js'
 import { consumeOAuthState } from './security/oauth-state.js'
+import { isWithinOperatingWindow } from './time.js'
 import crypto from 'node:crypto'
 
 function sendJson(res, status, body, { noStore = false } = {}) {
@@ -100,6 +101,10 @@ export function createHttpServer({ config, store, logger, slackClient }) {
     if (url.pathname === '/health') {
       if (req.method !== 'GET') {
         sendJson(res, 405, { ok: false, error: 'method_not_allowed' })
+        return
+      }
+      if (config.operatingWindow && !isWithinOperatingWindow(config.operatingWindow.now || new Date(), config.operatingWindow)) {
+        sendJson(res, 503, { ok: false, error: 'outside_operating_hours' })
         return
       }
       try {

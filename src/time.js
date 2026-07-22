@@ -1,7 +1,37 @@
 export const PH_TIME_ZONE = 'Asia/Manila';
 export const SYDNEY_TIME_ZONE = 'Australia/Sydney';
+export const OPERATING_WINDOW_START = '08:50';
+export const OPERATING_WINDOW_END = '18:10';
 export const BUSINESS_DAY_START = '07:00';
 export const BUSINESS_DAY_END = '16:00';
+
+export function isWithinOperatingWindow(
+  dateLike = new Date(),
+  {
+    timeZone = SYDNEY_TIME_ZONE,
+    startTime = OPERATING_WINDOW_START,
+    endTime = OPERATING_WINDOW_END,
+  } = {},
+) {
+  const date = new Date(dateLike)
+  if (Number.isNaN(date.getTime())) return false
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const values = Object.fromEntries(
+    parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]),
+  )
+  if (!['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(values.weekday)) return false
+  const selectedMinutes = Number(values.hour) * 60 + Number(values.minute)
+  const startMinutes = parseTimeToMinutes(startTime)
+  const endMinutes = parseTimeToMinutes(endTime)
+  if (startMinutes === null || endMinutes === null) return false
+  return selectedMinutes >= startMinutes && selectedMinutes <= endMinutes
+}
 
 export function formatDateTimeInTimeZone(dateLike, timeZone) {
   const date = new Date(dateLike);

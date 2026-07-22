@@ -60,6 +60,37 @@ test('Slack middleware blocks an unauthorized forged case action before next han
   assert.equal(nextCalled, false)
 })
 
+test('Slack middleware blocks authorized requests outside operating hours', async () => {
+  let middleware
+  installSlackSecurityMiddleware({
+    use(handler) { middleware = handler },
+  }, {
+    config: {
+      operatingWindow: {
+        timeZone: 'Australia/Sydney',
+        startTime: '00:00',
+        endTime: '00:00',
+        now: '2026-07-20T01:00:00Z',
+      },
+      security: {
+        accessControlEnforced: true,
+        recruitmentUserIds: ['URECRUITER'],
+        adminUserIds: [],
+      },
+    },
+    store: {},
+    logger: { info() {}, warn() {} },
+  })
+  let nextCalled = false
+  await middleware({
+    action: { action_id: 'open_schedule_intake' },
+    body: { user: { id: 'URECRUITER' }, channel: { id: 'C123' } },
+    ack: async () => {},
+    next: async () => { nextCalled = true },
+  })
+  assert.equal(nextCalled, false)
+})
+
 test('rate-limit classes distinguish reads, mutations, side effects, and admin operations', () => {
   assert.equal(classifyRateLimit({ event: { type: 'app_home_opened' } }), 'read')
   assert.equal(classifyRateLimit({ action: { action_id: 'candidate_search_submit' } }), 'read')

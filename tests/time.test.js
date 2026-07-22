@@ -3,12 +3,31 @@ import assert from 'node:assert/strict';
 import {
   BUSINESS_DAY_END,
   BUSINESS_DAY_START,
+  OPERATING_WINDOW_END,
+  OPERATING_WINDOW_START,
   SYDNEY_TIME_ZONE,
   buildCalendarEventDraft,
   formatSydneyDateTime,
   isTimeWithinBusinessHours,
+  isWithinOperatingWindow,
   isValidDateRange,
 } from '../src/time.js';
+
+test('enforces the Sydney operating window on weekdays', () => {
+  assert.equal(isWithinOperatingWindow('2026-07-19T22:49:00Z'), false)
+  assert.equal(isWithinOperatingWindow('2026-07-19T22:50:00Z'), true)
+  assert.equal(isWithinOperatingWindow('2026-07-20T08:10:00Z'), true)
+  assert.equal(isWithinOperatingWindow('2026-07-20T08:11:00Z'), false)
+  assert.equal(OPERATING_WINDOW_START, '08:50')
+  assert.equal(OPERATING_WINDOW_END, '18:10')
+})
+
+test('blocks weekends and follows Sydney daylight saving time', () => {
+  assert.equal(isWithinOperatingWindow('2026-07-18T00:00:00Z'), false)
+  assert.equal(isWithinOperatingWindow('2026-01-04T21:50:00Z'), true)
+  assert.equal(isWithinOperatingWindow('2026-01-05T07:10:00Z'), true)
+  assert.equal(SYDNEY_TIME_ZONE, 'Australia/Sydney')
+})
 
 test('builds a 30-minute calendar event with attendees', () => {
   const event = buildCalendarEventDraft({

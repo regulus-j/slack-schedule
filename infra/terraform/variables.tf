@@ -138,6 +138,28 @@ variable "monitoring_email" {
   default = ""
 }
 
+variable "billing_account_id" {
+  type        = string
+  description = "Billing account ID for the optional project budget"
+  default     = ""
+}
+
+variable "budget_amount" {
+  type        = number
+  description = "Monthly budget amount in the billing account currency; zero disables budget creation"
+  default     = 0
+  validation {
+    condition     = var.budget_amount >= 0 && floor(var.budget_amount) == var.budget_amount
+    error_message = "budget_amount must be a non-negative whole number"
+  }
+}
+
+variable "budget_currency_code" {
+  type        = string
+  description = "ISO 4217 currency code for the billing account budget"
+  default     = "AUD"
+}
+
 variable "secret_next_rotation_time" {
   type        = string
   description = "RFC3339 timestamp used to start the recurring 90-day secret rotation schedule"
