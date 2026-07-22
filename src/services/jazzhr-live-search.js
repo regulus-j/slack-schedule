@@ -312,6 +312,8 @@ function applicantRoleRecords(item) {
   return jobs.map((job) => ({
     ...item,
     jobs: job,
+    status: firstValue(job, ['status', 'job_status', 'jobStatus']),
+    applicant_status: firstValue(job, ['applicant_status', 'applicantStatus']),
     job_id: job.job_id || job.id || '',
     job_title: job.job_title || job.title || item.job_title || '',
     applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || '',
@@ -319,14 +321,14 @@ function applicantRoleRecords(item) {
     workflow_step: job.workflow_step || job.workflowStep || item.workflow_step || '',
     workflow_category: job.workflow_category || job.workflowCategory ||
       job.workflow_step_category || job.category ||
-      item.workflow_category || item.workflow_step_category || '',
+      '',
     recruiter_id: job.recruiter_id || item.recruiter_id || '',
     recruiter_email: job.recruiter_email || job.recruiterEmail || item.recruiter_email || '',
     recruiter_name: job.recruiter_name || job.recruiterName || item.recruiter_name || '',
     apply_date: job.apply_date || job.applyDate || item.apply_date || item.applyDate,
     date_applied: job.date_applied || job.dateApplied || item.date_applied || item.dateApplied,
-    disposition: job.disposition || job.disposition_name || item.disposition || '',
-    disposition_status: job.disposition_status || job.dispositionStatus || item.disposition_status || '',
+    disposition: job.disposition || job.disposition_name || '',
+    disposition_status: job.disposition_status || job.dispositionStatus || '',
   }))
 }
 

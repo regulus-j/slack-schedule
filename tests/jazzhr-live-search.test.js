@@ -238,6 +238,36 @@ test('live search supports object-form jobs and does not drop missing recruiter 
   assert.deepEqual(result.results.map((item) => item.fullName), ['Alex Missing', 'Alex Match'])
 })
 
+test('live search keeps an active nested role when the applicant has a rejected top-level status', async () => {
+  const fetchFn = async () => response(200, [
+    applicant('dannella-1', 'Dannella', 'Lapitan', {
+      status: 'Rejected',
+      jobs: {
+        job_id: 'loan-associate',
+        job_title: 'Loan Associate',
+        applicant_progress: 'Resume Screening',
+      },
+    }),
+  ])
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'dannella lapitan',
+    filters: { roleId: 'loan-associate' },
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.equal(result.resultCount, 1)
+  assert.equal(result.results[0].fullName, 'Dannella Lapitan')
+  assert.equal(result.results[0].jazzhrJobId, 'loan-associate')
+})
+
 test('live search excludes rejected candidates without excluding screening', async () => {
   const fetchFn = async () => response(200, [
     applicant('alex-1', 'Alex', 'Screening', { job_id: 'job-1', applicant_progress: 'Resume Screening' }),
