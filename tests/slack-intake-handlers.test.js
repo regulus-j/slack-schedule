@@ -186,6 +186,104 @@ test('cached candidate selection hydrates exact JazzHR application details and c
   assert.equal(JSON.parse(updatedView.private_metadata).remoteUpdateStatus, '')
 })
 
+test('ineligible candidate selection stays in the modal and does not post an ephemeral message', async () => {
+  const candidate = {
+    id: 'applicant-dannella::loan-associate',
+    candidateKey: 'dannella::loan-associate',
+    jazzhrApplicationId: 'dannella',
+    jazzhrJobId: 'loan-associate',
+    fullName: 'Dannella Lapitan',
+    firstName: 'Dannella',
+    lastName: 'Lapitan',
+    email: 'dannella@example.com',
+    stage: 'Resume Screening',
+    jobTitle: 'Loan Associate',
+    source: 'jazzhr',
+  }
+  setApplicants([candidate])
+  setJazzhrJobs([{ id: 'loan-associate', title: 'Loan Associate', status: 'Open' }])
+
+  const actions = new Map()
+  const updates = []
+  let ephemeralMessages = 0
+  const app = {
+    action(id, handler) { actions.set(id, handler) },
+    command() {},
+    event() {},
+    options() {},
+    view() {},
+    message() {},
+  }
+  registerSlackHandlers(app, {
+    config: {
+      jazzhr: { accounts: [{ key: 'default', apiKey: 'api-key' }], liveSearch: {} },
+      slack: {},
+      google: {},
+      scheduling: { timeZones: ['Australia/Sydney'] },
+    },
+    store: {},
+    logger: silentLogger(),
+  })
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        id: 'dannella',
+        first_name: 'Dannella',
+        last_name: 'Lapitan',
+        jobs: {
+          job_id: 'loan-associate',
+          job_title: 'Loan Associate',
+          applicant_progress: 'Resume Screening - Rejected by Recruiter',
+        },
+      }
+    },
+  })
+
+  try {
+    await actions.get('applicant_select')({
+      ack: async () => {},
+      body: {
+        user: { id: 'U1' },
+        actions: [{ selected_option: { value: candidate.id } }],
+        view: {
+          id: 'V1',
+          hash: 'h1',
+          private_metadata: JSON.stringify({ channelId: 'C1', eventType: '1st-interview', roleId: 'loan-associate' }),
+          state: {
+            values: {
+              event_type_block: { event_type_select: { selected_option: { value: '1st-interview' } } },
+              role_block: { role_select: { selected_option: { value: 'loan-associate' } } },
+              applicant_block: { applicant_select: { selected_option: { value: candidate.id } } },
+            },
+          },
+        },
+      },
+      client: {
+        views: {
+          async update(payload) {
+            updates.push(payload)
+            return { view: { ...payload.view, id: 'V1', hash: `h${updates.length}` } }
+          },
+        },
+        chat: {
+          async postEphemeral() { ephemeralMessages++ },
+        },
+      },
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+    setApplicants([])
+    setJazzhrJobs([])
+  }
+
+  assert.equal(ephemeralMessages, 0)
+  assert.ok(updates.some((payload) => JSON.stringify(payload.view.blocks).includes('Resume Screening - Rejected by Recruiter')))
+  assert.equal(JSON.parse(updates.at(-1).view.private_metadata).applicant, '')
+})
+
 test('recruiter checkboxes promote the next primary and preserve a manual Zoom link', async () => {
   setApplicants([])
   setHiringManagers([])

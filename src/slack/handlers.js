@@ -918,11 +918,6 @@ export function registerSlackHandlers(app, context) {
               jazzhrApplicationId: applicant.jazzhrApplicationId,
               inactiveReason,
             })
-            await client.chat.postEphemeral({
-              channel: resolvePostingChannel(config, getChannelId(body.view) || body.user.id),
-              user: body.user.id,
-              text: `This application is not available for scheduling because its JazzHR stage is "${applicant.stage || inactiveReason}".`,
-            })
             await refreshIntakeModalAfterAsync({
               client,
               body: updatedBody,
@@ -931,7 +926,7 @@ export function registerSlackHandlers(app, context) {
               selectedId: '',
               draftOverrides: {
                 remoteUpdateStatus: 'error',
-                remoteUpdateMessage: 'The selected JazzHR application is not eligible for scheduling. Choose another application.',
+                remoteUpdateMessage: `This application is not available for scheduling because its JazzHR workflow stage is "${applicant.stage || inactiveReason}". Choose another application.`,
               },
               timeZones: schedulingTimeZones,
               defaultTimeZone,

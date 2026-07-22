@@ -54,6 +54,35 @@ test('live search sends candidate name to the applicants endpoint', async () => 
   assert.equal(requestedUrls[0].searchParams.get('name'), 'hanah binwihan')
 })
 
+test('live search sends the selected JazzHR role id to the applicants endpoint', async () => {
+  let requestedUrl
+  const fetchFn = async (url) => {
+    requestedUrl = new URL(String(url))
+    return response(200, [applicant('loan-1', 'Dannella', 'Lapitan', {
+      job_id: 'loan-associate',
+      job_title: 'Loan Associate',
+      applicant_progress: 'Resume Screening',
+    })])
+  }
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'dannella lapitan',
+    filters: { roleId: 'loan-associate' },
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.equal(result.resultCount, 1)
+  assert.equal(requestedUrl.searchParams.get('name'), 'dannella lapitan')
+  assert.equal(requestedUrl.searchParams.get('job_id'), 'loan-associate')
+})
+
 test('live search scans later JazzHR pages for matching candidates', async () => {
   const requestedUrls = []
   const logger = testLogger()

@@ -71,6 +71,12 @@ test('applicant eligibility accepts configured active stages and spelling varian
   assert.equal(applicantEligibilityReason({ stage: 'Completed 1st Interview', workflowCategory: 'Not Hired' }), 'workflow-category:not hired')
 })
 
+test('employment metadata is not treated as an applicant workflow stage', () => {
+  assert.equal(applicantEligibilityReason({ stage: 'Full-Time' }), '')
+  assert.equal(applicantEligibilityReason({ stage: 'Part-Time' }), '')
+  assert.equal(applicantEligibilityReason({ stage: 'Full-Time', workflow_step: 'Resume Screening' }), '')
+})
+
 test('filterEligibleApplicants removes inactive indexed candidates', () => {
   const results = filterEligibleApplicants([
     applicant({ id: 'active', stage: '1st Interview' }),

@@ -76,6 +76,16 @@ export const ALLOWED_APPLICANT_STAGE_KEYS = new Set([
   'joboffer',
 ]);
 const INACTIVE_WORKFLOW_CATEGORY_KEYS = new Set(['nothired', 'hired', 'inactive', 'rejected']);
+const NON_WORKFLOW_STAGE_KEYS = new Set([
+  'fulltime',
+  'parttime',
+  'casual',
+  'contract',
+  'contractor',
+  'temporary',
+  'permanent',
+  'employmenttype',
+])
 
 export async function searchCachedApplicants(query, accountKey = DEFAULT_ACCOUNT) {
   return searchApplicants(query, getApplicants(accountKey));
@@ -498,11 +508,11 @@ function applicantRoleRecords(item) {
     jobs: job,
     status: firstValue(job, ['status', 'job_status', 'jobStatus']),
     applicant_status: firstValue(job, ['applicant_status', 'applicantStatus']),
-    job_id: job.job_id || job.id || '',
-    job_title: job.job_title || job.title || item.job_title || '',
-    applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || '',
-    workflow_step_id: job.workflow_step_id || item.workflow_step_id || '',
-    workflow_step: job.workflow_step || job.workflowStep || item.workflow_step || '',
+    job_id: job.job_id || job.jobId || job.id || '',
+    job_title: job.job_title || job.jobTitle || job.title || item.job_title || item.jobTitle || '',
+    applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || item.applicantProgress || '',
+    workflow_step_id: job.workflow_step_id || job.workflowStepId || item.workflow_step_id || item.workflowStepId || '',
+    workflow_step: job.workflow_step || job.workflowStep || item.workflow_step || item.workflowStep || '',
     workflow_category: job.workflow_category || job.workflowCategory ||
       job.workflow_step_category || job.category ||
       '',
@@ -538,7 +548,7 @@ export function inactiveApplicantReason(item) {
     const matchedTerm = INACTIVE_APPLICANT_TERMS.find((term) => normalized.includes(term));
     if (matchedTerm) return matchedTerm;
   }
-  const stage = firstValue(item, ['stage', 'applicantProgress', 'applicant_progress', 'workflowStep', 'workflow_step']);
+  const stage = resolveWorkflowStage(item)
   if (stage && !ALLOWED_APPLICANT_STAGE_KEYS.has(applicantStageKey(stage))) {
     return `unknown-stage:${normalizeStatusText(stage)}`;
   }
@@ -549,15 +559,29 @@ export function applicantEligibilityReason(item, { allowUnknown = false } = {}) 
   const inactiveReason = inactiveApplicantReason(item)
   if (inactiveReason) return inactiveReason
 
-  const stage = firstValue(item, [
-    'stage',
-    'applicantProgress',
-    'applicant_progress',
-    'workflowStep',
-    'workflow_step',
-  ])
-  if (!stage) return allowUnknown ? '' : 'unknown-stage'
+  const stage = resolveWorkflowStage(item)
+  if (!stage) {
+    const rawStage = firstValue(item, ['stage', 'applicantProgress', 'applicant_progress', 'workflowStep', 'workflow_step'])
+    if (rawStage && NON_WORKFLOW_STAGE_KEYS.has(statusKey(rawStage))) return ''
+    return allowUnknown ? '' : 'unknown-stage'
+  }
   return ALLOWED_APPLICANT_STAGE_KEYS.has(applicantStageKey(stage)) ? '' : `unknown-stage:${normalizeStatusText(stage)}`
+}
+
+function resolveWorkflowStage(item = {}) {
+  const sources = item?.selectedJob || item?.item
+    ? [item.selectedJob, item.item]
+    : [item]
+  const values = sources.flatMap((source) => [
+    source?.applicant_progress,
+    source?.applicantProgress,
+    source?.workflow_step,
+    source?.workflowStep,
+    source?.stage,
+  ])
+  return values
+    .map((value) => String(value || '').trim())
+    .find((value) => value && !NON_WORKFLOW_STAGE_KEYS.has(statusKey(value))) || ''
 }
 
 export function filterEligibleApplicants(items, { allowUnknown = false } = {}) {
@@ -816,13 +840,13 @@ function mapApplicantDetail(item, jobId = '') {
   const resumeUrl = item.resume_link || item.resume || item.resume_url || item.resumeUrl || '';
   const resumeText = item.resume_text || item.resumeText || '';
   const jobs = normalizeApplicantJobs(item.jobs)
-  const selectedJob = jobs.find((job) => String(job?.job_id || job?.id || '').trim() === String(jobId || '').trim()) ||
+  const selectedJob = jobs.find((job) => String(job?.job_id || job?.jobId || job?.id || '').trim() === String(jobId || '').trim()) ||
     (jobs.length === 1 ? jobs[0] : null) ||
     {}
 
   return {
     jazzhrApplicationId: String(item.id || item.applicant_id || '').trim(),
-    jazzhrJobId: String(selectedJob.job_id || selectedJob.id || jobId || '').trim(),
+    jazzhrJobId: String(selectedJob.job_id || selectedJob.jobId || selectedJob.id || jobId || '').trim(),
     firstName: item.first_name || item.firstName || '',
     lastName: item.last_name || item.lastName || '',
     fullName: item.name || item.full_name || item.fullName || '',
@@ -838,10 +862,10 @@ function mapApplicantDetail(item, jobId = '') {
       .join(', '),
     resumeUrl,
     resumeText: resumeText ? resumeText.slice(0, 500) : '',
-    jobTitle: selectedJob.job_title || selectedJob.title || item.job_title || item.jobTitle || item.title || '',
-    stage: selectedJob.applicant_progress || selectedJob.applicantProgress || item.applicant_progress || item.applicantProgress || item.stage || '',
-    workflowStepId: selectedJob.workflow_step_id || selectedJob.workflowStepId || item.workflow_step_id || '',
-    workflowStep: selectedJob.workflow_step || selectedJob.workflowStep || item.workflow_step || '',
+    jobTitle: selectedJob.job_title || selectedJob.jobTitle || selectedJob.title || item.job_title || item.jobTitle || item.title || '',
+    stage: resolveWorkflowStage({ selectedJob, item }),
+    workflowStepId: selectedJob.workflow_step_id || selectedJob.workflowStepId || item.workflow_step_id || item.workflowStepId || '',
+    workflowStep: selectedJob.workflow_step || selectedJob.workflowStep || item.workflow_step || item.workflowStep || '',
     workflowCategory: selectedJob.workflow_category || selectedJob.workflowCategory ||
       selectedJob.workflow_step_category || selectedJob.category ||
       item.workflow_category || item.workflow_step_category || '',

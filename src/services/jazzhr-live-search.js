@@ -43,6 +43,7 @@ export function createJazzhrLiveSearchManager({
       results: [],
       resultIds: new Set(),
       filters: normalizeFilters(filters),
+      excludedReasons: {},
       complete: false,
       error: '',
       searching: false,
@@ -111,6 +112,8 @@ export function createJazzhrLiveSearchManager({
         logger.warn?.('jazzhr_live_search_failed', {
           sessionId: session.id,
           query: session.query,
+          roleId: session.filters.roleId,
+          excludedReasons: session.excludedReasons,
           error: error.message,
         })
       })
@@ -138,6 +141,7 @@ export function createJazzhrLiveSearchManager({
         apiKey,
         page: session.jazzhrPageScanned,
         query: session.query,
+        roleId: session.filters.roleId,
         fetchFn,
         logger,
         sleepFn,
@@ -146,9 +150,11 @@ export function createJazzhrLiveSearchManager({
       logger.info?.('jazzhr_live_search_page_scanned', {
         sessionId: session.id,
         query: session.query,
+        roleId: session.filters.roleId,
         page: result.page,
         count: result.items.length,
         matches: session.results.length,
+        excludedReasons: session.excludedReasons,
       })
       if (result.items.length < 100) {
         session.complete = true
@@ -189,6 +195,7 @@ export async function fetchApplicantListPage({
   apiKey,
   page = 1,
   query = '',
+  roleId = '',
   fetchFn = globalThis.fetch,
   logger = console,
   sleepFn = sleep,
@@ -199,6 +206,7 @@ export async function fetchApplicantListPage({
     const url = new URL(`${BASE}${pathname}`)
     url.searchParams.set('apikey', apiKey)
     if (query) url.searchParams.set('name', query)
+    if (roleId) url.searchParams.set('job_id', roleId)
     const response = await fetchFn(String(url))
 
     if (response.ok) {
@@ -229,7 +237,11 @@ export async function fetchApplicantListPage({
 function addMatches(session, pageResult) {
   pageResult.items.forEach((item, index) => {
     for (const record of applicantRoleRecords(item)) {
-      if (applicantEligibilityReason(record, { allowUnknown: true })) continue
+      const eligibilityReason = applicantEligibilityReason(record, { allowUnknown: true })
+      if (eligibilityReason) {
+        session.excludedReasons[eligibilityReason] = (session.excludedReasons[eligibilityReason] || 0) + 1
+        continue
+      }
       const candidate = mapLiveApplicant(record, index)
       if (!candidate) continue
       if (!candidateMatchesFilters(candidate, session.filters)) continue
@@ -314,11 +326,11 @@ function applicantRoleRecords(item) {
     jobs: job,
     status: firstValue(job, ['status', 'job_status', 'jobStatus']),
     applicant_status: firstValue(job, ['applicant_status', 'applicantStatus']),
-    job_id: job.job_id || job.id || '',
-    job_title: job.job_title || job.title || item.job_title || '',
-    applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || '',
-    workflow_step_id: job.workflow_step_id || item.workflow_step_id || '',
-    workflow_step: job.workflow_step || job.workflowStep || item.workflow_step || '',
+    job_id: job.job_id || job.jobId || job.id || '',
+    job_title: job.job_title || job.jobTitle || job.title || item.job_title || item.jobTitle || '',
+    applicant_progress: job.applicant_progress || job.applicantProgress || item.applicant_progress || item.applicantProgress || '',
+    workflow_step_id: job.workflow_step_id || job.workflowStepId || item.workflow_step_id || item.workflowStepId || '',
+    workflow_step: job.workflow_step || job.workflowStep || item.workflow_step || item.workflowStep || '',
     workflow_category: job.workflow_category || job.workflowCategory ||
       job.workflow_step_category || job.category ||
       '',
