@@ -876,6 +876,7 @@ export function registerSlackHandlers(app, context) {
     const liveCandidate = candidateSearchMgr.getCandidate(metadata.candidateSearchSessionId, selectedId)
     const indexedCandidate = await resolveCandidateIndexRecord(store, selectedId);
     let applicant = findApplicant(selectedId, getApplicants(accountKey)) || applicantFromCandidateIndex(liveCandidate) || applicantFromCandidateIndex(indexedCandidate);
+    if (applicant) setApplicantDetail(selectedId, applicant, accountKey)
     const loadingResult = await refreshIntakeModalAfterAsync({
       client,
       body,
@@ -934,7 +935,7 @@ export function registerSlackHandlers(app, context) {
             })
             return
           }
-          setApplicantDetail(selectedId, detail);
+          setApplicantDetail(selectedId, detail, accountKey);
         }
       } catch (err) {
         logger.warn('applicant_detail_fetch_failed', { applicantId: selectedId, error: err.message });
@@ -1574,6 +1575,7 @@ export function registerSlackHandlers(app, context) {
     }
     const intakeDraft = buildIntakeDraft(values, templates, {
       editCaseId: metadata.editCaseId || '',
+      accountKey,
       customInviteSlackRecipientIds: selectedCustomInviteUserIds,
       customInviteSlackRecipients: selectedCustomInviteUsers,
       remoteUpdateStatus: metadata.remoteUpdateStatus || '',
@@ -1737,7 +1739,7 @@ export function registerSlackHandlers(app, context) {
       if (!intakeDraft.applicantEmail) {
         errors.applicant_email_block = 'Enter applicant email.';
       }
-    } else if (!intakeDraft.applicant) {
+    } else if (!intakeDraft.applicantId) {
       errors[findInputBlockId(values, 'applicant_select', 'applicant_block')] = 'Choose a candidate.';
     }
 
@@ -5002,6 +5004,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     overrides.applicantPhone !== undefined ? overrides.applicantPhone : getInputValue(values, 'applicant_phone_override')
   const candidateSearchQuery = overrides.candidateSearchQuery ?? getInputValue(values, 'candidate_search')
   const candidateSearchPage = Number(overrides.candidateSearchPage || 0)
+  const accountKey = overrides.accountKey || 'default'
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
   const legacyTemplateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
   const stageKey = normalizeStageKey(customInvite
@@ -5016,7 +5019,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
         applicantEmailOverride,
       )
     : applyApplicantOverrides(
-        overrides.applicantRecord || findApplicant(applicantId),
+        overrides.applicantRecord || getApplicantDetail(applicantId, accountKey) || findApplicant(applicantId, getApplicants(accountKey)),
         {
           name: applicantNameOverride,
           email: applicantEmailOverride,
@@ -5052,7 +5055,6 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const selectedRecruiterId = recruiterIds[0] || '';
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
   const hiringManagerId = hiringManagerIds[0] || ''
-  const accountKey = overrides.accountKey || 'default'
   const availableRecruiters = standardEventType
     ? mappedRecruitersForRole(roleId, accountKey)
     : getTalentRecruiters()
