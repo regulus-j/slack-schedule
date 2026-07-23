@@ -36,7 +36,7 @@ const SAFE_DETAIL_KEYS = new Set([
   'requestName',
   'retryAfterMs',
   'roleAssignments',
-  'roleFilterFallbackUsed',
+  'roleFilterApplied',
   'roleId',
   'sheetRecruiters',
   'slackError',
@@ -47,7 +47,6 @@ const SAFE_DETAIL_KEYS = new Set([
   'type',
   'userId',
   'warningCount',
-  'fallbackCount',
 ])
 
 let alertDispatcher = null

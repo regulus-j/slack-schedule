@@ -112,12 +112,11 @@ test('live search accepts a direct applicant object response', async () => {
   assert.equal(result.results[0].jazzhrJobId, 'job_20251203043549_1EKIK1MUNLB7HIHQ')
 })
 
-test('live search falls back to name-only results when JazzHR ignores the role filter', async () => {
+test('live search keeps the exact role filter on direct applicant results', async () => {
   const requestedUrls = []
   const fetchFn = async (url) => {
     const parsed = new URL(String(url))
     requestedUrls.push(parsed)
-    if (parsed.searchParams.has('job_id')) return response(200, [])
     return response(200, {
       id: 'prospect_20260620091713_7EY3VUYJRFZZPT3B',
       first_name: 'Dannella',
@@ -143,9 +142,8 @@ test('live search falls back to name-only results when JazzHR ignores the role f
 
   assert.equal(result.resultCount, 1)
   assert.equal(result.results[0].fullName, 'Dannella Lapitan')
-  assert.equal(requestedUrls.length, 2)
+  assert.equal(requestedUrls.length, 1)
   assert.equal(requestedUrls[0].searchParams.get('job_id'), 'job_20251203043549_1EKIK1MUNLB7HIHQ')
-  assert.equal(requestedUrls[1].searchParams.has('job_id'), false)
 })
 
 test('live search scans later JazzHR pages for matching candidates', async () => {
