@@ -4,10 +4,28 @@ locals {
   db_sa_name     = "scheduler-postgres"
   backup_sa_name = "scheduler-backup"
   secret_ids     = var.secret_names
+  runtime_config_secret_names = var.environment == "production" ? toset([
+    "JAZZHR_ACCOUNT_KEYS",
+    "JAZZHR_API_KEY_FPI",
+    "JAZZHR_API_KEY_OPG",
+    "JAZZHR_COMPANY_NAME_FPI",
+    "JAZZHR_COMPANY_NAME_OPG",
+    "RECRUITER_PHONE_EXPORT_URL",
+    "RECRUITER_PHONE_EXPORT_FILE_ID",
+    "ROLE_ASSIGNMENT_EXPORT_URL",
+    "ROLE_ASSIGNMENT_EXPORT_FILE_ID",
+    "ROLE_ASSIGNMENT_EXPORT_SHEET_GID",
+  ]) : toset([])
 }
 
 data "google_project" "current" {
   project_id = var.project_id
+}
+
+data "google_secret_manager_secret" "runtime_config" {
+  for_each  = local.runtime_config_secret_names
+  project   = var.project_id
+  secret_id = each.value
 }
 
 resource "google_project_service" "apis" {
@@ -111,6 +129,13 @@ resource "google_secret_manager_secret_iam_member" "db_password_access" {
   secret_id = google_secret_manager_secret.app["DATABASE_PASSWORD"].id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.db.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "runtime_config_access" {
+  for_each  = data.google_secret_manager_secret.runtime_config
+  secret_id = each.value.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.app.email}"
 }
 
 resource "google_kms_key_ring" "app" {
@@ -282,32 +307,24 @@ resource "google_cloud_run_v2_service" "app" {
         value = var.google_auth_slack_user_id
       }
       env {
-        name  = "RECRUITER_PHONE_EXPORT_URL"
-        value = var.recruiter_phone_export_url
-      }
-      env {
-        name  = "RECRUITER_PHONE_EXPORT_FILE_ID"
-        value = var.recruiter_phone_export_file_id
-      }
-      env {
         name  = "RECRUITER_PHONE_EXPORT_SHEET_NAME"
         value = var.recruiter_phone_export_sheet_name
-      }
-      env {
-        name  = "ROLE_ASSIGNMENT_EXPORT_URL"
-        value = var.role_assignment_export_url
-      }
-      env {
-        name  = "ROLE_ASSIGNMENT_EXPORT_FILE_ID"
-        value = var.role_assignment_export_file_id
       }
       env {
         name  = "ROLE_ASSIGNMENT_EXPORT_SHEET_NAME"
         value = var.role_assignment_export_sheet_name
       }
-      env {
-        name  = "ROLE_ASSIGNMENT_EXPORT_SHEET_GID"
-        value = var.role_assignment_export_sheet_gid
+      dynamic "env" {
+        for_each = data.google_secret_manager_secret.runtime_config
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret_id
+              version = "latest"
+            }
+          }
+        }
       }
       dynamic "env" {
         for_each = ["DATABASE_URL", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "JAZZHR_API_KEY", "GOOGLE_CLIENT_SECRET", "RECRUITER_PHONE_EXPORT_TOKEN", "ROLE_ASSIGNMENT_EXPORT_TOKEN"]
