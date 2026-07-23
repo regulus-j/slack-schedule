@@ -441,8 +441,7 @@ export function registerSlackHandlers(app, context) {
       }
     }
     const draft = buildEditCaseDraft(caseRecord, templates)
-    await client.views.open({
-      trigger_id: body.trigger_id,
+    await openOrPushModal(client, body, {
       view: {
         ...intakeModal({
           templates,
@@ -2161,10 +2160,7 @@ export function registerSlackHandlers(app, context) {
       const caseRecord = await requireCase(store, caseId)
       if (isCustomInviteCase(caseRecord)) {
         const recentAudits = await store.listAudits(caseRecord.id, 5)
-        await client.views.open({
-          trigger_id: body.trigger_id,
-          view: finalizeModal(caseRecord, recentAudits),
-        })
+        await openOrPushModal(client, body, { view: finalizeModal(caseRecord, recentAudits) })
         return
       }
       const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
@@ -2172,9 +2168,8 @@ export function registerSlackHandlers(app, context) {
       const attendees = normalizeAttendees(caseRecord, stageRules)
       const recentAudits = await store.listAudits(caseRecord.id, 5)
 
-      await client.views.open({
-        trigger_id: body.trigger_id,
-        view: schedulingModal(caseRecord, { phase: 1, stageRules, attendees, stageKey }, recentAudits)
+      await openOrPushModal(client, body, {
+        view: schedulingModal(caseRecord, { phase: 1, stageRules, attendees, stageKey }, recentAudits),
       })
     } catch (error) {
       if (error instanceof CaseNotFoundError) {
@@ -3076,10 +3071,7 @@ export function registerSlackHandlers(app, context) {
           return;
         }
         const recentAudits = await store.listAudits(caseRecord.id, 5);
-        await client.views.open({
-          trigger_id: body.trigger_id,
-          view: rescheduleModal(caseRecord, recentAudits),
-        });
+        await openOrPushModal(client, body, { view: rescheduleModal(caseRecord, recentAudits) });
       },
     })
   });
@@ -4347,6 +4339,14 @@ async function requireCase(store, caseId) {
   const caseRecord = await store.getCase(caseId);
   if (!caseRecord) throw new CaseNotFoundError(caseId);
   return caseRecord;
+}
+
+async function openOrPushModal(client, body, { view }) {
+  const triggerId = body?.trigger_id
+  if (body?.view?.id && typeof client?.views?.push === 'function') {
+    return client.views.push({ trigger_id: triggerId, view })
+  }
+  return client.views.open({ trigger_id: triggerId, view })
 }
 
 async function notifyCaseNotFound({ caseId, client, body, config, logger }) {
