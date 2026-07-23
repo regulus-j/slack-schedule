@@ -2423,17 +2423,22 @@ export function registerSlackHandlers(app, context) {
       const updatedRecord = { ...caseRecord, externalAttendees }
       const attendees = normalizeAttendees(updatedRecord, stageRules)
       const recentAudits = await store.listAudits(caseId, 5)
-
-      await ack({
-        response_action: 'update',
-        view: schedulingModal(caseRecord, {
-          phase: 1,
-          stageRules,
-          attendees,
-          stageKey,
-          externalAttendees
-        }, recentAudits)
-      })
+      const updatedView = schedulingModal(caseRecord, {
+        phase: 1,
+        stageRules,
+        attendees,
+        stageKey,
+        externalAttendees,
+      }, recentAudits)
+      if (view.previous_view_id && typeof client?.views?.update === 'function') {
+        await ack({ response_action: 'clear' })
+        await client.views.update({
+          view_id: view.previous_view_id,
+          view: updatedView,
+        })
+      } else {
+        await ack({ response_action: 'update', view: updatedView })
+      }
     } catch (error) {
       if (error instanceof CaseNotFoundError) {
         await ack()
