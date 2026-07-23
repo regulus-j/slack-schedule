@@ -5052,7 +5052,12 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const selectedRecruiterId = recruiterIds[0] || '';
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
   const hiringManagerId = hiringManagerIds[0] || ''
-  const selectedRecruiter = overrides.recruiterPerson || findMappedPersonById(recruiterId)
+  const accountKey = overrides.accountKey || 'default'
+  const availableRecruiters = standardEventType
+    ? mappedRecruitersForRole(roleId, accountKey)
+    : getTalentRecruiters()
+  const recruiterDirectoryById = new Map(availableRecruiters.map((person) => [String(person?.id || ''), person]))
+  const selectedRecruiter = overrides.recruiterPerson || recruiterDirectoryById.get(recruiterId) || findMappedPersonById(recruiterId)
   const recruiter = selectedRecruiter ? asRecruiter(selectedRecruiter) : null
   const baseHiringManager = requiresHiringManager
     ? asHiringManager(overrides.hiringManagerPerson || findMappedPersonById(hiringManagerId))
@@ -5066,15 +5071,13 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const hiringManager = baseHiringManager && hiringManagerNeedsEmail
     ? { ...baseHiringManager, email: hiringManagerEmailOverride }
     : baseHiringManager
-  const selectedRecruiters = standardEventType ? recruiterIds.map(findMappedPersonById).filter(Boolean).map(asRecruiter) : (recruiter ? [recruiter] : [])
+  const selectedRecruiters = standardEventType
+    ? recruiterIds.map((id) => recruiterDirectoryById.get(id) || findMappedPersonById(id)).filter(Boolean).map(asRecruiter)
+    : (recruiter ? [recruiter] : [])
   const selectedHiringManagers = standardHiringManagersAllowed ? hiringManagerIds.map(findMappedPersonById).filter(Boolean).map(asHiringManager) : (hiringManager ? [hiringManager] : [])
-  const accountKey = overrides.accountKey || 'default'
   const suggestedHiringManagers = standardHiringManagersAllowed
     ? mappedHiringManagersForRole(roleId, accountKey)
     : []
-  const availableRecruiters = standardEventType
-    ? mappedRecruitersForRole(roleId, accountKey)
-    : getTalentRecruiters()
   const availableHiringManagers = standardHiringManagersAllowed
     ? selectableHiringManagersForRole(roleId, accountKey)
     : []
