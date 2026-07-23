@@ -50,6 +50,7 @@ export function createJazzhrLiveSearchManager({
       createdAt: now(),
       updatedAt: now(),
       inFlight: null,
+      roleFilterFallbackUsed: false,
     }
     if (!apiKey) {
       session.complete = true
@@ -147,6 +148,24 @@ export function createJazzhrLiveSearchManager({
         sleepFn,
       }))
       addMatches(session, result)
+      let fallbackResult = null
+      if (
+        session.filters.roleId &&
+        session.results.length === 0 &&
+        session.jazzhrPageScanned === 1 &&
+        !session.roleFilterFallbackUsed
+      ) {
+        session.roleFilterFallbackUsed = true
+        fallbackResult = await limiter.run(() => fetchApplicantListPage({
+          apiKey,
+          page: 1,
+          query: session.query,
+          fetchFn,
+          logger,
+          sleepFn,
+        }))
+        addMatches(session, fallbackResult)
+      }
       logger.info?.('jazzhr_live_search_page_scanned', {
         sessionId: session.id,
         query: session.query,
@@ -154,6 +173,8 @@ export function createJazzhrLiveSearchManager({
         page: result.page,
         count: result.items.length,
         matches: session.results.length,
+        roleFilterFallbackUsed: session.roleFilterFallbackUsed,
+        fallbackCount: fallbackResult?.items.length || 0,
         excludedReasons: session.excludedReasons,
       })
       if (result.items.length < 100) {

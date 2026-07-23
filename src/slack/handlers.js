@@ -5681,7 +5681,7 @@ function roleCandidateFilters(draftOrMetadata = {}, accountKey = 'default') {
     .map(findMappedPersonById)
     .filter(Boolean)
   return {
-    roleId: role?.roleId || '',
+    roleId: role?.roleId || role?.id || role?.roleKey || '',
     roleTitle: '',
     recruiterIds: draftOrMetadata.recruiterIds || [],
     recruiterEmails: selectedRecruiters.map((person) => person.email).filter(Boolean),
