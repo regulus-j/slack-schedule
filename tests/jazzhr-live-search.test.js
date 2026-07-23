@@ -83,6 +83,35 @@ test('live search sends the selected JazzHR role id to the applicants endpoint',
   assert.equal(requestedUrl.searchParams.get('job_id'), 'loan-associate')
 })
 
+test('live search accepts a direct applicant object response', async () => {
+  const fetchFn = async () => response(200, {
+    id: 'prospect_20260620091713_7EY3VUYJRFZZPT3B',
+    first_name: 'Dannella',
+    last_name: 'Lapitan',
+    prospect_phone: '09274444179',
+    apply_date: '2025-07-03',
+    job_id: 'job_20251203043549_1EKIK1MUNLB7HIHQ',
+    job_title: 'Loan Associate',
+  })
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'dannella lapitan',
+    filters: { roleId: 'job_20251203043549_1EKIK1MUNLB7HIHQ' },
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.equal(result.resultCount, 1)
+  assert.equal(result.results[0].fullName, 'Dannella Lapitan')
+  assert.equal(result.results[0].jazzhrJobId, 'job_20251203043549_1EKIK1MUNLB7HIHQ')
+})
+
 test('live search scans later JazzHR pages for matching candidates', async () => {
   const requestedUrls = []
   const logger = testLogger()

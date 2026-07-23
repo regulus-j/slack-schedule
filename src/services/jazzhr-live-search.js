@@ -413,6 +413,11 @@ function extractApplicantArray(data) {
   if (!data || typeof data !== 'object') return []
   if (Array.isArray(data.applicants)) return data.applicants
   if (Array.isArray(data.data)) return data.data
+  if (Array.isArray(data.results)) return data.results
+  if (Array.isArray(data.items)) return data.items
+  if (data.id || data.applicant_id || data.first_name || data.firstName || data.full_name || data.fullName) {
+    return [data]
+  }
   return Object.values(data).filter((value) => value && typeof value === 'object')
 }
 
