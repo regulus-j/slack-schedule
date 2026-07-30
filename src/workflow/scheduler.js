@@ -21,7 +21,8 @@ function getTimeZoneOffsetMs(date, timeZone) {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false
+    hour12: false,
+    hourCycle: 'h23'
   })
   const parts = formatter.formatToParts(date)
   const values = {}
@@ -70,7 +71,8 @@ function getLocalHour(utcDate, timeZone) {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
     hour: 'numeric',
-    hour12: false
+    hour12: false,
+    hourCycle: 'h23'
   })
   return Number(formatter.format(utcDate))
 }
