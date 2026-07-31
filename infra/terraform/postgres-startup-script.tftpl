@@ -18,6 +18,7 @@ SQL
 sudo -u postgres createdb -O ${db_user} ${db_name} 2>/dev/null || true
 sed -i "s/^#listen_addresses =.*/listen_addresses = '*' /" /etc/postgresql/*/main/postgresql.conf
 echo 'host ${db_name} ${db_user} ${db_ip}/32 scram-sha-256' >> /etc/postgresql/*/main/pg_hba.conf
+echo 'host ${db_name} ${db_user} 10.8.0.0/28 scram-sha-256' >> /etc/postgresql/*/main/pg_hba.conf
 systemctl restart postgresql
 cat > /usr/local/bin/slack-scheduler-db-backup <<'BACKUP'
 #!/bin/bash
