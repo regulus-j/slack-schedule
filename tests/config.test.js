@@ -1,6 +1,27 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { loadConfig, validateStartupConfig } from '../src/config.js'
+import { loadConfig, normalizeJazzhrAccountKey, resolveGoogleAccountId, validateStartupConfig } from '../src/config.js'
+
+test('Google account routing parses and normalizes JazzHR account keys', () => {
+  const config = loadConfig({
+    GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT: '{"DEFAULT":"shared@example.com"," Offshore ":"offshore@example.com","invalid": ""}',
+  })
+
+  assert.deepEqual(config.google.accountByJazzhrAccount, {
+    default: 'shared@example.com',
+    offshore: 'offshore@example.com',
+  })
+  assert.equal(resolveGoogleAccountId(config, 'OFFSHORE'), 'offshore@example.com')
+  assert.equal(resolveGoogleAccountId(config, 'unknown'), null)
+  assert.equal(normalizeJazzhrAccountKey('  OFFSHORE '), 'offshore')
+  assert.equal(normalizeJazzhrAccountKey(''), 'default')
+})
+
+test('invalid Google account routing JSON fails closed', () => {
+  const config = loadConfig({ GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT: '{not-json' })
+  assert.deepEqual(config.google.accountByJazzhrAccount, {})
+  assert.equal(resolveGoogleAccountId(config, 'default'), null)
+})
 
 test('role assignment export reuses recruiter export endpoint credentials by default', () => {
   const config = loadConfig({
@@ -88,6 +109,17 @@ test('production PostgreSQL validation accepts a database URL', () => {
     SLACK_RECRUITMENT_USER_IDS: 'U1', SLACK_ADMIN_USER_IDS: 'U2', SLACK_ALERT_USER_IDS: 'U3',
   })
   assert.doesNotThrow(() => validateStartupConfig(config))
+})
+
+test('production Google validation requires the shared OAuth owner', () => {
+  const config = loadConfig({
+    NODE_ENV: 'production', DATABASE_BACKEND: 'postgres', DATABASE_URL: 'postgresql://app@10.0.0.2/scheduler',
+    SLACK_BOT_TOKEN: 'bot', SLACK_APP_TOKEN: 'app', JAZZHR_API_KEY: 'jazz',
+    GOOGLE_CLIENT_ID: 'client', GOOGLE_CLIENT_SECRET: 'secret', GOOGLE_SHARED_CALENDAR_ID: 'primary',
+    GOOGLE_KMS_KEY_NAME: 'projects/p/locations/a/keyRings/r/cryptoKeys/k',
+    SLACK_RECRUITMENT_USER_IDS: 'U1', SLACK_ADMIN_USER_IDS: 'U2', SLACK_ALERT_USER_IDS: 'U3',
+  })
+  assert.throws(() => validateStartupConfig(config), /GOOGLE_AUTH_SLACK_USER_ID/)
 })
 
 test('google redirectUri falls back to PUBLIC_BASE_URL when GOOGLE_REDIRECT_URI is unset', () => {

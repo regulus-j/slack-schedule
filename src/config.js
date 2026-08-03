@@ -61,6 +61,7 @@ export function loadConfig(env = process.env) {
       redirectUri: googleRedirectUri,
       sharedCalendarId: value('GOOGLE_SHARED_CALENDAR_ID'),
       authSlackUserId: value('GOOGLE_AUTH_SLACK_USER_ID') || '',
+      accountByJazzhrAccount: parseGoogleAccountMap(value('GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT')),
     },
     email: {
       testMode: parseBoolean(value('EMAIL_TEST_MODE'), false),
@@ -168,6 +169,34 @@ function parseBoolean(value, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
 }
 
+function parseGoogleAccountMap(value) {
+  if (!value) return {}
+  try {
+    const parsed = JSON.parse(String(value))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([key, accountId]) => [normalizeAccountKey(key), cleanString(accountId)])
+        .filter(([key, accountId]) => key && accountId),
+    )
+  } catch {
+    return {}
+  }
+}
+
+export function normalizeJazzhrAccountKey(value) {
+  return cleanString(value).toLowerCase() || 'default'
+}
+
+export function resolveGoogleAccountId(config, accountKey = 'default') {
+  const mapping = config?.google?.accountByJazzhrAccount || {}
+  return mapping[normalizeJazzhrAccountKey(accountKey)] || null
+}
+
+function normalizeAccountKey(value) {
+  return cleanString(value).toLowerCase()
+}
+
 export function validateStartupConfig(config) {
   const missing = [];
 
@@ -205,6 +234,15 @@ export function validateStartupConfig(config) {
   }
   if (config.env === 'production' && config.database?.backend === 'postgres' && !config.databaseUrl) {
     missing.push('DATABASE_URL')
+  }
+  if (
+    config.env === 'production' &&
+    config.google?.clientId &&
+    config.google?.clientSecret &&
+    config.google?.sharedCalendarId &&
+    !config.google?.authSlackUserId
+  ) {
+    missing.push('GOOGLE_AUTH_SLACK_USER_ID')
   }
 
   if (missing.length > 0) {
