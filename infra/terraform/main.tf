@@ -307,6 +307,10 @@ resource "google_cloud_run_v2_service" "app" {
         value = var.google_auth_slack_user_id
       }
       env {
+        name  = "GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT"
+        value = var.google_account_by_jazzhr_account
+      }
+      env {
         name  = "RECRUITER_PHONE_EXPORT_SHEET_NAME"
         value = var.recruiter_phone_export_sheet_name
       }

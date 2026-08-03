@@ -98,6 +98,12 @@ variable "google_auth_slack_user_id" {
   default = ""
 }
 
+variable "google_account_by_jazzhr_account" {
+  type        = string
+  description = "JSON mapping of JazzHR account keys to connected Google account IDs"
+  default     = "{}"
+}
+
 variable "recruiter_phone_export_url" {
   type    = string
   default = ""
