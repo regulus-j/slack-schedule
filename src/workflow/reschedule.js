@@ -104,6 +104,7 @@ export function applyScheduledEvent(caseRecord, eventResult, scheduleInput) {
 
   return {
     status: 'Scheduled',
+    googleAccountId: caseRecord.googleAccountId || null,
     guests: currentSchedule.attendees,
     calendarEventId: eventResult.eventId,
     calendarEventHtmlLink: htmlLink,
@@ -160,6 +161,7 @@ export function applyCompletedReschedule(caseRecord, eventResult, request, email
 
   return {
     status: 'Scheduled',
+    googleAccountId: caseRecord.googleAccountId || null,
     guests: currentSchedule.attendees,
     calendarEventId: eventResult.eventId,
     calendarEventHtmlLink: htmlLink,

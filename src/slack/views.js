@@ -147,7 +147,7 @@ export function homeView({
   };
 }
 
-export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone, recruiters = [], roles = [], accounts = [], selectedAccountKey = '', googleAccounts = [] }) {
+export function intakeModal({ templates, draft = {}, timeZones = [], defaultTimeZone, recruiters = [], roles = [], accounts = [], selectedAccountKey = '' }) {
   const resolvedTimeZones = timeZones.length > 0 ? timeZones : [SYDNEY_TIME_ZONE]
   const selectedTimeZone = draft.interviewTimezone || defaultTimeZone || resolvedTimeZones[0] || SYDNEY_TIME_ZONE
   const selectedTimeZoneCountry = TIMEZONE_COUNTRY_MAP[selectedTimeZone]
@@ -293,28 +293,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
       }, false, true),
       ...remoteUpdateBlocks,
       ...(accounts.length > 1 && !selectedAccountKey && !draft.accountKey ? [] : standardRoleBlocks),
-      ...((standardEvent || customInvite) && googleAccounts.length > 1 ? [
-        input('Google account', 'google_account_block', {
-          type: 'static_select',
-          action_id: 'google_account_select',
-          placeholder: plain('Choose which Google account to use'),
-          options: googleAccounts.map((acct) => ({
-            text: plain(acct.label),
-            value: acct.id,
-          })),
-          ...(draft.googleAccountId ? {
-            initial_option: {
-              text: plain(googleAccounts.find((a) => a.id === draft.googleAccountId)?.label || draft.googleAccountId),
-              value: draft.googleAccountId,
-            },
-          } : googleAccounts.length === 1 ? {
-            initial_option: {
-              text: plain(googleAccounts[0].label),
-              value: googleAccounts[0].id,
-            },
-          } : {}),
-        }, false, true),
-      ] : []),
       ...(customInvite ? [
         input('What is this invite for?', 'custom_purpose_block', {
           type: 'plain_text_input',
@@ -2162,7 +2140,7 @@ export function addGoogleAccountModal() {
         action_id: 'google_account_label',
         placeholder: plain('e.g. Onshore - FPI'),
       }, false),
-      section('You will receive a DM with an OAuth link. Open it and sign in as this Google account to connect it.'),
+      section('You will receive a DM with an OAuth link. Open it and sign in as this shared Google account so the whole team can use it.'),
     ],
   }
 }

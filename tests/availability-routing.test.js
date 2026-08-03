@@ -70,6 +70,7 @@ test('Google free-busy checks recruiters but excludes hiring managers', async ()
           clientSecret: 'client-secret',
           redirectUri: 'https://example.com/oauth',
           sharedCalendarId: 'calendar@example.com',
+          accountByJazzhrAccount: { default: 'shared@example.com' },
         },
       },
       logger: silentLogger(),

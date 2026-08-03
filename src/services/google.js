@@ -56,13 +56,13 @@ export async function exchangeGoogleOAuthCode({ config, code }) {
   return normalizeTokenPayload(payload);
 }
 
-export async function checkFreeBusy({ config, logger, attendees, windows, store, recruiterId }) {
+export async function checkFreeBusy({ config, logger, attendees, windows, store, recruiterId, googleAccountId }) {
   if (!googleReady(config)) {
     logger.warn('calendar_freebusy_mocked', { attendeeCount: attendees.length, windowCount: windows.length });
     return { mocked: true, busy: [] };
   }
 
-  const tokenOwnerId = getGoogleTokenOwner(config, recruiterId, null);
+  const tokenOwnerId = googleAccountId || getGoogleTokenOwner(config, recruiterId, null);
   const accessToken = await resolveAccessToken({ config, store, recruiterId: tokenOwnerId });
   if (!accessToken) {
     logger.warn('calendar_freebusy_skipped', { reason: 'missing_google_token', recruiterId: tokenOwnerId });
@@ -141,7 +141,7 @@ export async function deleteCalendarEvent({ config, logger, caseRecord, store, t
     return { mocked: true, deleted: true, eventId }
   }
 
-  const recruiterId = tokenOwnerId || getGoogleTokenOwner(config, getRecruiterId(caseRecord))
+  const recruiterId = tokenOwnerId || getGoogleTokenOwner(config, getRecruiterId(caseRecord), caseRecord)
   const accessToken = await resolveAccessToken({ config, store, recruiterId })
   if (!accessToken) {
     logger.warn('calendar_delete_skipped', { caseId: caseRecord.id, eventId, reason: 'missing_google_token' })

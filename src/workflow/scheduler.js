@@ -1,6 +1,8 @@
 import crypto from 'node:crypto'
 import { BUSINESS_DAY_START, BUSINESS_DAY_END, SYDNEY_TIME_ZONE, formatDateForInput, localDateTimeToUtc } from '../time.js'
+import { googleReady } from '../config.js'
 import { checkFreeBusy } from '../services/google.js'
+import { requireGoogleAccount } from '../services/google-account-routing.js'
 import { normalizeStageKey, resolveStageFromTemplate, resolveStageRules } from './stage-rules.js'
 import { normalizeAttendees, includedAttendees, attendeesForFreeBusy } from './attendees.js'
 
@@ -193,6 +195,16 @@ export async function checkAvailability({ caseRecord, config, logger, store }) {
     timeMax: localDateTimeToUtc(windowEnd, '23:59', timeZone).toISOString()
   }]
 
+  const accountKey = caseRecord.autofill?.accountKey || caseRecord.accountKey || 'default'
+  const googleAccountId = googleReady(config)
+    ? await requireGoogleAccount({
+      config,
+      store,
+      accountKey,
+      existingAccountId: caseRecord.googleAccountId,
+    })
+    : caseRecord.googleAccountId || ''
+
   try {
     const recruiterId = caseRecord.ownerSlackUserId || caseRecord.recruiter?.slackUserId || caseRecord.recruiter?.id || null
     const freeBusyResult = await checkFreeBusy({
@@ -201,7 +213,8 @@ export async function checkAvailability({ caseRecord, config, logger, store }) {
       attendees: calendarAttendees,
       windows,
       store,
-      recruiterId
+      recruiterId,
+      googleAccountId,
     })
 
     const busyByEmail = {}

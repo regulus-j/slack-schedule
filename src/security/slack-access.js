@@ -34,7 +34,6 @@ const READ_ACTIONS = new Set([
   'applicant_select',
   'toggle_applicant_details',
   'account_key_select',
-  'google_account_select',
   'event_type_select',
   'custom_email_template_select',
   'role_select',

@@ -10,7 +10,7 @@ import {
   sendRecruiterEmail,
   updateCalendarEvent,
 } from '../src/services/google.js';
-import { homeView } from '../src/slack/views.js';
+import { homeView, intakeModal } from '../src/slack/views.js';
 
 test('builds a recruiter-scoped google oauth url', () => {
   const url = buildGoogleOAuthUrl(
@@ -105,6 +105,20 @@ test('home view hides google buttons from non-admin users with no accounts', () 
   assert.ok(!actionButtons.some((button) => button.action_id === 'disconnect_google_oauth'));
 });
 
+test('scheduling intake does not expose Google account selection', () => {
+  const view = intakeModal({
+    templates: [],
+    draft: { eventType: '1st-interview' },
+    googleAccounts: [
+      { id: 'one@example.com', label: 'One' },
+      { id: 'two@example.com', label: 'Two' },
+    ],
+  })
+  const actions = view.blocks
+    .flatMap((block) => block.elements || [])
+  assert.ok(!actions.some((element) => element.action_id === 'google_account_select'))
+})
+
 test('prefers the case owner slack id for google token lookup', () => {
   assert.equal(
     getRecruiterId({
@@ -167,6 +181,38 @@ test('checkFreeBusy sends explicit timeMin and timeMax windows', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('checkFreeBusy uses the mapped Google account instead of the case owner', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    assert.equal(options.headers.authorization, 'Bearer token')
+    return { ok: true, async json() { return { calendars: {} } } }
+  }
+  try {
+    await checkFreeBusy({
+      config: {
+        google: {
+          clientId: 'client-id', clientSecret: 'client-secret',
+          redirectUri: 'https://example.com/oauth', sharedCalendarId: 'primary',
+          authSlackUserId: 'U-shared',
+        },
+      },
+      logger: { warn() {} },
+      attendees: [{ id: 'alex@example.com' }],
+      windows: [{ timeMin: '2026-06-01T00:00:00.000Z', timeMax: '2026-06-02T00:00:00.000Z' }],
+      recruiterId: 'U-owner',
+      googleAccountId: 'shared@example.com',
+      store: {
+        async getGoogleToken(id) {
+          assert.equal(id, 'shared@example.com')
+          return { access_token: 'token' }
+        },
+      },
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
 
 test('createCalendarEvent explains missing shared calendar access', async () => {
   const originalFetch = globalThis.fetch;

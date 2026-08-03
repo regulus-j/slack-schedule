@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { issueOAuthState } from '../security/oauth-state.js'
+import { googleReady, resolveGoogleAccountId } from '../config.js'
 import {
   installSlackSecurityMiddleware,
   isAdminUser,
@@ -41,7 +42,8 @@ import {
   signedEmailBodiesFromPlainText,
   stripSignatureHtml,
 } from '../templates.js'
-import { buildGoogleOAuthUrl, createCalendarEvent, deleteCalendarEvent, getGoogleTokenOwner, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
+import { buildGoogleOAuthUrl, createCalendarEvent, deleteCalendarEvent, sendRecruiterEmail, updateCalendarEvent } from '../services/google.js'
+import { requireGoogleAccount } from '../services/google-account-routing.js'
 import { normalizeResumeFile, resolveResumeAttachment } from '../services/resume-attachment.js'
 import {
   applicantEligibilityReason,
@@ -654,20 +656,6 @@ export function registerSlackHandlers(app, context) {
     })
   })
 
-  app.action('google_account_select', async ({ ack, body, client }) => {
-    await ack()
-    const googleAccountId = selectedOptionValue(body)
-    await refreshIntakeModalAfterAsync({
-      client,
-      body,
-      templates: await loadSchedulingTemplates(),
-      draftOverrides: { googleAccountId },
-      timeZones: schedulingTimeZones,
-      defaultTimeZone,
-      logger,
-    })
-  })
-
   app.action('event_type_select', async ({ ack, body, client }) => {
     await ack()
     const eventType = selectedOptionValue(body)
@@ -1256,9 +1244,7 @@ export function registerSlackHandlers(app, context) {
   app.action('open_google_oauth', async ({ ack, body, client }) => {
     await ack()
     if (!await verifyChannel({ config, body, client })) return
-    const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
     if (
-      config.google.authSlackUserId &&
       !await requireAdminSlackUser({
         config,
         userId: body.user.id,
@@ -1268,6 +1254,7 @@ export function registerSlackHandlers(app, context) {
         action: 'open_google_oauth',
       })
     ) return
+    const tokenOwnerId = config.google.authSlackUserId || body.user.id
     if (!config.google.clientId || !config.google.clientSecret || !config.google.redirectUri) {
       const dmChannel = await openDm(client, body.user.id)
       await client.chat.postMessage({
@@ -1381,7 +1368,7 @@ export function registerSlackHandlers(app, context) {
       return
     }
 
-    const tokenOwnerId = getGoogleTokenOwner(config, body.user.id)
+    const tokenOwnerId = config.google.authSlackUserId || body.user.id
     const state = await issueOAuthState({
       store,
       slackUserId: body.user.id,
@@ -1581,6 +1568,7 @@ export function registerSlackHandlers(app, context) {
       remoteUpdateMessage: metadata.remoteUpdateMessage || '',
       manualCandidateMode: metadata.manualCandidateMode,
     });
+    intakeDraft.googleAccountId = editCase?.googleAccountId || resolveGoogleAccountId(config, accountKey) || ''
     if (intakeDraft.standardEventType) {
       if (!hasCheckboxSelection(values, 'recruiter_checkboxes') && metadata.recruiterIds?.length) {
         intakeDraft.recruiterIds = normalizeIdList(metadata.recruiterIds)
@@ -1644,6 +1632,7 @@ export function registerSlackHandlers(app, context) {
             zoomLink: customInvite.meetingLink,
             customInvitePurpose: customInvite.title,
           },
+          googleAccountId: intakeDraft.googleAccountId || editCase.googleAccountId || null,
         })
         await store.addAudit({
           caseId: updated.id,
@@ -1654,7 +1643,7 @@ export function registerSlackHandlers(app, context) {
         await publishHome({ client, userId: body.user.id, store, logger, config })
         return
       }
-      const caseRecord = await store.createCase({
+      let caseRecord = await store.createCase({
         ownerSlackUserId: body.user.id,
         channelId: getChannelId(body.view) || body.user.id,
         eventType: 'custom-invite',
@@ -1671,6 +1660,7 @@ export function registerSlackHandlers(app, context) {
         interviewWindowStartDate: null,
         interviewWindowEndDate: null,
         interviewTimezone,
+        googleAccountId: intakeDraft.googleAccountId || null,
         customInvite,
         autofill: {
           zoomLink: customInvite.meetingLink,
@@ -1681,6 +1671,10 @@ export function registerSlackHandlers(app, context) {
           accountDisplayName,
         },
       })
+
+      if (intakeDraft.googleAccountId) {
+        caseRecord = await store.updateCase(caseRecord.id, { googleAccountId: intakeDraft.googleAccountId })
+      }
 
       await store.addAudit({
         caseId: caseRecord.id,
@@ -1820,6 +1814,7 @@ export function registerSlackHandlers(app, context) {
           accountKey,
           accountDisplayName,
         },
+        googleAccountId: intakeDraft.googleAccountId || editCase.googleAccountId || null,
       })
       await store.addAudit({
         caseId: updated.id,
@@ -1832,7 +1827,7 @@ export function registerSlackHandlers(app, context) {
       await publishHome({ client, userId: body.user.id, store, logger, config })
       return
     }
-    const caseRecord = await store.createCase({
+    let caseRecord = await store.createCase({
       ownerSlackUserId: body.user.id,
       channelId: getChannelId(body.view) || body.user.id,
       eventType: intakeDraft.eventType,
@@ -1849,6 +1844,7 @@ export function registerSlackHandlers(app, context) {
       interviewWindowStartDate: null,
       interviewWindowEndDate: null,
       interviewTimezone,
+      googleAccountId: intakeDraft.googleAccountId || null,
       autofill: {
         zoomLink,
         signature: recruiter?.signature || 'Recruitment Team',
@@ -1862,6 +1858,10 @@ export function registerSlackHandlers(app, context) {
         accountDisplayName,
       },
     });
+
+    if (intakeDraft.googleAccountId) {
+      caseRecord = await store.updateCase(caseRecord.id, { googleAccountId: intakeDraft.googleAccountId })
+    }
 
     await store.addAudit({
       caseId: caseRecord.id,
@@ -2301,7 +2301,9 @@ export function registerSlackHandlers(app, context) {
           view_id: body.view.id,
           view: availabilityCheckErrorModal(
             schedulingCaseRecord || { id: schedulingCaseId },
-            `Availability could not be checked. Reference: ${correlationId}`,
+            error.code === 'google_account_routing'
+              ? error.message
+              : `Availability could not be checked. Reference: ${correlationId}`,
           ),
         })
       } catch (viewError) {
@@ -2460,6 +2462,17 @@ export function registerSlackHandlers(app, context) {
       const caseId = metadata.caseId || body.view?.previous_view_id
       caseRecord = await requireCase(store, caseId)
       if (!caseRecord) throw new Error('Case not found')
+      if (googleReady(config)) {
+        caseRecord = {
+          ...caseRecord,
+          googleAccountId: await requireGoogleAccount({
+            config,
+            store,
+            accountKey: caseRecord.autofill?.accountKey || caseRecord.accountKey || 'default',
+            existingAccountId: caseRecord.googleAccountId,
+          }),
+        }
+      }
 
       const slotValue = view.state.values.slot_select_block?.slot_select?.selected_option?.value
       const manualDate = view.state.values.schedule_manual_date_block?.schedule_manual_date?.selected_date
@@ -2652,6 +2665,17 @@ export function registerSlackHandlers(app, context) {
       });
       return;
     }
+    if (googleReady(config)) {
+      caseRecord = {
+        ...caseRecord,
+        googleAccountId: await requireGoogleAccount({
+          config,
+          store,
+          accountKey: caseRecord.autofill?.accountKey || caseRecord.accountKey || 'default',
+          existingAccountId: caseRecord.googleAccountId,
+        }),
+      }
+    }
 
     const selectedTime = view.state.values.time_block.time.selected_option?.value || '';
     if (!isTimeWithinBusinessHours(selectedTime)) {
@@ -2815,6 +2839,18 @@ export function registerSlackHandlers(app, context) {
         },
       })
       return
+    }
+
+    if (googleReady(config)) {
+      caseRecord = {
+        ...caseRecord,
+        googleAccountId: await requireGoogleAccount({
+          config,
+          store,
+          accountKey: caseRecord.autofill?.accountKey || caseRecord.accountKey || 'default',
+          existingAccountId: caseRecord.googleAccountId,
+        }),
+      }
     }
 
     if (isCustomInviteCase(caseRecord)) {
@@ -3188,6 +3224,18 @@ export function registerSlackHandlers(app, context) {
         },
       });
       return;
+    }
+
+    if (googleReady(config)) {
+      caseRecord = {
+        ...caseRecord,
+        googleAccountId: await requireGoogleAccount({
+          config,
+          store,
+          accountKey: caseRecord.autofill?.accountKey || caseRecord.accountKey || 'default',
+          existingAccountId: caseRecord.googleAccountId,
+        }),
+      }
     }
 
     await ack();
@@ -3973,6 +4021,9 @@ export async function refreshIntakeModal({
     'googleAccountId',
   ]) {
     if (!(key in overrides) && key in metadata) overrides[key] = metadata[key]
+  }
+  if (!overrides.googleAccountId) {
+    overrides.googleAccountId = resolveGoogleAccountId(_config || {}, overrides.accountKey || metadata.accountKey || 'default') || ''
   }
   const stateValues = body.view?.state?.values
   if (!('zoomLink' in draftOverrides)) {
@@ -5096,7 +5147,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const roleOption = role ? toSlackOption(role.title, canonicalRoleId(role)) : undefined
   const googleAccountId = overrides.googleAccountId !== undefined
     ? overrides.googleAccountId
-    : getSelectedOptionValues(values, 'google_account_select')[0] || getGoogleAccounts()[0]?.id || ''
+    : ''
   const zoomLink = overrides.zoomLink !== undefined ? overrides.zoomLink : getInputValue(values, 'zoom_link')
   const zoomLinkAuto = Boolean(overrides.zoomLinkAuto)
   const zoomLinkRevision = Number(overrides.zoomLinkRevision || 0)
@@ -5187,10 +5238,6 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     interviewTimezone,
     accountKey: overrides.accountKey || '',
     googleAccountId,
-    googleAccountOption: googleAccountId ? toSlackOption(
-      getGoogleAccounts().find((a) => a.id === googleAccountId)?.label || googleAccountId,
-      googleAccountId,
-    ) : undefined,
   };
 }
 

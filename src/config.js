@@ -270,9 +270,9 @@ export function googleRedirectUriDerived(config) {
 
 export function googleReady(config) {
   return Boolean(
-    config.google.clientId &&
-      config.google.clientSecret &&
-      config.google.redirectUri &&
-      config.google.sharedCalendarId,
+    config?.google?.clientId &&
+      config?.google?.clientSecret &&
+      config?.google?.redirectUri &&
+      config?.google?.sharedCalendarId,
   );
 }
