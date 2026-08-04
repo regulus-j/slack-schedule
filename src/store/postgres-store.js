@@ -495,9 +495,16 @@ export function createPostgresStore(config, tokenCipher) {
 
     async getGoogleToken(recruiterId) {
       const result = await query(
-        `UPDATE encrypted_google_tokens
+        `WITH selected AS (
+           SELECT id
+           FROM encrypted_google_tokens
+           WHERE id = $1 OR recruiter_id = $1
+           ORDER BY (id = $1) DESC, updated_at DESC
+           LIMIT 1
+         )
+         UPDATE encrypted_google_tokens
          SET last_used_at = now()
-         WHERE recruiter_id = $1
+         WHERE encrypted_google_tokens.id = (SELECT id FROM selected)
          RETURNING encrypted_payload`,
         [recruiterId],
       );
@@ -505,13 +512,13 @@ export function createPostgresStore(config, tokenCipher) {
     },
 
     async hasGoogleToken(recruiterId) {
-      const result = await query('SELECT 1 FROM encrypted_google_tokens WHERE recruiter_id = $1 LIMIT 1', [recruiterId]);
+      const result = await query('SELECT 1 FROM encrypted_google_tokens WHERE id = $1 OR recruiter_id = $1 LIMIT 1', [recruiterId]);
       return result.rowCount > 0;
     },
 
     async listGoogleTokenIds() {
-      const result = await query('SELECT recruiter_id FROM encrypted_google_tokens ORDER BY recruiter_id')
-      return result.rows.map((row) => row.recruiter_id)
+      const result = await query('SELECT id FROM encrypted_google_tokens ORDER BY id')
+      return result.rows.map((row) => row.id)
     },
 
     async saveGoogleToken(recruiterId, tokenData) {

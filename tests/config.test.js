@@ -17,6 +17,15 @@ test('Google account routing parses and normalizes JazzHR account keys', () => {
   assert.equal(normalizeJazzhrAccountKey(''), 'default')
 })
 
+test('Google account routing falls back to the shared OAuth owner', () => {
+  const config = loadConfig({
+    GOOGLE_AUTH_SLACK_USER_ID: 'U-SHARED',
+  })
+
+  assert.equal(resolveGoogleAccountId(config, 'default'), 'U-SHARED')
+  assert.equal(resolveGoogleAccountId(config, 'unmapped-account'), 'U-SHARED')
+})
+
 test('invalid Google account routing JSON fails closed', () => {
   const config = loadConfig({ GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT: '{not-json' })
   assert.deepEqual(config.google.accountByJazzhrAccount, {})

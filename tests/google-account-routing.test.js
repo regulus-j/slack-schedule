@@ -11,6 +11,16 @@ test('requireGoogleAccount resolves a mapped JazzHR account with a shared token'
   assert.equal(accountId, 'offshore@example.com')
 })
 
+test('requireGoogleAccount uses the shared OAuth owner when no account map is configured', async () => {
+  const accountId = await requireGoogleAccount({
+    config: { google: { authSlackUserId: 'U-SHARED', accountByJazzhrAccount: {} } },
+    accountKey: 'default',
+    store: { async hasGoogleToken(id) { return id === 'U-SHARED' } },
+  })
+
+  assert.equal(accountId, 'U-SHARED')
+})
+
 test('requireGoogleAccount rejects an unmapped JazzHR account', async () => {
   await assert.rejects(
     requireGoogleAccount({

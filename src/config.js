@@ -190,7 +190,7 @@ export function normalizeJazzhrAccountKey(value) {
 
 export function resolveGoogleAccountId(config, accountKey = 'default') {
   const mapping = config?.google?.accountByJazzhrAccount || {}
-  return mapping[normalizeJazzhrAccountKey(accountKey)] || null
+  return mapping[normalizeJazzhrAccountKey(accountKey)] || cleanString(config?.google?.authSlackUserId) || null
 }
 
 function normalizeAccountKey(value) {

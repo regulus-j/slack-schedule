@@ -44,6 +44,7 @@ echo ""
 # ── Defaults ─────────────────────────────────────────────────────────────
 : "${GCP_REGION:=us-central1}"
 : "${TERRAFORM_STATE_BUCKET:=slack-scheduler-tfstate}"
+: "${GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT:={}}"
 if [ -z "${GCP_PROJECT_ID:-}" ]; then
   GCP_PROJECT_ID="$(gcloud config get-value project 2>/dev/null || echo '')"
 fi
@@ -114,6 +115,7 @@ v SLACK_ALERT_USER_IDS
 v GOOGLE_CLIENT_ID
 v GOOGLE_SHARED_CALENDAR_ID
 v GOOGLE_AUTH_SLACK_USER_ID
+v GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT
 v MONITORING_EMAIL
 gh variable set SECRET_NEXT_ROTATION_TIME -b "" -R "$REPO"
 

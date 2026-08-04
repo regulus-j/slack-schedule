@@ -553,6 +553,19 @@ test.describe('PostgresStore', { skip }, () => {
     assert.equal(await store.hasGoogleToken('rec-U-HAS'), true)
   })
 
+  test('Google account email IDs resolve tokens saved by the shared OAuth owner', async () => {
+    const tokenData = {
+      access_token: 'account-token',
+      account_email: 'calendar@example.com',
+      label: 'Shared calendar',
+    }
+    await store.saveGoogleToken('U-SHARED', tokenData)
+
+    assert.equal(await store.hasGoogleToken('calendar@example.com'), true)
+    assert.deepEqual(await store.getGoogleToken('calendar@example.com'), tokenData)
+    assert.deepEqual(await store.listGoogleTokenIds(), ['calendar@example.com'])
+  })
+
   test('getGoogleToken returns null for missing token', async () => {
     const result = await store.getGoogleToken('rec-nonexistent')
     assert.equal(result, null)

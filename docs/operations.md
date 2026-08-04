@@ -27,6 +27,10 @@ configuration.
 6. The Google Cloud project must have the **Calendar API** and **Gmail API** enabled.
 7. The OAuth consent screen must include the `calendar.events`, `calendar.freebusy`, and
    `gmail.send` scopes. The app is configured for **offline** access (refresh tokens).
+8. Set `GOOGLE_AUTH_SLACK_USER_ID` to the Slack ID that owns the shared OAuth connection.
+   If JazzHR accounts use different Google accounts, set
+   `GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT` to a JSON object mapping each JazzHR account key
+   to its connected Google account ID. Explicit mappings override the shared owner.
 
 **Troubleshooting**: If users see a Google error page mentioning `redirect_uri_mismatch`,
 the `GOOGLE_REDIRECT_URI` (or the derived `PUBLIC_BASE_URL/oauth/google/callback`) does not
