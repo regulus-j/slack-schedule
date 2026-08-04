@@ -43,6 +43,16 @@ jobs:
         run: |
           test -n "$GCP_WORKLOAD_IDENTITY_PROVIDER" || { echo "::error::Set GCP_WORKLOAD_IDENTITY_PROVIDER as an environment variable or secret."; exit 1; }
           test -n "$GCP_DEPLOY_SERVICE_ACCOUNT" || { echo "::error::Set GCP_DEPLOY_SERVICE_ACCOUNT as an environment variable or secret."; exit 1; }
+      - name: Validate application startup configuration
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment || 'production' }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_SHARED_CALENDAR_ID: ${{ vars.GOOGLE_SHARED_CALENDAR_ID }}
+          GOOGLE_AUTH_SLACK_USER_ID: ${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}
+        run: |
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_SHARED_CALENDAR_ID" ]; then
+            test -n "$GOOGLE_AUTH_SLACK_USER_ID" || { echo "::error::Set GOOGLE_AUTH_SLACK_USER_ID in the production environment when Google Calendar is configured."; exit 1; }
+          fi
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
