@@ -183,6 +183,54 @@ test('live search falls back to name-only results when JazzHR returns no role-sc
   assert.equal(requestedUrls[1].searchParams.has('job_id'), false)
 })
 
+test('live search refreshes even when the cache already contains matching candidates', async () => {
+  const requestedUrls = []
+  const fetchFn = async (url) => {
+    const parsed = new URL(String(url))
+    requestedUrls.push(parsed)
+    if (parsed.searchParams.has('job_id')) return response(200, [])
+    return response(200, {
+      data: {
+        applicants: [{
+          appjob_id: 'jamal-new-application',
+          first_name: 'Jamal',
+          last_name: 'Al Badi',
+          job_id: 'ai-developer',
+          applicant_progress: 'Resume Screening',
+        }],
+      },
+    })
+  }
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'jamal',
+    filters: { roleId: 'ai-developer' },
+    initialCandidates: [{
+      jazzhrApplicationId: 'jamal-old-application',
+      jazzhrJobId: 'ai-developer',
+      fullName: 'Jamal Existing',
+      stage: 'New',
+    }],
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.deepEqual(result.results.map((candidate) => candidate.fullName), [
+    'Jamal Existing',
+    'Jamal Al Badi',
+  ])
+  assert.equal(requestedUrls.length, 2)
+  assert.equal(requestedUrls[0].searchParams.get('name'), 'jamal')
+  assert.equal(requestedUrls[0].searchParams.get('job_id'), 'ai-developer')
+  assert.equal(requestedUrls[1].searchParams.has('job_id'), false)
+})
+
 test('live search scans later JazzHR pages for matching candidates', async () => {
   const requestedUrls = []
   const logger = testLogger()

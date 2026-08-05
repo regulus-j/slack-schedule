@@ -29,6 +29,7 @@ export function normalizeJazzhrCandidate(record, index = 0) {
     recruiterEmail: String(record?.recruiterEmail || '').trim(),
     recruiterName: String(record?.recruiterName || '').trim(),
     source: record?.source || 'jazzhr',
+    accountKey: String(record?.accountKey || 'default').trim() || 'default',
     appliedAt: String(record?.appliedAt || record?.applyDate || '').trim(),
     sourceOrder: Number.isFinite(Number(record?.sourceOrder)) ? Number(record.sourceOrder) : index,
   }

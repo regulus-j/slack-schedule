@@ -176,3 +176,28 @@ test('json store persists and searches JazzHR candidate index', async () => {
     await rm(runtimeDir, { recursive: true, force: true })
   }
 })
+
+test('json store keeps candidate refreshes isolated by JazzHR account', async () => {
+  const runtimeDir = await mkdtemp(path.join(os.tmpdir(), 'candidate-account-index-'))
+  try {
+    const store = createJsonStore(runtimeDir)
+    await store.init()
+    await store.saveJazzhrCandidates([
+      { jazzhrApplicationId: 'opg-1', fullName: 'OPG Jamal', stage: 'New' },
+    ], { accountKey: 'opg' })
+    await store.saveJazzhrCandidates([
+      { jazzhrApplicationId: 'fpi-1', fullName: 'FPI Jamal', stage: 'New' },
+    ], { accountKey: 'fpi' })
+
+    assert.deepEqual(
+      (await store.listJazzhrCandidates({ accountKey: 'opg' })).map((record) => record.fullName),
+      ['OPG Jamal'],
+    )
+    assert.deepEqual(
+      (await store.listJazzhrCandidates({ accountKey: 'fpi' })).map((record) => record.fullName),
+      ['FPI Jamal'],
+    )
+  } finally {
+    await rm(runtimeDir, { recursive: true, force: true })
+  }
+})

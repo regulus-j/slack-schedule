@@ -482,8 +482,13 @@ export function registerSlackHandlers(app, context) {
     const filters = roleCandidateFilters(intakeDraft, accountKey)
     const indexedCandidates = query ? await searchCandidateIndex(store, '', query, 100, filters) : []
     const candidateSearchMgr = getCandidateSearchManager(accountKey)
-    const session = query && indexedCandidates.length === 0
-      ? candidateSearchMgr.start({ query, userId: body.user?.id || '', filters })
+    const session = query
+      ? candidateSearchMgr.start({
+        query,
+        userId: body.user?.id || '',
+        filters,
+        initialCandidates: indexedCandidates,
+      })
       : null
     const templates = await loadSchedulingTemplates()
     const updateResult = await refreshIntakeModal({
@@ -495,7 +500,7 @@ export function registerSlackHandlers(app, context) {
       candidateSearchPage: 0,
       candidateSearchResultCount: indexedCandidates.length || session?.resultCount || 0,
       candidateSearchPageSize: session?.pageSize || config.jazzhr.liveSearch?.pageSize || 20,
-      candidateSearchComplete: indexedCandidates.length > 0 || session?.complete || false,
+      candidateSearchComplete: session?.complete || false,
       candidateSearchSearching: Boolean(session && !session.complete),
       candidateSearchError: session?.error || '',
       timeZones: schedulingTimeZones,
@@ -546,9 +551,10 @@ export function registerSlackHandlers(app, context) {
     await ack()
     const metadata = parsePrivateMetadata(body.view?.private_metadata) || {}
     const accountKey = metadata.accountKey || 'default'
+    const candidateSearchMgr = getCandidateSearchManager(accountKey)
     const requestedPage = Number(metadata.candidateSearchPage || 0) + 1
     const session = recoverLiveCandidateSearchSession({
-      liveCandidateSearch: getCandidateSearchManager(accountKey),
+      liveCandidateSearch: candidateSearchMgr,
       sessionId: metadata.candidateSearchSessionId,
       query: metadata.candidateSearchQuery,
       userId: body.user?.id || '',
@@ -596,7 +602,7 @@ export function registerSlackHandlers(app, context) {
     })
     if (needsSearch) {
       updateLiveCandidateSearchModal({
-        liveCandidateSearch,
+        liveCandidateSearch: candidateSearchMgr,
         client,
         body: bodyWithUpdatedView(body, updateResult),
         templates,
@@ -861,7 +867,7 @@ export function registerSlackHandlers(app, context) {
     const accountKey = metadata.accountKey || 'default'
     const candidateSearchMgr = getCandidateSearchManager(accountKey)
     const liveCandidate = candidateSearchMgr.getCandidate(metadata.candidateSearchSessionId, selectedId)
-    const indexedCandidate = await resolveCandidateIndexRecord(store, selectedId);
+    const indexedCandidate = await resolveCandidateIndexRecord(store, selectedId, accountKey);
     let applicant = findApplicant(selectedId, getApplicants(accountKey)) || applicantFromCandidateIndex(liveCandidate) || applicantFromCandidateIndex(indexedCandidate);
     if (applicant) setApplicantDetail(selectedId, applicant, accountKey)
     const loadingResult = await refreshIntakeModalAfterAsync({
@@ -5403,10 +5409,10 @@ function mergeCandidateOptions(...groups) {
   return merged
 }
 
-async function resolveCandidateIndexRecord(store, selectedId) {
+async function resolveCandidateIndexRecord(store, selectedId, accountKey = '') {
   const id = String(selectedId || '').replace(/^applicant-/, '')
   if (!id || !store?.getJazzhrCandidate) return null
-  return store.getJazzhrCandidate(id)
+  return store.getJazzhrCandidate(id, { accountKey })
 }
 
 function candidateToSlackOption(candidate) {

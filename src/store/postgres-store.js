@@ -187,10 +187,10 @@ export function createPostgresStore(config, tokenCipher) {
       return { cases: result.rows[0].cases, jazzhrCandidates };
     },
 
-    async saveJazzhrCandidates(records) {
-      const candidates = normalizeJazzhrCandidates(records);
-      const accountKey = candidates.length > 0 ? (candidates[0].accountKey || 'default') : 'default'
-      await query('DELETE FROM jazzhr_candidates WHERE account_key = $1', [accountKey]);
+    async saveJazzhrCandidates(records, { accountKey = '' } = {}) {
+      const resolvedAccountKey = resolveCandidateAccountKey(records, accountKey)
+      const candidates = normalizeJazzhrCandidates(withCandidateAccountKey(records, resolvedAccountKey));
+      await query('DELETE FROM jazzhr_candidates WHERE account_key = $1', [resolvedAccountKey]);
       for (const candidate of candidates) {
         await query(
           `INSERT INTO jazzhr_candidates (
@@ -260,15 +260,16 @@ export function createPostgresStore(config, tokenCipher) {
             candidate.source,
             dateOrNull(candidate.appliedAt),
             candidate.sourceOrder,
-            candidate.accountKey || 'default',
+            candidate.accountKey || resolvedAccountKey,
           ],
         );
       }
       return candidates.length;
     },
 
-    async upsertJazzhrCandidates(records) {
-      const candidates = normalizeJazzhrCandidates(records)
+    async upsertJazzhrCandidates(records, { accountKey = '' } = {}) {
+      const resolvedAccountKey = resolveCandidateAccountKey(records, accountKey)
+      const candidates = normalizeJazzhrCandidates(withCandidateAccountKey(records, resolvedAccountKey))
       for (const candidate of candidates) {
         await query(
           `INSERT INTO jazzhr_candidates (
@@ -338,18 +339,18 @@ export function createPostgresStore(config, tokenCipher) {
             candidate.source,
             dateOrNull(candidate.appliedAt),
             candidate.sourceOrder,
-            candidate.accountKey || 'default',
+            candidate.accountKey || resolvedAccountKey,
           ],
         )
       }
       return candidates.length
     },
 
-    async replaceJazzhrJobCandidates(jobId, records) {
+    async replaceJazzhrJobCandidates(jobId, records, { accountKey = '' } = {}) {
       const normalizedJobId = String(jobId || '').trim()
-      const candidates = normalizeJazzhrCandidates(records)
-      const accountKey = candidates.length > 0 ? (candidates[0].accountKey || 'default') : 'default'
-      await this.upsertJazzhrCandidates(candidates)
+      const resolvedAccountKey = resolveCandidateAccountKey(records, accountKey)
+      const candidates = normalizeJazzhrCandidates(withCandidateAccountKey(records, resolvedAccountKey))
+      await this.upsertJazzhrCandidates(candidates, { accountKey: resolvedAccountKey })
       const candidateKeys = candidates.map((candidate) => candidate.candidateKey)
       if (candidateKeys.length > 0) {
         await query(
@@ -357,10 +358,10 @@ export function createPostgresStore(config, tokenCipher) {
            WHERE jazzhr_job_id = $1
              AND account_key = $2
              AND NOT (candidate_key = ANY($3))`,
-          [normalizedJobId, accountKey, candidateKeys],
+          [normalizedJobId, resolvedAccountKey, candidateKeys],
         )
       } else {
-        await query('DELETE FROM jazzhr_candidates WHERE jazzhr_job_id = $1 AND account_key = $2', [normalizedJobId, accountKey])
+        await query('DELETE FROM jazzhr_candidates WHERE jazzhr_job_id = $1 AND account_key = $2', [normalizedJobId, resolvedAccountKey])
       }
       return candidates.length
     },
@@ -455,15 +456,17 @@ export function createPostgresStore(config, tokenCipher) {
         .filter((candidate) => !candidateInactiveReason(candidate));
     },
 
-    async getJazzhrCandidate(jazzhrApplicationId) {
+    async getJazzhrCandidate(jazzhrApplicationId, { accountKey = '' } = {}) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
+      const params = [id]
+      const accountFilter = accountKey ? ` AND account_key = $${params.push(accountKey)}` : ''
       const result = await query(
         `SELECT *
          FROM jazzhr_candidates
-         WHERE candidate_key = $1 OR jazzhr_application_id = $1
+         WHERE (candidate_key = $1 OR jazzhr_application_id = $1)${accountFilter}
          ORDER BY applied_at DESC NULLS LAST, source_order ASC, full_name ASC
          LIMIT 1`,
-        [id],
+        params,
       );
       if (!result.rows[0]) return null;
       const candidate = rowToJazzhrCandidate(result.rows[0]);
@@ -1134,4 +1137,16 @@ function oauthStateRow(row) {
     expiresAt: row.expires_at?.toISOString?.() || row.expires_at,
     consumedAt: row.consumed_at?.toISOString?.() || row.consumed_at,
   }
+}
+
+function resolveCandidateAccountKey(records, accountKey = '') {
+  return String(
+    accountKey ||
+    (Array.isArray(records) ? records.find((record) => record?.accountKey)?.accountKey : '') ||
+    'default',
+  ).trim() || 'default'
+}
+
+function withCandidateAccountKey(records, accountKey) {
+  return (Array.isArray(records) ? records : []).map((record) => ({ ...record, accountKey }))
 }

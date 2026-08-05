@@ -146,6 +146,7 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
       logger,
       config.jazzhr.applicantMaxPages,
       config.jazzhr.applicantFetchConcurrency,
+      accountKey,
     )
     const users = await fetchAllUsers(apiKey, logger)
     const { applicants, total, unique, pagesFetched, maxPagesReached, excluded, excludedReasons } = applicantResult;
@@ -154,7 +155,7 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
     setRecruiters(users, accountKey);
     let indexedCandidates = 0;
     if (store?.saveJazzhrCandidates) {
-      indexedCandidates = await store.saveJazzhrCandidates(applicants);
+      indexedCandidates = await store.saveJazzhrCandidates(applicants, { accountKey });
     }
 
     logger.info('jazzhr_cache_refreshed', {
@@ -178,7 +179,13 @@ export async function refreshJazzhrCache({ config, logger, store, throwOnError =
   }
 }
 
-export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurrency = DEFAULT_FETCH_CONCURRENCY) {
+export async function fetchAllApplicants(
+  apiKey,
+  logger,
+  maxPages = 250,
+  concurrency = DEFAULT_FETCH_CONCURRENCY,
+  accountKey = DEFAULT_ACCOUNT,
+) {
   _limiter.maxConcurrent = Math.max(_limiter.maxConcurrent, positiveInteger(concurrency, DEFAULT_FETCH_CONCURRENCY))
   const all = [];
   const seenIds = new Set();
@@ -232,7 +239,7 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurr
 
   const fetchPage = async (page) => ({
     page,
-    data: await jazzhrGetWithRetry(applicantListPath(page), apiKey, logger),
+    data: extractArray(await jazzhrGetWithRetry(applicantListPath(page), apiKey, logger)) || [],
   });
 
   processPage(await fetchPage(nextPage));
@@ -267,7 +274,7 @@ export async function fetchAllApplicants(apiKey, logger, maxPages = 250, concurr
   }
 
   return {
-    ...filterActiveApplicants(all),
+    ...filterActiveApplicants(all, { accountKey }),
     total: totalFetched,
     unique: all.length,
     pagesFetched,
@@ -350,19 +357,39 @@ async function fetchApplicantIdsByJob(apiKey, logger, jobId) {
   while (true) {
     const pathname = `/applicants?job_id=${encodeURIComponent(jobId)}&page=${page}`
     const data = await jazzhrGetWithRetry(pathname, apiKey, logger)
-    const pageItems = Array.isArray(data) ? data : []
+    const pageItems = extractCollectionArray(data)
     if (page === 1 && pageItems.length === 0) {
       const jobData = await jazzhrGetWithRetry(`/jobs/${encodeURIComponent(jobId)}`, apiKey, logger)
-      const jobApplicants = Array.isArray(jobData?.job_applicants) ? jobData.job_applicants : []
+      const jobApplicants = extractArray(jobData?.job_applicants || jobData) || []
       return jobApplicants
         .map((item) => ({
-          id: String(item?.id || item?.prospect_id || item?.applicant_id || '').trim(),
+          id: String(
+            item?.id ||
+            item?.prospect_id ||
+            item?.applicant_id ||
+            item?.applicantId ||
+            item?.appjob_id ||
+            item?.appjobId ||
+            item?.application_id ||
+            item?.applicationId ||
+            '',
+          ).trim(),
           appliedAt: item?.apply_date || item?.applied_at || item?.date_applied || '',
         }))
         .filter((item) => item.id)
     }
     for (const item of pageItems) {
-      const id = String(item?.id || '').trim()
+      const id = String(
+        item?.id ||
+        item?.prospect_id ||
+        item?.applicant_id ||
+        item?.applicantId ||
+        item?.appjob_id ||
+        item?.appjobId ||
+        item?.application_id ||
+        item?.applicationId ||
+        '',
+      ).trim()
       if (id) {
         ids.push({
           id,
@@ -411,11 +438,12 @@ async function performJazzhrJobCandidateSync({
       const detail = await fetchApplicantDetail(apiKey, application.id, logger, { jobId: resolvedJobId })
       return {
         detail,
-        candidate: detail ? mapRoleScopedCandidate({
-          detail,
-          application,
-          job,
-          sourceOrder,
+          candidate: detail ? mapRoleScopedCandidate({
+            detail,
+            application,
+            job,
+            sourceOrder,
+            accountKey,
         }) : null,
       }
     })))
@@ -423,9 +451,9 @@ async function performJazzhrJobCandidateSync({
     const complete = applicationResults.every((result) => result.detail)
 
     if (complete && store?.replaceJazzhrJobCandidates) {
-      await store.replaceJazzhrJobCandidates(resolvedJobId, candidates)
+      await store.replaceJazzhrJobCandidates(resolvedJobId, candidates, { accountKey })
     } else if (store?.upsertJazzhrCandidates) {
-      await store.upsertJazzhrCandidates(candidates)
+      await store.upsertJazzhrCandidates(candidates, { accountKey })
     }
     if (complete) {
       replaceJobApplicantsInCache(resolvedJobId, candidates, accountKey)
@@ -460,8 +488,17 @@ function applicantListPath(page) {
 }
 
 function applicantRecordKey(item) {
-  const id = String(item?.id || item?.applicant_id || '').trim();
-  const jobs = normalizeApplicantJobs(item?.jobs);
+  const id = String(
+    item?.id ||
+    item?.applicant_id ||
+    item?.applicantId ||
+    item?.appjob_id ||
+    item?.appjobId ||
+    item?.application_id ||
+    item?.applicationId ||
+    '',
+  ).trim();
+  const jobs = normalizeApplicantJobs(item?.jobs || item?.job_applications || item?.applications || item?.job);
   if (jobs.length === 0) return id;
   return [
     id,
@@ -473,7 +510,7 @@ function applicantRecordKey(item) {
   ].join('|');
 }
 
-export function filterActiveApplicants(items) {
+export function filterActiveApplicants(items, { accountKey = DEFAULT_ACCOUNT } = {}) {
   const applicants = [];
   const excludedReasonCounts = {};
   let excluded = 0;
@@ -488,7 +525,7 @@ export function filterActiveApplicants(items) {
         excludedReasonCounts[inactiveReason] = (excludedReasonCounts[inactiveReason] || 0) + 1;
         continue;
       }
-      applicants.push(mapApplicant(record, applicants.length));
+      applicants.push(mapApplicant(record, applicants.length, accountKey));
     }
   }
 
@@ -501,7 +538,7 @@ export function filterActiveApplicants(items) {
 }
 
 function applicantRoleRecords(item) {
-  const jobs = normalizeApplicantJobs(item?.jobs);
+  const jobs = normalizeApplicantJobs(item?.jobs || item?.job_applications || item?.applications || item?.job);
   if (jobs.length === 0) return [item];
   return jobs.map((job) => ({
     ...item,
@@ -766,10 +803,29 @@ async function fetchAllUsers(apiKey, logger) {
 function extractArray(data) {
   if (Array.isArray(data)) return data;
   if (data && typeof data === 'object') {
-    if (Array.isArray(data.users)) return data.users;
-    if (Array.isArray(data.data)) return data.data;
+    for (const key of ['users', 'applicants', 'job_applicants', 'applications', 'results', 'items', 'data']) {
+      if (Array.isArray(data[key])) return data[key];
+      if (data[key] && typeof data[key] === 'object') {
+        const nested = extractArray(data[key])
+        if (nested) return nested
+      }
+    }
+    if (
+      (data.id || data.applicant_id || data.applicantId || data.appjob_id || data.appjobId) &&
+      (data.first_name || data.firstName || data.full_name || data.fullName ||
+        data.applicant_id || data.applicantId || data.appjob_id || data.appjobId ||
+        data.applicant_progress || data.applicantProgress)
+    ) return [data]
   }
   return null;
+}
+
+function extractCollectionArray(data) {
+  if (Array.isArray(data)) return data
+  if (!data || typeof data !== 'object') return []
+  const collectionKeys = ['users', 'applicants', 'job_applicants', 'applications', 'results', 'items', 'data']
+  if (!collectionKeys.some((key) => data[key] && typeof data[key] === 'object')) return []
+  return extractArray(data) || []
 }
 
 function countBy(array, fn) {
@@ -802,11 +858,30 @@ function isActiveUser(user) {
   return type !== 'deleted';
 }
 
-function mapApplicant(item, sourceOrder = 0) {
-  const firstName = item.first_name || ''
-  const lastName = item.last_name || ''
-  const jazzhrApplicationId = String(item.id)
-  const jazzhrJobId = String(item.job_id || item.jobId || item.jobs?.job_id || item.jobs?.id || '').trim()
+function mapApplicant(item, sourceOrder = 0, accountKey = DEFAULT_ACCOUNT) {
+  const firstName = item.first_name || item.firstName || ''
+  const lastName = item.last_name || item.lastName || ''
+  const jazzhrApplicationId = String(
+    item.id ||
+    item.applicant_id ||
+    item.applicantId ||
+    item.appjob_id ||
+    item.appjobId ||
+    item.application_id ||
+    item.applicationId ||
+    '',
+  )
+  const jazzhrJobId = String(
+    item.job_id ||
+    item.jobId ||
+    item.jobs?.job_id ||
+    item.jobs?.jobId ||
+    item.jobs?.id ||
+    item.job?.job_id ||
+    item.job?.jobId ||
+    item.job?.id ||
+    '',
+  ).trim()
   const candidateKey = [jazzhrApplicationId, jazzhrJobId].filter(Boolean).join('::')
   return {
     id: `applicant-${candidateKey}`,
@@ -818,8 +893,8 @@ function mapApplicant(item, sourceOrder = 0) {
     lastName,
     email: item.email || '',
     phone: item.phone || item.prospect_phone || '',
-    jobTitle: item.job_title || '',
-    stage: item.applicant_progress || '',
+    jobTitle: item.job_title || item.jobTitle || '',
+    stage: item.applicant_progress || item.applicantProgress || item.stage || '',
     workflowStepId: item.workflow_step_id || '',
     workflowStep: item.workflow_step || '',
     workflowCategory: item.workflow_category || item.workflow_step_category || '',
@@ -829,6 +904,7 @@ function mapApplicant(item, sourceOrder = 0) {
     recruiterEmail: item.recruiter_email || '',
     recruiterName: item.recruiter_name || '',
     source: 'jazzhr',
+    accountKey,
     appliedAt: firstValue(item, ['apply_date', 'applyDate', 'date_applied', 'dateApplied', 'created_at', 'createdAt', 'created', 'updated_at', 'updatedAt']),
     sourceOrder,
   };
@@ -845,7 +921,16 @@ function mapApplicantDetail(item, jobId = '') {
     {}
 
   return {
-    jazzhrApplicationId: String(item.id || item.applicant_id || '').trim(),
+    jazzhrApplicationId: String(
+      item.id ||
+      item.applicant_id ||
+      item.applicantId ||
+      item.appjob_id ||
+      item.appjobId ||
+      item.application_id ||
+      item.applicationId ||
+      '',
+    ).trim(),
     jazzhrJobId: String(selectedJob.job_id || selectedJob.jobId || selectedJob.id || jobId || '').trim(),
     firstName: item.first_name || item.firstName || '',
     lastName: item.last_name || item.lastName || '',
@@ -908,7 +993,7 @@ function isOpenJobStatus(status) {
   return ['open', 'active', 'published'].includes(normalizeStatusText(status))
 }
 
-function mapRoleScopedCandidate({ detail, application, job, sourceOrder }) {
+function mapRoleScopedCandidate({ detail, application, job, sourceOrder, accountKey = DEFAULT_ACCOUNT }) {
   const nameParts = String(detail.fullName || '').trim().split(/\s+/)
   const firstName = detail.firstName || nameParts.shift() || ''
   const lastName = detail.lastName || nameParts.join(' ')
@@ -934,6 +1019,7 @@ function mapRoleScopedCandidate({ detail, application, job, sourceOrder }) {
     recruiterEmail: detail.recruiterEmail || '',
     recruiterName: detail.recruiterName || '',
     source: 'jazzhr',
+    accountKey,
     appliedAt: detail.applyDate || application.appliedAt || '',
     sourceOrder,
   }

@@ -26,7 +26,7 @@ export function createJazzhrLiveSearchManager({
   const resolvedMaxPages = positiveInteger(maxPages, DEFAULT_MAX_PAGES)
   const resolvedTtlMs = positiveInteger(ttlMs, DEFAULT_TTL_MS)
 
-  function start({ query, userId = '', filters = {} } = {}) {
+  function start({ query, userId = '', filters = {}, initialCandidates = [] } = {}) {
     expire()
     const id = crypto.randomUUID()
     const normalizedQuery = normalizeSearchText(query)
@@ -52,9 +52,10 @@ export function createJazzhrLiveSearchManager({
       updatedAt: now(),
       inFlight: null,
     }
+    addInitialCandidates(session, initialCandidates)
     if (!apiKey) {
       session.complete = true
-      session.error = 'JazzHR API key is not configured.'
+      if (session.results.length === 0) session.error = 'JazzHR API key is not configured.'
     }
     if (!normalizedQuery) {
       session.complete = true
@@ -103,7 +104,11 @@ export function createJazzhrLiveSearchManager({
     session.updatedAt = now()
 
     if (session.inFlight) await session.inFlight
-    if (session.complete || session.error || hasResultPage(session, requestedPage)) return snapshot(session)
+    if (
+      session.complete ||
+      session.error ||
+      (hasResultPage(session, requestedPage) && session.jazzhrPageScanned > 0)
+    ) return snapshot(session)
 
     session.searching = true
     const targetCount = (requestedPage + 1) * session.pageSize
@@ -129,15 +134,20 @@ export function createJazzhrLiveSearchManager({
   }
 
   async function scanUntil(session, targetCount) {
-    if (session.complete || session.error || session.results.length >= targetCount) return
+    if (
+      session.complete ||
+      session.error ||
+      (session.results.length >= targetCount && session.jazzhrPageScanned > 0)
+    ) return
 
     while (
       !session.complete &&
       !session.error &&
-      session.results.length < targetCount &&
+      (session.results.length < targetCount || session.jazzhrPageScanned === 0) &&
       session.jazzhrPageScanned < resolvedMaxPages
     ) {
       session.jazzhrPageScanned++
+      const matchesBeforePage = session.results.length
       const result = await limiter.run(() => fetchApplicantListPage({
         apiKey,
         page: session.jazzhrPageScanned,
@@ -151,7 +161,7 @@ export function createJazzhrLiveSearchManager({
       let fallbackResult = null
       if (
         session.filters.roleId &&
-        session.results.length === 0 &&
+        session.results.length === matchesBeforePage &&
         session.jazzhrPageScanned === 1 &&
         !session.roleFilterFallbackUsed
       ) {
@@ -265,19 +275,39 @@ function addMatches(session, pageResult) {
         continue
       }
       const candidate = mapLiveApplicant(record, index)
-      if (!candidate) continue
-      if (!candidateMatchesFilters(candidate, session.filters)) continue
-      if (!normalizeSearchText(candidate.fullName).includes(session.normalizedQuery)) continue
-      const dedupeId = normalizeCandidateId(candidate.id)
-      if (session.resultIds.has(dedupeId)) continue
-      session.resultIds.add(dedupeId)
-      session.results.push(candidate)
+      addCandidate(session, candidate)
     }
   })
 }
 
+function addInitialCandidates(session, candidates) {
+  for (const record of Array.isArray(candidates) ? candidates : []) {
+    const candidate = mapLiveApplicant(record, record?.sourceOrder || 0)
+    addCandidate(session, candidate)
+  }
+}
+
+function addCandidate(session, candidate) {
+  if (!candidate) return
+  if (!candidateMatchesFilters(candidate, session.filters)) return
+  if (!normalizeSearchText(candidate.fullName).includes(session.normalizedQuery)) return
+  const dedupeId = normalizeCandidateId(candidate.id)
+  if (!dedupeId || session.resultIds.has(dedupeId)) return
+  session.resultIds.add(dedupeId)
+  session.results.push(candidate)
+}
+
 function mapLiveApplicant(item, sourceOrder = 0) {
-  const jazzhrApplicationId = String(item?.id || item?.applicant_id || '').trim()
+  const jazzhrApplicationId = firstValue(item, [
+    'jazzhrApplicationId',
+    'id',
+    'applicant_id',
+    'applicantId',
+    'appjob_id',
+    'appjobId',
+    'application_id',
+    'applicationId',
+  ])
   if (!jazzhrApplicationId) return null
   const firstName = firstValue(item, ['first_name', 'firstName', 'first'])
   const lastName = firstValue(item, ['last_name', 'lastName', 'last'])
@@ -285,17 +315,20 @@ function mapLiveApplicant(item, sourceOrder = 0) {
     firstValue(item, ['name', 'full_name', 'fullName'])
   if (!fullName) return null
 
+  const jazzhrJobId = firstValue(item, ['jazzhrJobId', 'job_id', 'jobId'])
+  const candidateKey = String(item?.candidateKey || '').replace(/^applicant-/, '').trim() ||
+    [jazzhrApplicationId, jazzhrJobId].filter(Boolean).join('::')
   return {
-    id: `applicant-${[jazzhrApplicationId, firstValue(item, ['job_id', 'jobId'])].filter(Boolean).join('::')}`,
-    candidateKey: [jazzhrApplicationId, firstValue(item, ['job_id', 'jobId'])].filter(Boolean).join('::'),
+    id: `applicant-${candidateKey}`,
+    candidateKey,
     jazzhrApplicationId,
-    jazzhrJobId: firstValue(item, ['job_id', 'jobId']),
+    jazzhrJobId,
     fullName,
     firstName,
     lastName,
     email: firstValue(item, ['email', 'email_address', 'emailAddress']),
     phone: firstValue(item, ['phone', 'prospect_phone', 'cell_phone']),
-    jobTitle: firstValue(item, ['job_title', 'jobTitle', 'job']),
+    jobTitle: firstValue(item, ['jobTitle', 'job_title', 'job']),
     stage: firstValue(item, ['applicant_progress', 'applicantProgress', 'stage', 'status']),
     recruiterId: normalizeRecruiterId(item?.recruiter_id),
     recruiterEmail: firstValue(item, ['recruiter_email', 'recruiterEmail']),
@@ -337,10 +370,11 @@ function snapshot(session) {
 }
 
 function applicantRoleRecords(item) {
-  const jobs = Array.isArray(item?.jobs)
-    ? item.jobs.filter(Boolean)
-    : item?.jobs && typeof item.jobs === 'object'
-      ? [item.jobs]
+  const rawJobs = item?.jobs || item?.job_applications || item?.applications || item?.job
+  const jobs = Array.isArray(rawJobs)
+    ? rawJobs.filter(Boolean)
+    : rawJobs && typeof rawJobs === 'object'
+      ? [rawJobs]
       : []
   if (jobs.length === 0) return [item]
   return jobs.map((job) => ({
@@ -433,14 +467,33 @@ function createLimiter(limit) {
 function extractApplicantArray(data) {
   if (Array.isArray(data)) return data
   if (!data || typeof data !== 'object') return []
-  if (Array.isArray(data.applicants)) return data.applicants
-  if (Array.isArray(data.data)) return data.data
-  if (Array.isArray(data.results)) return data.results
-  if (Array.isArray(data.items)) return data.items
-  if (data.id || data.applicant_id || data.first_name || data.firstName || data.full_name || data.fullName) {
+  for (const key of ['applicants', 'data', 'results', 'items', 'job_applicants', 'applications']) {
+    if (Array.isArray(data[key])) return data[key]
+    if (data[key] && typeof data[key] === 'object') {
+      const nested = extractApplicantArray(data[key])
+      if (nested.length > 0) return nested
+    }
+  }
+  if (
+    data.id ||
+    data.applicant_id ||
+    data.applicantId ||
+    data.appjob_id ||
+    data.appjobId ||
+    data.application_id ||
+    data.applicationId ||
+    data.first_name ||
+    data.firstName ||
+    data.full_name ||
+    data.fullName
+  ) {
     return [data]
   }
-  return Object.values(data).filter((value) => value && typeof value === 'object')
+  for (const value of Object.values(data)) {
+    const nested = extractApplicantArray(value)
+    if (nested.length > 0) return nested
+  }
+  return []
 }
 
 function applicantListPath(page) {
@@ -484,7 +537,9 @@ function normalizeRecruiterId(value) {
 
 function firstValue(item, keys) {
   for (const key of keys) {
-    const value = String(item?.[key] || '').trim()
+    const rawValue = item?.[key]
+    if (rawValue && typeof rawValue === 'object') continue
+    const value = String(rawValue || '').trim()
     if (value) return value
   }
   return ''

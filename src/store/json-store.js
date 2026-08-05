@@ -270,17 +270,23 @@ export function createJsonStore(runtimeDir, cipher = '') {
       return { cases: state.cases.length, audits: state.audits.length, jazzhrCandidates: state.jazzhrCandidates.length };
     },
 
-    async saveJazzhrCandidates(records) {
-      state.jazzhrCandidates = normalizeJazzhrCandidates(records);
+    async saveJazzhrCandidates(records, { accountKey = '' } = {}) {
+      const resolvedAccountKey = resolveCandidateAccountKey(records, accountKey)
+      const candidates = normalizeJazzhrCandidates(withCandidateAccountKey(records, resolvedAccountKey))
+      state.jazzhrCandidates = normalizeJazzhrCandidates([
+        ...state.jazzhrCandidates.filter((candidate) => candidate.accountKey !== resolvedAccountKey),
+        ...candidates,
+      ])
       const now = new Date().toISOString()
       state.candidateSeenAt = Object.fromEntries(state.jazzhrCandidates.map((item) => [item.candidateKey, now]))
       await persistCandidates();
       return state.jazzhrCandidates.length;
     },
 
-    async upsertJazzhrCandidates(records) {
+    async upsertJazzhrCandidates(records, { accountKey = '' } = {}) {
       const merged = new Map(state.jazzhrCandidates.map((candidate) => [candidate.candidateKey, candidate]))
-      for (const candidate of normalizeJazzhrCandidates(records)) {
+      const resolvedAccountKey = resolveCandidateAccountKey(records, accountKey)
+      for (const candidate of normalizeJazzhrCandidates(withCandidateAccountKey(records, resolvedAccountKey))) {
         merged.set(candidate.candidateKey, candidate)
         state.candidateSeenAt[candidate.candidateKey] = new Date().toISOString()
       }
@@ -289,11 +295,14 @@ export function createJsonStore(runtimeDir, cipher = '') {
       return records.length
     },
 
-    async replaceJazzhrJobCandidates(jobId, records) {
+    async replaceJazzhrJobCandidates(jobId, records, { accountKey = '' } = {}) {
       const normalizedJobId = String(jobId || '').trim()
-      const candidates = normalizeJazzhrCandidates(records)
+      const resolvedAccountKey = resolveCandidateAccountKey(records, accountKey)
+      const candidates = normalizeJazzhrCandidates(withCandidateAccountKey(records, resolvedAccountKey))
       state.jazzhrCandidates = normalizeJazzhrCandidates([
-        ...state.jazzhrCandidates.filter((candidate) => candidate.jazzhrJobId !== normalizedJobId),
+        ...state.jazzhrCandidates.filter((candidate) =>
+          candidate.jazzhrJobId !== normalizedJobId || candidate.accountKey !== resolvedAccountKey,
+        ),
         ...candidates,
       ])
       const now = new Date().toISOString()
@@ -318,10 +327,11 @@ export function createJsonStore(runtimeDir, cipher = '') {
       return searchJazzhrCandidateRecords(records, '', { limit });
     },
 
-    async getJazzhrCandidate(jazzhrApplicationId) {
+    async getJazzhrCandidate(jazzhrApplicationId, { accountKey = '' } = {}) {
       const id = String(jazzhrApplicationId || '').replace(/^applicant-/, '');
       const candidate = state.jazzhrCandidates.find((item) =>
-        item.candidateKey === id || item.jazzhrApplicationId === id
+        (item.candidateKey === id || item.jazzhrApplicationId === id) &&
+        (!accountKey || item.accountKey === accountKey)
       ) || null;
       if (!candidate) return null;
       return searchJazzhrCandidateRecords([candidate], '', { limit: 1 })[0] || null;
@@ -814,4 +824,16 @@ function normalizeCipher(cipher) {
     },
     async close() {},
   }
+}
+
+function resolveCandidateAccountKey(records, accountKey = '') {
+  return String(
+    accountKey ||
+    (Array.isArray(records) ? records.find((record) => record?.accountKey)?.accountKey : '') ||
+    'default',
+  ).trim() || 'default'
+}
+
+function withCandidateAccountKey(records, accountKey) {
+  return (Array.isArray(records) ? records : []).map((record) => ({ ...record, accountKey }))
 }
