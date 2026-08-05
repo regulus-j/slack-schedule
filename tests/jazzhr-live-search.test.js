@@ -146,6 +146,43 @@ test('live search keeps the exact role filter on direct applicant results', asyn
   assert.equal(requestedUrls[0].searchParams.get('job_id'), 'job_20251203043549_1EKIK1MUNLB7HIHQ')
 })
 
+test('live search falls back to name-only results when JazzHR returns no role-scoped match', async () => {
+  const requestedUrls = []
+  const fetchFn = async (url) => {
+    const parsed = new URL(String(url))
+    requestedUrls.push(parsed)
+    if (parsed.searchParams.has('job_id')) return response(200, [])
+    return response(200, {
+      id: 'jamal-ai-developer-1',
+      first_name: 'Jamal',
+      last_name: 'Al Badi',
+      job_id: 'ai-developer',
+      job_title: 'AI Developer',
+      applicant_progress: 'Resume Screening',
+    })
+  }
+  const manager = createJazzhrLiveSearchManager({
+    apiKey: 'api-key',
+    pageSize: 20,
+    logger: silentLogger,
+    fetchFn,
+    sleepFn: async () => {},
+  })
+
+  const session = manager.start({
+    query: 'Jamal Al Badi',
+    filters: { roleId: 'ai-developer' },
+  })
+  const result = await manager.ensurePage(session.id, 0)
+
+  assert.equal(result.resultCount, 1)
+  assert.equal(result.results[0].fullName, 'Jamal Al Badi')
+  assert.equal(result.results[0].jazzhrJobId, 'ai-developer')
+  assert.equal(requestedUrls.length, 2)
+  assert.equal(requestedUrls[0].searchParams.get('job_id'), 'ai-developer')
+  assert.equal(requestedUrls[1].searchParams.has('job_id'), false)
+})
+
 test('live search scans later JazzHR pages for matching candidates', async () => {
   const requestedUrls = []
   const logger = testLogger()
