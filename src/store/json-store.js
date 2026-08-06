@@ -94,6 +94,10 @@ export function createJsonStore(runtimeDir, cipher = '') {
   }
 
   async function flush() {
+    if (_flushPromise) {
+      await _flushPromise
+      if (!_dirty) return
+    }
     _flushTimer = null
     _flushPromise = (async () => {
       if (!_dirty) return
@@ -126,6 +130,10 @@ export function createJsonStore(runtimeDir, cipher = '') {
   }
 
   async function flushCandidates() {
+    if (_candidatesFlushPromise) {
+      await _candidatesFlushPromise
+      if (!_candidatesDirty) return
+    }
     _candidatesFlushTimer = null
     _candidatesFlushPromise = (async () => {
       if (!_candidatesDirty) return
