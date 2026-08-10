@@ -14,10 +14,15 @@ function applicant(id, firstName, lastName, overrides = {}) {
   }
 }
 
-function response(status, data) {
+function response(status, data, headers = {}) {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: {
+      get(name) {
+        return headers[String(name).toLowerCase()] || null
+      },
+    },
     async json() {
       return data
     },
@@ -50,8 +55,7 @@ test('live search sends candidate name to the applicants endpoint', async () => 
   assert.equal(result.resultCount, 1)
   assert.equal(result.results[0].fullName, 'Hanah Binwihan')
   assert.equal(requestedUrls.length, 1)
-  assert.equal(requestedUrls[0].pathname, '/v1/applicants')
-  assert.equal(requestedUrls[0].searchParams.get('name'), 'hanah binwihan')
+  assert.equal(requestedUrls[0].pathname, '/v1/applicants/name/hanah%20binwihan')
 })
 
 test('live search sends the selected JazzHR role id to the applicants endpoint', async () => {
@@ -79,8 +83,7 @@ test('live search sends the selected JazzHR role id to the applicants endpoint',
   const result = await manager.ensurePage(session.id, 0)
 
   assert.equal(result.resultCount, 1)
-  assert.equal(requestedUrl.searchParams.get('name'), 'dannella lapitan')
-  assert.equal(requestedUrl.searchParams.get('job_id'), 'loan-associate')
+  assert.equal(requestedUrl.pathname, '/v1/applicants/name/dannella%20lapitan/job_id/loan-associate')
 })
 
 test('live search accepts a direct applicant object response', async () => {
@@ -143,7 +146,10 @@ test('live search keeps the exact role filter on direct applicant results', asyn
   assert.equal(result.resultCount, 1)
   assert.equal(result.results[0].fullName, 'Dannella Lapitan')
   assert.equal(requestedUrls.length, 1)
-  assert.equal(requestedUrls[0].searchParams.get('job_id'), 'job_20251203043549_1EKIK1MUNLB7HIHQ')
+  assert.equal(
+    requestedUrls[0].pathname,
+    '/v1/applicants/name/Dannella/job_id/job_20251203043549_1EKIK1MUNLB7HIHQ',
+  )
 })
 
 test('live search falls back to name-only results when JazzHR returns no role-scoped match', async () => {
@@ -151,7 +157,7 @@ test('live search falls back to name-only results when JazzHR returns no role-sc
   const fetchFn = async (url) => {
     const parsed = new URL(String(url))
     requestedUrls.push(parsed)
-    if (parsed.searchParams.has('job_id')) return response(200, [])
+    if (parsed.pathname.includes('/job_id/')) return response(200, [])
     return response(200, {
       id: 'jamal-ai-developer-1',
       first_name: 'Jamal',
@@ -179,8 +185,8 @@ test('live search falls back to name-only results when JazzHR returns no role-sc
   assert.equal(result.results[0].fullName, 'Jamal Al Badi')
   assert.equal(result.results[0].jazzhrJobId, 'ai-developer')
   assert.equal(requestedUrls.length, 2)
-  assert.equal(requestedUrls[0].searchParams.get('job_id'), 'ai-developer')
-  assert.equal(requestedUrls[1].searchParams.has('job_id'), false)
+  assert.equal(requestedUrls[0].pathname, '/v1/applicants/name/Jamal%20Al%20Badi/job_id/ai-developer')
+  assert.equal(requestedUrls[1].pathname, '/v1/applicants/name/Jamal%20Al%20Badi')
 })
 
 test('live search refreshes even when the cache already contains matching candidates', async () => {
@@ -188,7 +194,7 @@ test('live search refreshes even when the cache already contains matching candid
   const fetchFn = async (url) => {
     const parsed = new URL(String(url))
     requestedUrls.push(parsed)
-    if (parsed.searchParams.has('job_id')) return response(200, [])
+    if (parsed.pathname.includes('/job_id/')) return response(200, [])
     return response(200, {
       data: {
         applicants: [{
@@ -226,28 +232,21 @@ test('live search refreshes even when the cache already contains matching candid
     'Jamal Al Badi',
   ])
   assert.equal(requestedUrls.length, 2)
-  assert.equal(requestedUrls[0].searchParams.get('name'), 'jamal')
-  assert.equal(requestedUrls[0].searchParams.get('job_id'), 'ai-developer')
-  assert.equal(requestedUrls[1].searchParams.has('job_id'), false)
+  assert.equal(requestedUrls[0].pathname, '/v1/applicants/name/jamal/job_id/ai-developer')
+  assert.equal(requestedUrls[1].pathname, '/v1/applicants/name/jamal')
 })
 
-test('live search scans later JazzHR pages for matching candidates', async () => {
+test('live search uses the server-filtered endpoint without applicant pagination', async () => {
   const requestedUrls = []
   const logger = testLogger()
   const fetchFn = async (url) => {
     const parsed = new URL(String(url))
     requestedUrls.push(parsed)
-    if (parsed.pathname.endsWith('/page/2')) {
-      return response(200, [applicant('late-1', 'Late', 'Candidate')])
-    }
-    return response(200, Array.from({ length: 100 }, (_, index) =>
-      applicant(`other-${index}`, 'Other', `Person ${index}`),
-    ))
+    return response(200, [applicant('late-1', 'Late', 'Candidate')])
   }
   const manager = createJazzhrLiveSearchManager({
     apiKey: 'api-key',
     pageSize: 1,
-    maxPages: 3,
     logger,
     fetchFn,
     sleepFn: async () => {},
@@ -259,26 +258,19 @@ test('live search scans later JazzHR pages for matching candidates', async () =>
   assert.equal(result.resultCount, 1)
   assert.equal(result.results[0].fullName, 'Late Candidate')
   assert.equal(result.complete, true)
-  assert.deepEqual(requestedUrls.map((url) => url.pathname), ['/v1/applicants', '/v1/applicants/page/2'])
-  assert.deepEqual(requestedUrls.map((url) => url.searchParams.get('name')), ['late candidate', 'late candidate'])
-  assert.deepEqual(logger.infos.map((entry) => entry.event), [
-    'jazzhr_live_search_page_scanned',
-    'jazzhr_live_search_page_scanned',
-  ])
+  assert.deepEqual(requestedUrls.map((url) => url.pathname), ['/v1/applicants/name/late%20candidate'])
+  assert.deepEqual(logger.infos.map((entry) => entry.event), ['jazzhr_live_search_page_scanned'])
 })
 
-test('live search stops at configured JazzHR page cap', async () => {
+test('live search completes a no-match server-filtered response without paging', async () => {
   const requestedUrls = []
   const fetchFn = async (url) => {
     requestedUrls.push(new URL(String(url)))
-    return response(200, Array.from({ length: 100 }, (_, index) =>
-      applicant(`other-${requestedUrls.length}-${index}`, 'Other', `Person ${index}`),
-    ))
+    return response(200, [])
   }
   const manager = createJazzhrLiveSearchManager({
     apiKey: 'api-key',
     pageSize: 1,
-    maxPages: 2,
     logger: silentLogger,
     fetchFn,
     sleepFn: async () => {},
@@ -289,7 +281,7 @@ test('live search stops at configured JazzHR page cap', async () => {
 
   assert.equal(result.resultCount, 0)
   assert.equal(result.complete, true)
-  assert.deepEqual(requestedUrls.map((url) => url.pathname), ['/v1/applicants', '/v1/applicants/page/2'])
+  assert.deepEqual(requestedUrls.map((url) => url.pathname), ['/v1/applicants/name/missing%20candidate'])
 })
 
 test('live search dedupes candidates by JazzHR id', async () => {
@@ -572,6 +564,25 @@ test('live search retries 429 responses with backoff', async () => {
   assert.deepEqual(delays, [1000])
 })
 
+test('live search honors JazzHR Retry-After when rate limited', async () => {
+  const statuses = [429, 200]
+  const delays = []
+  const result = await fetchApplicantListPage({
+    apiKey: 'api-key',
+    page: 4,
+    fetchFn: async () => response(
+      statuses.shift(),
+      [applicant('jamal-1', 'Jamal', 'Al Badi')],
+      { 'retry-after': '12' },
+    ),
+    sleepFn: async (delay) => delays.push(delay),
+    logger: { warn() {} },
+  })
+
+  assert.equal(result.items[0].first_name, 'Jamal')
+  assert.deepEqual(delays, [12000])
+})
+
 test('live search includes query params on path-paginated applicant requests', async () => {
   const requestedUrls = []
   await fetchApplicantListPage({
@@ -585,8 +596,7 @@ test('live search includes query params on path-paginated applicant requests', a
     sleepFn: async () => {},
   })
 
-  assert.equal(requestedUrls[0].pathname, '/v1/applicants/page/3')
-  assert.equal(requestedUrls[0].searchParams.get('name'), 'alex')
+  assert.equal(requestedUrls[0].pathname, '/v1/applicants/name/alex')
 })
 
 test('live search sessions expire and stale versions can be detected', async () => {

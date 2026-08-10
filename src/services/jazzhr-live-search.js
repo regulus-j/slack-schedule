@@ -188,7 +188,7 @@ export function createJazzhrLiveSearchManager({
         fallbackCount: fallbackResult?.items.length || 0,
         excludedReasons: session.excludedReasons,
       })
-      if (result.items.length < 100) {
+      if (result.complete || result.items.length < 100) {
         session.complete = true
         break
       }
@@ -231,24 +231,22 @@ export async function fetchApplicantListPage({
   fetchFn = globalThis.fetch,
   logger = console,
   sleepFn = sleep,
-  maxRetries = 4,
+  maxRetries = 6,
 } = {}) {
-  const pathname = applicantListPath(page)
+  const pathname = applicantSearchPath({ page, query, roleId })
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const url = new URL(`${BASE}${pathname}`)
     url.searchParams.set('apikey', apiKey)
-    if (query) url.searchParams.set('name', query)
-    if (roleId) url.searchParams.set('job_id', roleId)
     const response = await fetchFn(String(url))
 
     if (response.ok) {
       const data = await response.json()
-      return { page, items: extractApplicantArray(data) }
+      return { page, items: extractApplicantArray(data), complete: Boolean(query) }
     }
 
     const retryable = response.status === 429 || response.status >= 500
     if (retryable && attempt < maxRetries - 1) {
-      const delay = 1000 * 2 ** attempt
+      const delay = retryDelayMs(response, attempt)
       logger.warn?.('jazzhr_live_search_retry', {
         page,
         status: response.status,
@@ -278,6 +276,18 @@ function addMatches(session, pageResult) {
       addCandidate(session, candidate)
     }
   })
+}
+
+function retryDelayMs(response, attempt) {
+  const retryAfter = response.headers?.get?.('retry-after')
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000)
+
+    const retryAt = Date.parse(retryAfter)
+    if (Number.isFinite(retryAt)) return Math.max(0, retryAt - Date.now())
+  }
+  return Math.min(1000 * 2 ** attempt, 30000)
 }
 
 function addInitialCandidates(session, candidates) {
@@ -498,6 +508,16 @@ function extractApplicantArray(data) {
 
 function applicantListPath(page) {
   return page <= 1 ? '/applicants' : `/applicants/page/${page}`
+}
+
+function applicantSearchPath({ page, query, roleId }) {
+  const normalizedQuery = String(query || '').trim()
+  if (!normalizedQuery) return applicantListPath(page)
+  const name = encodeURIComponent(normalizedQuery)
+  const job = String(roleId || '').trim()
+  return job
+    ? `/applicants/name/${name}/job_id/${encodeURIComponent(job)}`
+    : `/applicants/name/${name}`
 }
 
 function candidateSearchText(candidate) {
