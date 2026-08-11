@@ -18,13 +18,13 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@google-cloud/cloud-sql-connector": "1.11.1",
-    "@google-cloud/kms": "5.5.1",
+    "@google-cloud/cloud-sql-connector": "1.11.3",
+    "@google-cloud/kms": "5.7.0",
     "@slack/bolt": "4.7.3",
     "form-data": "4.0.6",
-    "pg": "8.22.0",
-    "qs": "6.15.2",
-    "ws": "8.21.0"
+    "pg": "8.23.0",
+    "qs": "6.15.3",
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
