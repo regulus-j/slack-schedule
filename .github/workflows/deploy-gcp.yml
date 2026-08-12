@@ -157,7 +157,17 @@ jobs:
           SYDNEY_MINUTE=$(TZ=Australia/Sydney date +%M)
           SYDNEY_MINUTES=$((10#${SYDNEY_HOUR} * 60 + 10#${SYDNEY_MINUTE}))
           if [ "${SYDNEY_WEEKDAY}" -le 5 ] && [ "${SYDNEY_MINUTES}" -ge 530 ] && [ "${SYDNEY_MINUTES}" -le 1090 ]; then
-            curl --fail --silent "${URL}/health"
+            HEALTHY=0
+            for attempt in $(seq 1 18); do
+              if response=$(curl --fail --silent --show-error "${URL}/health"); then
+                echo "${response}"
+                HEALTHY=1
+                break
+              fi
+              echo "Health check attempt ${attempt}/18 was not ready: ${response:-no response}"
+              sleep 10
+            done
+            test "${HEALTHY}" -eq 1 || { echo "::error::Cloud Run health check did not become ready."; exit 1; }
           else
             echo "Outside Australia/Sydney operating window; Cloud Run health endpoint is intentionally not ready."
           fi
