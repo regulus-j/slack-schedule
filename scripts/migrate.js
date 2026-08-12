@@ -10,6 +10,9 @@ const migrationsDir = path.resolve(
   'migrations'
 )
 
+const CONNECTION_ATTEMPTS = 12
+const CONNECTION_RETRY_DELAY_MS = 15000
+
 async function ensureMigrationsTable(client) {
   await client.query(
     `create table if not exists schema_migrations (
@@ -67,15 +70,34 @@ function quoteIdentifier(value) {
   return `"${String(value || '').replace(/"/g, '""')}"`
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function connectWithRetry(pool) {
+  let lastError
+  for (let attempt = 1; attempt <= CONNECTION_ATTEMPTS; attempt += 1) {
+    try {
+      return await pool.connect()
+    } catch (error) {
+      lastError = error
+      console.warn(`Database connection attempt ${attempt}/${CONNECTION_ATTEMPTS} failed: ${error.code || error.message}`)
+      if (attempt < CONNECTION_ATTEMPTS) await sleep(CONNECTION_RETRY_DELAY_MS)
+    }
+  }
+  throw lastError
+}
+
 async function run() {
   const config = loadConfig()
   if (config.database.backend === 'json') {
     throw new Error('PostgreSQL configuration is required to run migrations.')
   }
   const connection = await createPostgresPool(config)
-  const client = await connection.pool.connect()
+  let client
 
   try {
+    client = await connectWithRetry(connection.pool)
     await ensureMigrationsTable(client)
 
     const applied = await loadAppliedMigrations(client)
@@ -98,7 +120,7 @@ async function run() {
     await grantRuntimePrivileges(client, config.database.name, runtimeUser)
     console.log('Migrations complete.')
   } finally {
-    client.release()
+    client?.release()
     await connection.close()
   }
 }

@@ -142,6 +142,13 @@ jobs:
       - name: Deploy to Cloud Run
         run: |
           IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}"
+          DB_INSTANCE="slack-scheduler-${{ inputs.environment || 'production' }}-db"
+          DB_STATUS=$(gcloud compute instances describe "${DB_INSTANCE}" \
+            --zone "${{ vars.GCP_REGION }}-a" --format='value(status)')
+          if [ "${DB_STATUS}" != "RUNNING" ]; then
+            gcloud compute instances start "${DB_INSTANCE}" \
+              --zone "${{ vars.GCP_REGION }}-a" --quiet
+          fi
           gcloud run deploy slack-scheduler --region "${{ vars.GCP_REGION }}" --image "${IMAGE}" --quiet
           gcloud run jobs execute slack-scheduler-migrate --region "${{ vars.GCP_REGION }}" --wait
           URL=$(gcloud run services describe slack-scheduler --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
