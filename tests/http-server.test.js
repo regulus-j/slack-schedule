@@ -27,6 +27,25 @@ test('health response exposes readiness only and sends security headers', async 
   }
 })
 
+test('health reports starting before application dependencies are ready', async () => {
+  const server = createHttpServer({
+    config: { port: 0, publicBaseUrl: 'http://localhost' },
+    store: { async stats() { throw new Error('store should not be queried') } },
+    logger: silentLogger(),
+    isReady: () => false,
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/health`)
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { ok: false, error: 'starting' })
+  } finally {
+    server.close()
+    await once(server, 'close')
+  }
+})
+
 test('health reports outside operating hours without touching the store', async () => {
   let statsCalled = false
   const server = createHttpServer({

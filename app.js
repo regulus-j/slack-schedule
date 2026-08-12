@@ -41,7 +41,40 @@ export async function main() {
   }
   const stopEventLoopMonitor = startEventLoopLagMonitor({ logger })
   const store = await createStore(config)
+
+  const app = new App({
+    token: config.slack.botToken,
+    socketMode: true,
+    appToken: config.slack.appToken,
+  })
+  app.error(async (error) => {
+    if (error?.name === 'CaseNotFoundError') {
+      logger.warn('slack_bolt_stale_case_interaction', { caseId: error.caseId, message: error.message })
+      return
+    }
+    logger.error('slack_bolt_unhandled_error', { error })
+  })
+  logger.setAlertDispatcher(createSlackAlertDispatcher({
+    client: app.client,
+    config,
+  }))
+  registerSlackHandlers(app, { config, store, logger })
+
+  // Bind the Cloud Run port before connecting to external services. Cloud Run
+  // considers a revision ready as soon as the process listens; the health
+  // endpoint still reports 503 until the store is initialized.
+  let storeReady = false
+  const httpServer = createHttpServer({
+    config,
+    store,
+    logger,
+    slackClient: app.client,
+    isReady: () => storeReady,
+  })
+  const httpServerStarted = await listenHttpServer(httpServer, config.port, logger)
+
   await store.init()
+  storeReady = true
 
   const operatingWindowOpen = isWithinOperatingWindow(new Date(), config.operatingWindow)
   if (!operatingWindowOpen) {
@@ -80,27 +113,6 @@ export async function main() {
       logger.warn('google_accounts_load_failed', { error: err.message })
     }
   }
-
-  const app = new App({
-    token: config.slack.botToken,
-    socketMode: true,
-    appToken: config.slack.appToken,
-  })
-  app.error(async (error) => {
-    if (error?.name === 'CaseNotFoundError') {
-      logger.warn('slack_bolt_stale_case_interaction', { caseId: error.caseId, message: error.message })
-      return
-    }
-    logger.error('slack_bolt_unhandled_error', { error })
-  })
-  logger.setAlertDispatcher(createSlackAlertDispatcher({
-    client: app.client,
-    config,
-  }))
-  registerSlackHandlers(app, { config, store, logger })
-
-  const httpServer = createHttpServer({ config, store, logger, slackClient: app.client })
-  const httpServerStarted = await listenHttpServer(httpServer, config.port, logger)
 
   logger.info('recruiter_phone_export_configured', {
     configured: Boolean(config.recruiterPhoneExport.url && config.recruiterPhoneExport.token),

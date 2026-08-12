@@ -92,7 +92,7 @@ async function sendSlackDm({ slackClient, slackUserId, text }) {
   }
 }
 
-export function createHttpServer({ config, store, logger, slackClient }) {
+export function createHttpServer({ config, store, logger, slackClient, isReady = () => true }) {
   return createServer(async (req, res) => {
     const correlationId = crypto.randomUUID()
     const baseUrl = config.publicBaseUrl || `http://localhost:${config.port || 3000}`
@@ -105,6 +105,10 @@ export function createHttpServer({ config, store, logger, slackClient }) {
       }
       if (config.operatingWindow && !isWithinOperatingWindow(config.operatingWindow.now || new Date(), config.operatingWindow)) {
         sendJson(res, 503, { ok: false, error: 'outside_operating_hours' })
+        return
+      }
+      if (!isReady()) {
+        sendJson(res, 503, { ok: false, error: 'starting' })
         return
       }
       try {
