@@ -17,6 +17,7 @@ import {
   buildCancellationEmail,
   buildIntakeDraft,
   buildEditCaseDraft,
+  canonicalCheckboxSelection,
   recoverLiveCandidateSearchSession,
   resolveZoomLinkForRecruiters,
   buildScheduledCandidateEmail,
@@ -946,6 +947,69 @@ test('legacy case edit draft preserves saved applicant and multi-recruiter infor
   assert.equal(draft.zoomLink, 'https://zoom.example.com/hanna')
   assert.equal(draft.interviewTimezone, 'Australia/Sydney')
   setJazzhrJobs([])
+})
+
+test('edit draft preserves account-scoped selections missing from current role mappings', () => {
+  setJazzhrJobs([{ id: 'job-edit', roleId: 'job-edit', title: 'Edit Specialist', status: 'Open' }], 'fpi')
+  setRoleAssignments([{
+    roleId: 'job-edit',
+    roleTitle: 'Edit Specialist',
+    recruiter: { id: 'rec-current', name: 'Current Recruiter', email: 'current@example.com', role: 'recruiter' },
+    hiringManager: { id: 'hm-current', name: 'Current Manager', email: 'current.hm@example.com', role: 'hiring_manager' },
+  }])
+
+  const draft = buildEditCaseDraft({
+    id: 'case-edit',
+    status: 'Draft',
+    eventType: '2nd-interview',
+    applicant: { id: 'candidate-edit', firstName: 'Edit', lastName: 'Candidate', email: 'edit@example.com', jobTitle: 'Edit Specialist' },
+    recruiter: { id: 'rec-saved', name: 'Saved Recruiter', email: 'saved@example.com', role: 'recruiter' },
+    hiringManager: { id: 'hm-saved', name: 'Saved Manager', email: 'saved.hm@example.com', role: 'hiring_manager' },
+    interviewTimezone: 'Asia/Manila',
+    notes: 'Keep this note',
+    googleAccountId: 'google@example.com',
+    autofill: {
+      accountKey: 'fpi',
+      eventType: '2nd-interview',
+      roleId: 'job-edit',
+      roleTitle: 'Edit Specialist',
+      zoomLink: 'https://zoom.example.com/saved',
+    },
+  }, [])
+
+  assert.equal(draft.accountKey, 'fpi')
+  assert.deepEqual(draft.recruiterIds, ['rec-saved'])
+  assert.deepEqual(draft.hiringManagerIds, ['hm-saved'])
+  assert.equal(draft.recruiter.email, 'saved@example.com')
+  assert.equal(draft.hiringManager.email, 'saved.hm@example.com')
+  assert.equal(draft.googleAccountId, 'google@example.com')
+  assert.equal(draft.notes, 'Keep this note')
+  assert.equal(draft.interviewTimezone, 'Asia/Manila')
+  assert.ok(draft.availableRecruiters.some((person) => person.id === 'rec-saved'))
+  assert.ok(draft.availableHiringManagers.some((person) => person.id === 'hm-saved'))
+
+  const view = intakeModal({ templates: [], draft })
+  const recruiterBlock = view.blocks.find((block) => block.block_id === 'recruiters_block')
+  const hiringManagerBlock = view.blocks.find((block) => block.block_id === 'hiring_managers_block')
+  assert.deepEqual(recruiterBlock.element.initial_options.map((option) => option.value), ['rec-saved'])
+  assert.deepEqual(hiringManagerBlock.element.initial_options.map((option) => option.value), ['hm-saved'])
+
+  setJazzhrJobs([], 'fpi')
+  setRoleAssignments([])
+})
+
+test('canonical checkbox selection falls back to modal metadata when Slack omits initial selections', () => {
+  const values = {
+    recruiters_block: {
+      recruiter_checkboxes: { selected_options: [] },
+    },
+  }
+  assert.deepEqual(canonicalCheckboxSelection(values, 'recruiter_checkboxes', ['rec-saved']), ['rec-saved'])
+  assert.deepEqual(canonicalCheckboxSelection({
+    recruiters_block: {
+      recruiter_checkboxes: { selected_options: [{ value: 'rec-new' }] },
+    },
+  }, 'recruiter_checkboxes', ['rec-saved']), ['rec-new'])
 })
 
 test('standard intake shows role recruiter Zoom choices before recruiters are selected', () => {
