@@ -451,10 +451,13 @@ export function registerSlackHandlers(app, context) {
           timeZones: schedulingTimeZones,
           defaultTimeZone,
           recruiters: getTalentRecruiters(),
-          roles: getOpenRoles(),
+          roles: getOpenRoles(draft.accountKey || 'default'),
+          accounts: config.jazzhr.accounts || [],
+          selectedAccountKey: draft.accountKey || 'default',
         }),
         private_metadata: buildPrivateMetadata(null, {
           channelId: caseRecord.channelId || body.channel?.id || body.user.id,
+          accountKey: draft.accountKey || 'default',
           editCaseId: caseRecord.id,
           eventType: draft.eventType,
           customInviteSlackRecipientIds: draft.customInviteSlackRecipientIds,
@@ -468,6 +471,7 @@ export function registerSlackHandlers(app, context) {
           zoomLinkRevision: 0,
           resumeLink: draft.resumeLink,
           resumeFile: draft.resumeFile,
+          googleAccountId: draft.googleAccountId || caseRecord.googleAccountId || '',
         }),
       },
     })
@@ -1565,9 +1569,22 @@ export function registerSlackHandlers(app, context) {
       })
       return
     }
+    const recruiterIds = canonicalCheckboxSelection(values, 'recruiter_checkboxes', metadata.recruiterIds)
+    const hiringManagerIds = canonicalCheckboxSelection(values, 'hiring_manager_checkboxes', metadata.hiringManagerIds)
+    const savedExternalAttendees = Array.isArray(editCase?.externalAttendees) ? editCase.externalAttendees : []
     const intakeDraft = buildIntakeDraft(values, templates, {
       editCaseId: metadata.editCaseId || '',
       accountKey,
+      recruiterIds,
+      hiringManagerIds,
+      availableRecruiters: [
+        editCase?.recruiter,
+        ...savedExternalAttendees.filter((person) => person?.role === 'recruiter'),
+      ].filter(Boolean),
+      availableHiringManagers: [
+        editCase?.hiringManager,
+        ...savedExternalAttendees.filter((person) => person?.role === 'hiring_manager'),
+      ].filter(Boolean),
       customInviteSlackRecipientIds: selectedCustomInviteUserIds,
       customInviteSlackRecipients: selectedCustomInviteUsers,
       remoteUpdateStatus: metadata.remoteUpdateStatus || '',
@@ -1575,16 +1592,6 @@ export function registerSlackHandlers(app, context) {
       manualCandidateMode: metadata.manualCandidateMode,
     });
     intakeDraft.googleAccountId = editCase?.googleAccountId || resolveGoogleAccountId(config, accountKey) || ''
-    if (intakeDraft.standardEventType) {
-      if (!hasCheckboxSelection(values, 'recruiter_checkboxes') && metadata.recruiterIds?.length) {
-        intakeDraft.recruiterIds = normalizeIdList(metadata.recruiterIds)
-        intakeDraft.recruiterId = intakeDraft.recruiterIds[0] || ''
-      }
-      if (!hasCheckboxSelection(values, 'hiring_manager_checkboxes') && metadata.hiringManagerIds?.length) {
-        intakeDraft.hiringManagerIds = normalizeIdList(metadata.hiringManagerIds)
-        intakeDraft.hiringManagerId = intakeDraft.hiringManagerIds[0] || ''
-      }
-    }
     const applicantId = intakeDraft.applicantId;
     const templateId = intakeDraft.templateId;
     const stageKey = intakeDraft.stageKey;
@@ -3758,6 +3765,7 @@ export function buildEditCaseDraft(caseRecord, templates) {
     return buildIntakeDraft({}, templates, {
       editCaseId: caseRecord.id,
       eventType: 'custom-invite',
+      accountKey: caseRecord.autofill?.accountKey || caseRecord.accountKey || 'default',
       customInviteTitle: customInvite.title,
       customInviteTemplateId: customInvite.templateId || CUSTOM_INVITE_MANUAL_TEMPLATE_ID,
       customInviteSlackRecipientIds: customInviteSlackRecipients
@@ -3774,6 +3782,7 @@ export function buildEditCaseDraft(caseRecord, templates) {
       customInviteMeetingLink: customInvite.meetingLink,
       notes: caseRecord.notes || '',
       interviewTimezone: caseRecord.interviewTimezone || '',
+      googleAccountId: caseRecord.googleAccountId || '',
     })
   }
 
@@ -3787,15 +3796,27 @@ export function buildEditCaseDraft(caseRecord, templates) {
     ...additional.filter((person) => person?.role === 'hiring_manager').map((person) => person.id),
   ])
   const eventType = caseRecord.eventType || caseRecord.autofill?.eventType || eventTypeForStageKey(caseRecord.stageKey)
+  const accountKey = caseRecord.autofill?.accountKey || caseRecord.accountKey || 'default'
+  const savedRecruiters = [
+    caseRecord.recruiter,
+    ...additional.filter((person) => person?.role === 'recruiter'),
+  ].filter(Boolean)
+  const savedHiringManagers = [
+    caseRecord.hiringManager,
+    ...additional.filter((person) => person?.role === 'hiring_manager'),
+  ].filter(Boolean)
   return buildIntakeDraft({}, templates, {
     editCaseId: caseRecord.id,
     eventType,
+    accountKey,
     roleId: caseRecord.autofill?.roleId || '',
     roleTitle: caseRecord.autofill?.roleTitle || caseRecord.applicant?.jobTitle || '',
     applicant: caseRecord.applicant?.id || '',
     applicantRecord: caseRecord.applicant,
     recruiterIds,
     hiringManagerIds,
+    availableRecruiters: savedRecruiters,
+    availableHiringManagers: savedHiringManagers,
     recruiterPerson: caseRecord.recruiter,
     recruiterName: caseRecord.recruiter?.name || '',
     recruiterEmail: caseRecord.recruiter?.email || '',
@@ -3808,6 +3829,7 @@ export function buildEditCaseDraft(caseRecord, templates) {
     zoomLink: caseRecord.autofill?.zoomLink || '',
     zoomLinkRevision: 0,
     interviewTimezone: caseRecord.interviewTimezone || '',
+    googleAccountId: caseRecord.googleAccountId || '',
   })
 }
 
@@ -5041,6 +5063,8 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       extraAttendees: customInviteExternalAttendees(customInviteRecipients),
       remoteUpdateStatus: '',
       remoteUpdateMessage: '',
+      accountKey: overrides.accountKey || '',
+      googleAccountId: overrides.googleAccountId || '',
     }
   }
   const customInvitePurpose = customInvite
@@ -5096,7 +5120,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     ...getSelectedOptionValues(values, 'additional_recruiter_select'),
   ])
   const jobOfferRecruiterIds = eventType === 'job-offer'
-    ? mappedRecruitersForRole(roleId).map((person) => person.id).slice(0, 10)
+    ? mappedRecruitersForRole(roleId, accountKey).map((person) => person.id).slice(0, 10)
     : []
   const recruiterIds = standardEventType
     ? normalizeIdList(
@@ -5118,13 +5142,29 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const recruiterId = selectedRecruiterId || applicant?.recruiterId || '';
   const hiringManagerId = hiringManagerIds[0] || ''
   const availableRecruiters = standardEventType
-    ? mappedRecruitersForRole(roleId, accountKey)
-    : getTalentRecruiters()
+    ? uniquePeople([
+        ...(overrides.availableRecruiters || []),
+        ...mappedRecruitersForRole(roleId, accountKey),
+      ])
+    : uniquePeople([
+        ...(overrides.availableRecruiters || []),
+        ...getTalentRecruiters(),
+      ])
   const recruiterDirectoryById = new Map(availableRecruiters.map((person) => [String(person?.id || ''), person]))
   const selectedRecruiter = overrides.recruiterPerson || recruiterDirectoryById.get(recruiterId) || findMappedPersonById(recruiterId)
   const recruiter = selectedRecruiter ? asRecruiter(selectedRecruiter) : null
+  const selectedRecruiters = standardEventType
+    ? recruiterIds.map((id) => recruiterDirectoryById.get(id) || findMappedPersonById(id)).filter(Boolean).map(asRecruiter)
+    : (recruiter ? [recruiter] : [])
+  const availableHiringManagers = standardHiringManagersAllowed
+    ? uniquePeople([
+        ...(overrides.availableHiringManagers || []),
+        ...selectableHiringManagersForRole(roleId, accountKey),
+      ])
+    : uniquePeople(overrides.availableHiringManagers || [])
+  const hiringManagerDirectoryById = new Map(availableHiringManagers.map((person) => [String(person?.id || ''), person]))
   const baseHiringManager = requiresHiringManager
-    ? asHiringManager(overrides.hiringManagerPerson || findMappedPersonById(hiringManagerId))
+    ? asHiringManager(overrides.hiringManagerPerson || hiringManagerDirectoryById.get(hiringManagerId) || findMappedPersonById(hiringManagerId))
     : null
   const hiringManagerNeedsEmail = Boolean(baseHiringManager && !isValidEmail(baseHiringManager.email))
   const hiringManagerEmailOverride = String(
@@ -5135,15 +5175,11 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const hiringManager = baseHiringManager && hiringManagerNeedsEmail
     ? { ...baseHiringManager, email: hiringManagerEmailOverride }
     : baseHiringManager
-  const selectedRecruiters = standardEventType
-    ? recruiterIds.map((id) => recruiterDirectoryById.get(id) || findMappedPersonById(id)).filter(Boolean).map(asRecruiter)
-    : (recruiter ? [recruiter] : [])
-  const selectedHiringManagers = standardHiringManagersAllowed ? hiringManagerIds.map(findMappedPersonById).filter(Boolean).map(asHiringManager) : (hiringManager ? [hiringManager] : [])
+  const selectedHiringManagers = standardHiringManagersAllowed
+    ? hiringManagerIds.map((id) => hiringManagerDirectoryById.get(id) || findMappedPersonById(id)).filter(Boolean).map(asHiringManager)
+    : (hiringManager ? [hiringManager] : [])
   const suggestedHiringManagers = standardHiringManagersAllowed
     ? mappedHiringManagersForRole(roleId, accountKey)
-    : []
-  const availableHiringManagers = standardHiringManagersAllowed
-    ? selectableHiringManagersForRole(roleId, accountKey)
     : []
   const template = templates.find((item) => item.id === templateId);
   const stageOption = stageKey
@@ -5337,6 +5373,18 @@ export function hasCheckboxSelection(values, actionId) {
     if (element && Array.isArray(element.selected_options) && element.selected_options.length > 0) return true
   }
   return false
+}
+
+export function canonicalCheckboxSelection(values, actionId, metadataIds = []) {
+  for (const block of Object.values(values || {})) {
+    const element = findElementByActionId(block, actionId)
+    if (!element) continue
+    if (Array.isArray(element.selected_options) && element.selected_options.length > 0) {
+      return normalizeIdList(element.selected_options.map((option) => option?.value))
+    }
+    return normalizeIdList(metadataIds)
+  }
+  return normalizeIdList(metadataIds)
 }
 
 function findInputBlockId(values, actionId, fallback) {
