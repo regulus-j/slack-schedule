@@ -406,75 +406,34 @@ export function registerSlackHandlers(app, context) {
     })
   })
 
-  app.action('edit_schedule_case', async ({ ack, body, client }) => {
+  app.action('delete_case', async ({ ack, body, client }) => {
     await ack()
-    let caseRecord
-    try {
-      caseRecord = await requireCase(store, body.actions[0].value)
-    } catch (error) {
-      if (error instanceof CaseNotFoundError) {
-        await notifyCaseNotFound({ caseId: body.actions[0].value, client, body, config, logger })
-        return
-      }
-      throw error
-    }
-    if (!canEditScheduleCase(caseRecord)) {
+    const caseId = body.actions[0].value
+    const result = await store.deleteCase(caseId, body.user.id)
+    if (!result.deleted) {
       await client.chat.postEphemeral({
         channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
         user: body.user.id,
-        text: 'This case can no longer be edited because its calendar event has already been created.',
+        text: result.reason === 'scheduled'
+          ? 'This case cannot be deleted because it is already scheduled.'
+          : 'This case is no longer available for deletion.',
       })
       return
     }
-
-    const templates = await loadIntakeTemplates()
-    if (isCustomInviteCase(caseRecord)) {
-      try {
-        await ensureRecruitmentSlackDirectory({ client, config, logger })
-      } catch (error) {
-        const correlationId = crypto.randomUUID()
-        logger.error('custom_invite_directory_lookup_failed', { error, correlationId })
-        await client.chat.postEphemeral({
-          channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
-          user: body.user.id,
-          text: `Custom Invite recipients could not be matched with the recruitment sheet. Reference: ${correlationId}`,
-        })
-        return
-      }
-    }
-    const draft = buildEditCaseDraft(caseRecord, templates)
-    await openOrPushModal(client, body, {
-      view: {
-        ...intakeModal({
-          templates,
-          draft,
-          timeZones: schedulingTimeZones,
-          defaultTimeZone,
-          recruiters: getTalentRecruiters(),
-          roles: getOpenRoles(draft.accountKey || 'default'),
-          accounts: config.jazzhr.accounts || [],
-          selectedAccountKey: draft.accountKey || 'default',
-        }),
-        private_metadata: buildPrivateMetadata(null, {
-          channelId: caseRecord.channelId || body.channel?.id || body.user.id,
-          accountKey: draft.accountKey || 'default',
-          editCaseId: caseRecord.id,
-          eventType: draft.eventType,
-          customInviteSlackRecipientIds: draft.customInviteSlackRecipientIds,
-          customInviteTemplateId: draft.customInviteTemplateId,
-          roleId: draft.roleId,
-          roleTitle: draft.roleTitle,
-          recruiterIds: draft.recruiterIds,
-          hiringManagerIds: draft.hiringManagerIds,
-          zoomLink: draft.zoomLink,
-          zoomLinkAuto: false,
-          zoomLinkRevision: 0,
-          resumeLink: draft.resumeLink,
-          resumeFile: draft.resumeFile,
-          googleAccountId: draft.googleAccountId || caseRecord.googleAccountId || '',
-        }),
-      },
+    await store.addAudit({
+      caseId,
+      actorSlackUserId: body.user.id,
+      action: 'case_deleted',
     })
+    await publishHome({ client, userId: body.user.id, store, logger, config })
+    await updateCaseSlackMessage({ client, caseRecord: result.caseRecord })
+    if (body.view?.id && body.view?.hash) {
+      await client.views.update({
+        view_id: body.view.id,
+        hash: body.view.hash,
+        view: caseDetailsModal(result.caseRecord),
+      })
+    }
   })
 
   app.action('candidate_search_submit', async ({ ack, body, client }) => {
@@ -829,6 +788,8 @@ export function registerSlackHandlers(app, context) {
       body: updatedBody,
       templates: await loadSchedulingTemplates(),
       draftOverrides: {
+        recruiterIds,
+        hiringManagerIds,
         roleTitleInput: role?.title || '',
         recruiterName: selectedRecruiters[0]?.name || '',
         recruiterEmail: selectedRecruiters[0]?.email || '',
@@ -1575,7 +1536,10 @@ export function registerSlackHandlers(app, context) {
     const intakeDraft = buildIntakeDraft(values, templates, {
       editCaseId: metadata.editCaseId || '',
       accountKey,
-      recruiterIds,
+      // An empty checkbox payload can occur for Slack's initially selected
+      // options. Let buildIntakeDraft recover applicant autofill in that case;
+      // non-empty metadata/checkbox selections remain authoritative.
+      recruiterIds: recruiterIds.length > 0 ? recruiterIds : undefined,
       hiringManagerIds,
       availableRecruiters: [
         editCase?.recruiter,
@@ -3831,6 +3795,7 @@ export function buildEditCaseDraft(caseRecord, templates) {
     interviewTimezone: caseRecord.interviewTimezone || '',
     googleAccountId: caseRecord.googleAccountId || '',
   })
+
 }
 
 async function updateCaseSlackMessage({ client, caseRecord }) {

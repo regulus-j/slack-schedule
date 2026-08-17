@@ -111,6 +111,8 @@ export function createPostgresStore(config, tokenCipher) {
       feedbackEmail: normalizeJson(row.feedback_email),
       feedbackEmailStatus: row.feedback_email_status,
       legalHold: Boolean(row.legal_hold),
+      deletedAt: row.deleted_at?.toISOString?.() || row.deleted_at || null,
+      deletedBy: row.deleted_by,
     };
   }
 
@@ -745,20 +747,20 @@ export function createPostgresStore(config, tokenCipher) {
     },
 
     async listCases() {
-      const result = await query('SELECT * FROM scheduling_cases ORDER BY created_at DESC LIMIT 100');
+      const result = await query('SELECT * FROM scheduling_cases WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 100');
       return result.rows.map(rowToCase);
     },
 
     async listCasesForUser(slackUserId) {
       const result = await query(
-        'SELECT * FROM scheduling_cases WHERE owner_slack_user_id = $1 ORDER BY created_at DESC LIMIT 50',
+        'SELECT * FROM scheduling_cases WHERE owner_slack_user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 50',
         [slackUserId],
       );
       return result.rows.map(rowToCase);
     },
 
     async getCase(id) {
-      const result = await query('SELECT * FROM scheduling_cases WHERE id = $1', [id]);
+      const result = await query('SELECT * FROM scheduling_cases WHERE id = $1 AND deleted_at IS NULL', [id]);
       return result.rows[0] ? rowToCase(result.rows[0]) : undefined;
     },
 
@@ -767,12 +769,31 @@ export function createPostgresStore(config, tokenCipher) {
         `SELECT *
          FROM scheduling_cases
          WHERE status = 'Scheduled'
+           AND deleted_at IS NULL
            AND current_schedule IS NOT NULL
            AND stage_key = ANY($1)
          ORDER BY updated_at ASC`,
         [['1st-interview', '2nd-interview', 'final-interview', 'job-offer-discussion']],
       )
       return result.rows.map(rowToCase)
+    },
+
+    async deleteCase(id, actorSlackUserId) {
+      const result = await query(
+        `UPDATE scheduling_cases
+         SET deleted_at = now(), deleted_by = $2, updated_at = now()
+         WHERE id = $1
+           AND deleted_at IS NULL
+           AND status <> 'Scheduled'
+           AND calendar_event_id IS NULL
+         RETURNING *`,
+        [id, actorSlackUserId || null],
+      )
+      if (result.rows[0]) return { deleted: true, caseRecord: rowToCase(result.rows[0]) }
+      const current = await query('SELECT status, calendar_event_id, deleted_at FROM scheduling_cases WHERE id = $1', [id])
+      if (!current.rows[0]) return { deleted: false, reason: 'not_found' }
+      if (current.rows[0].deleted_at) return { deleted: false, reason: 'already_deleted' }
+      return { deleted: false, reason: 'scheduled' }
     },
 
     async updateCase(id, patch) {

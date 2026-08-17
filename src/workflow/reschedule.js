@@ -32,6 +32,10 @@ export function canEditScheduleCase(caseRecord) {
   return Boolean(caseRecord) && !caseRecord.calendarEventId && caseRecord.status !== 'Scheduled'
 }
 
+export function canDeleteCase(caseRecord) {
+  return Boolean(caseRecord) && !isScheduledCase(caseRecord)
+}
+
 export function canStartReschedule(caseRecord) {
   const normalized = normalizeCaseSchedule(caseRecord);
   return (
@@ -42,6 +46,7 @@ export function canStartReschedule(caseRecord) {
 }
 
 export function visibleCaseActions(caseRecord) {
+  if (!caseRecord || caseRecord.deletedAt) return []
   if (isCustomInviteCase(caseRecord)) {
     if (isScheduledCase(caseRecord)) {
       return [
@@ -49,7 +54,7 @@ export function visibleCaseActions(caseRecord) {
         ...(hasPendingCustomInviteDeliveries(caseRecord) ? ['retry_custom_invites'] : []),
       ]
     }
-    return ['edit_schedule_case']
+    return ['delete_case']
   }
 
   if (caseRecord.rescheduleStatus === RESCHEDULE_STATUSES.CANCELLED) {
@@ -70,10 +75,7 @@ export function visibleCaseActions(caseRecord) {
     return actions
   }
 
-  const actions = [
-    'edit_schedule_case',
-    'scheduling_open',
-  ]
+  const actions = ['scheduling_open', 'delete_case']
 
   return actions
 }

@@ -5,6 +5,7 @@ import {
   applyRescheduleRequest,
   applyScheduledEvent,
   buildScheduleSnapshot,
+  canDeleteCase,
   canEditScheduleCase,
   canFinalizeSchedule,
   canStartReschedule,
@@ -885,7 +886,7 @@ test('intake modal strips invalid blank initial options before rendering', () =>
   assertNoEmptyInitialOptions(view)
 })
 
-test('draft cases can be edited until a calendar event is created', () => {
+test('draft cases can be deleted until a calendar event is created', () => {
   const draftCase = {
     ...baseCase,
     status: 'Draft',
@@ -897,12 +898,12 @@ test('draft cases can be edited until a calendar event is created', () => {
     calendarEventId: 'event-1',
   }
 
-  assert.equal(canEditScheduleCase(draftCase), true)
-  assert.equal(canEditScheduleCase(scheduledCase), false)
-  assert.ok(visibleCaseActions(draftCase).includes('edit_schedule_case'))
-  assert.equal(visibleCaseActions(scheduledCase).includes('edit_schedule_case'), false)
-  assert.ok(actionButtonsForCase(draftCase).some((item) => item.action_id === 'edit_schedule_case'))
-  assert.equal(actionButtonsForCase(scheduledCase).some((item) => item.action_id === 'edit_schedule_case'), false)
+  assert.equal(canDeleteCase(draftCase), true)
+  assert.equal(canDeleteCase(scheduledCase), false)
+  assert.ok(visibleCaseActions(draftCase).includes('delete_case'))
+  assert.equal(visibleCaseActions(scheduledCase).includes('delete_case'), false)
+  assert.ok(actionButtonsForCase(draftCase).some((item) => item.action_id === 'delete_case'))
+  assert.equal(actionButtonsForCase(scheduledCase).some((item) => item.action_id === 'delete_case'), false)
 })
 
 test('legacy case edit draft preserves saved applicant and multi-recruiter information', () => {
@@ -2193,6 +2194,33 @@ test('builds intake draft recruiter from the selected applicant', () => {
   assert.equal(draft.manualApplicantName, '');
   assert.equal(draft.applicant.jobTitle, 'Support Specialist');
 });
+
+test('initial submission fallback keeps applicant recruiter when checkbox state is empty', () => {
+  setApplicants([
+    {
+      id: 'applicant-autofill',
+      firstName: 'Autofill',
+      lastName: 'Candidate',
+      email: 'autofill@example.com',
+      jobTitle: 'Support Specialist',
+      recruiterId: 'rec-autofill',
+    },
+  ])
+  setRecruiters([
+    { id: 'rec-autofill', name: 'Auto Recruiter', email: 'auto@example.com', role: 'recruiter' },
+  ])
+
+  const draft = buildIntakeDraft({
+    event_type_block: { event_type_select: { selected_option: { value: '1st-interview' } } },
+    applicant_block: { applicant_select: { selected_option: { value: 'applicant-autofill' } } },
+    recruiters_block: { recruiter_checkboxes: { selected_options: [] } },
+  }, [], { recruiterIds: undefined })
+
+  assert.deepEqual(draft.recruiterIds, ['rec-autofill'])
+  assert.equal(draft.recruiter.email, 'auto@example.com')
+  setApplicants([])
+  setRecruiters([])
+})
 
 test('builds intake draft selection email from Slack profile override', () => {
   setApplicants([]);

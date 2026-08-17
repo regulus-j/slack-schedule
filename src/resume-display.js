@@ -6,7 +6,7 @@ export function resumeDisplayText(caseRecord) {
   ].filter(Boolean).join(' ')) || clean(caseRecord?.applicant?.fullName) || 'Name'
   return `[Resume]${role} - ${name}`
 }
-
+ 
 export function resumeSlackLink(caseRecord) {
   const url = clean(caseRecord?.resumeLink)
   const text = resumeDisplayText(caseRecord)

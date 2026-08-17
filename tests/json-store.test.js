@@ -81,6 +81,32 @@ test('json store reloads cases and candidates from the split files on re-init', 
   })
 })
 
+test('json store soft-deletes unscheduled cases and hides them from normal queries', async () => {
+  await withTempDir(async (dir) => {
+    const store = createJsonStore(dir)
+    await store.init()
+    const draft = await store.createCase({ ownerSlackUserId: 'U-DELETE' })
+    const result = await store.deleteCase(draft.id, 'U-ACTOR')
+    assert.equal(result.deleted, true)
+    assert.equal(result.caseRecord.deletedBy, 'U-ACTOR')
+    assert.equal(await store.getCase(draft.id), undefined)
+    assert.equal((await store.listCases()).some((item) => item.id === draft.id), false)
+    assert.equal((await store.deleteCase(draft.id, 'U-ACTOR')).reason, 'already_deleted')
+    await store.close()
+  })
+})
+
+test('json store refuses to delete scheduled cases', async () => {
+  await withTempDir(async (dir) => {
+    const store = createJsonStore(dir)
+    await store.init()
+    const scheduled = await store.createCase({ ownerSlackUserId: 'U-DELETE', status: 'Scheduled' })
+    assert.deepEqual(await store.deleteCase(scheduled.id, 'U-ACTOR'), { deleted: false, reason: 'scheduled' })
+    assert.ok(await store.getCase(scheduled.id))
+    await store.close()
+  })
+})
+
 test('json store migrates a legacy embedded candidate index into candidates.json and trims state.json', async () => {
   await withTempDir(async (dir) => {
     // Pre-write a legacy state.json that embeds the candidate index, the way

@@ -1405,12 +1405,19 @@ function casePeopleSummary(caseRecord, role) {
 
 export function actionButtonsForCase(caseRecord, compact = false) {
   const actionMap = {
-    edit_schedule_case: button(
-      compact ? 'Edit' : 'Edit case',
-      'edit_schedule_case',
-      undefined,
-      caseRecord.id,
-    ),
+    delete_case: {
+      type: 'button',
+      text: plain(compact ? 'Delete' : '🗑️ Delete case'),
+      action_id: 'delete_case',
+      style: 'danger',
+      value: caseRecord.id,
+      confirm: {
+        title: plain('Delete case?'),
+        text: plain('This case will be removed from active views. This cannot be undone from Slack.'),
+        confirm: plain('Delete'),
+        deny: plain('Keep case'),
+      },
+    },
     send_reminder: button(compact ? '🔔 Reminder' : '🔔 Send reminder', 'open_reminder_message_modal', undefined, caseRecord.id),
     scheduling_open: button(compact ? '📅 Schedule' : '📅 Schedule Interview', 'scheduling_open', 'primary', caseRecord.id),
     open_reschedule_modal: button(

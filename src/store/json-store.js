@@ -551,22 +551,38 @@ export function createJsonStore(runtimeDir, cipher = '') {
     },
 
     async listCases() {
-      return state.cases.map(normalizeCase);
+      return state.cases.filter((item) => !item.deletedAt).map(normalizeCase);
     },
 
     async listCasesForUser(slackUserId) {
-      return state.cases.filter((item) => item.ownerSlackUserId === slackUserId).map(normalizeCase);
+      return state.cases.filter((item) => item.ownerSlackUserId === slackUserId && !item.deletedAt).map(normalizeCase);
     },
 
     async getCase(id) {
-      return normalizeCase(caseIndex.get(id));
+      const record = caseIndex.get(id)
+      return record?.deletedAt ? undefined : normalizeCase(record);
     },
 
     async listNotificationEligibleCases() {
       const stages = new Set(['1st-interview', '2nd-interview', 'final-interview', 'job-offer-discussion'])
       return state.cases
-        .filter((item) => item.status === 'Scheduled' && item.currentSchedule && stages.has(item.stageKey))
+        .filter((item) => !item.deletedAt && item.status === 'Scheduled' && item.currentSchedule && stages.has(item.stageKey))
         .map(normalizeCase)
+    },
+
+    async deleteCase(id, actorSlackUserId) {
+      const existing = caseIndex.get(id)
+      if (!existing) return { deleted: false, reason: 'not_found' }
+      if (existing.deletedAt) return { deleted: false, reason: 'already_deleted' }
+      if (existing.status === 'Scheduled' || existing.calendarEventId) {
+        return { deleted: false, reason: 'scheduled' }
+      }
+      const index = state.cases.findIndex((item) => item.id === id)
+      const deletedAt = new Date().toISOString()
+      state.cases[index] = { ...existing, deletedAt, deletedBy: actorSlackUserId || null, updatedAt: deletedAt }
+      caseIndex.set(id, state.cases[index])
+      await persist()
+      return { deleted: true, caseRecord: normalizeCase(state.cases[index]) }
     },
 
     async updateCase(id, patch) {
