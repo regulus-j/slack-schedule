@@ -9,6 +9,7 @@ import {
   deliverNotification,
   NOTIFICATION_TYPES,
 } from '../src/workflow/notifications.js'
+import { SYDNEY_TIME_ZONE, formatDateInTimeZone } from '../src/time.js'
 
 const SUPPORTED_TYPES = new Set([
   ...Object.values(NOTIFICATION_TYPES),
@@ -22,8 +23,16 @@ async function run() {
   const config = loadConfig()
   const store = await createStore(config)
   await store.init()
-  const caseRecord = await store.getCase(args.caseId)
-  if (!caseRecord) throw new Error(`Case not found: ${args.caseId}`)
+  const cases = args.today
+    ? (await store.listCases()).filter((item) =>
+        formatDateInTimeZone(item.createdAt, config.scheduling?.timeZone || SYDNEY_TIME_ZONE) === todayInTimeZone(config.scheduling?.timeZone),
+      )
+    : [await store.getCase(args.caseId)]
+  if (!args.today && !cases[0]) throw new Error(`Case not found: ${args.caseId}`)
+  if (args.today && cases.length === 0) {
+    console.log('No cases were created today.')
+    return
+  }
 
   const types = args.type === 'all'
     ? Object.values(NOTIFICATION_TYPES)
@@ -31,8 +40,10 @@ async function run() {
   validateRecipients(args, types)
 
   if (!args.deliver) {
-    for (const type of types) {
-      console.log(JSON.stringify(buildPreview(type, caseRecord, config, args), null, 2))
+    for (const caseRecord of cases) {
+      for (const type of types) {
+        console.log(JSON.stringify({ caseId: caseRecord.id, ...buildPreview(type, caseRecord, config, args) }, null, 2))
+      }
     }
     return
   }
@@ -45,25 +56,31 @@ async function run() {
       })
     : null
 
-  for (const type of types) {
-    const result = await deliverNotification({
-      type,
-      job: {
-        caseId: caseRecord.id,
-        scheduleVersion: caseRecord.scheduleVersion || 0,
-      },
-      store,
-      client: app?.client,
-      config,
-      logger: consoleLogger(),
-      recipientOverrides: {
-        slackUser: args.slackUser,
-        email: args.email,
-      },
-      testMode: true,
-    })
-    console.log(JSON.stringify({ type, result: serializableResult(result) }, null, 2))
+  for (const caseRecord of cases) {
+    for (const type of types) {
+      const result = await deliverNotification({
+        type,
+        job: {
+          caseId: caseRecord.id,
+          scheduleVersion: caseRecord.scheduleVersion || 0,
+        },
+        store,
+        client: app?.client,
+        config,
+        logger: consoleLogger(),
+        recipientOverrides: {
+          slackUser: args.slackUser,
+          email: args.email,
+        },
+        testMode: true,
+      })
+      console.log(JSON.stringify({ caseId: caseRecord.id, type, result: serializableResult(result) }, null, 2))
+    }
   }
+}
+
+function todayInTimeZone(timeZone) {
+  return formatDateInTimeZone(new Date(), timeZone || SYDNEY_TIME_ZONE)
 }
 
 function buildPreview(type, caseRecord, config, args) {
@@ -109,6 +126,7 @@ function buildPreview(type, caseRecord, config, args) {
 function parseArgs(argv) {
   const args = {
     caseId: '',
+    today: false,
     type: '',
     deliver: false,
     slackUser: '',
@@ -118,6 +136,7 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const value = argv[index]
     if (value === '--case') args.caseId = argv[++index] || ''
+    else if (value === '--today') args.today = true
     else if (value === '--type') args.type = argv[++index] || ''
     else if (value === '--slack-user') args.slackUser = argv[++index] || ''
     else if (value === '--email') args.email = argv[++index] || ''
@@ -129,7 +148,8 @@ function parseArgs(argv) {
 }
 
 function validateArgs(args) {
-  if (!args.caseId) throw new Error('--case <id> is required')
+  if (!args.caseId && !args.today) throw new Error('--case <id> or --today is required')
+  if (args.caseId && args.today) throw new Error('--case and --today cannot be used together')
   if (!SUPPORTED_TYPES.has(args.type)) {
     throw new Error(`--type must be one of: ${[...SUPPORTED_TYPES].join(', ')}`)
   }

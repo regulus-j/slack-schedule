@@ -43,13 +43,13 @@ export function notificationSchedule(caseRecord, now = new Date()) {
   }
 
   const completionDue = new Date(end.getTime() + 15 * 60 * 1000)
-  if (completionDue > now) {
-    jobs.push({
-      type: NOTIFICATION_TYPES.COMPLETION_REMINDER,
-      scheduleVersion: version,
-      dueAt: completionDue.toISOString(),
-    })
-  }
+  jobs.push({
+    type: NOTIFICATION_TYPES.COMPLETION_REMINDER,
+    scheduleVersion: version,
+    // If the worker was stopped outside operating hours, deliver the missed
+    // follow-up on the next startup instead of dropping it during backfill.
+    dueAt: new Date(Math.max(completionDue.getTime(), now.getTime())).toISOString(),
+  })
 
   return jobs
 }
@@ -76,7 +76,6 @@ export async function scheduleCaseNotifications({
   }
 
   const jobs = notificationSchedule(caseRecord, now)
-    .filter((job) => !backfill || new Date(job.dueAt) > now)
   const saved = []
   for (const job of jobs) {
     saved.push(await store.upsertNotificationJob({

@@ -74,6 +74,12 @@ npm.cmd run notifications:test -- --case case-id --type all --email test@example
 
 Using real case recipients requires the existing explicit `--use-case-recipients` opt-in.
 
+Fast-forward all cases created today (Sydney date):
+
+```powershell
+npm.cmd run notifications:test -- --today --type all --email test@example.com --slack-user U12345678 --deliver
+```
+
 ## Recovery
 
 Use [incident-response.md](incident-response.md) for credential exposure, OAuth compromise, unauthorized actions, duplicate sends, dependency vulnerabilities, and database recovery.

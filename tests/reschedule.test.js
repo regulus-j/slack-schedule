@@ -906,6 +906,15 @@ test('draft cases can be deleted until a calendar event is created', () => {
   assert.equal(actionButtonsForCase(scheduledCase).some((item) => item.action_id === 'delete_case'), false)
 })
 
+test('home view includes scheduled cases in the team queue', () => {
+  const view = homeView({
+    myCases: [],
+    teamCases: [{ ...baseCase, id: 'team-scheduled', status: 'Scheduled' }],
+    teamCasesTotal: 1,
+  })
+  assert.match(JSON.stringify(view.blocks), /team-scheduled|Alex Reyes/)
+})
+
 test('legacy case edit draft preserves saved applicant and multi-recruiter information', () => {
   setTalentRecruiters([
     { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter' },

@@ -70,6 +70,13 @@ test('late scheduling sends the candidate reminder immediately before the interv
   )
 })
 
+test('overdue completion follow-ups are backfilled for immediate delivery', () => {
+  const now = new Date('2026-11-03T00:00:00.000Z')
+  const jobs = notificationSchedule(scheduledCase(), now)
+  const completion = jobs.find((job) => job.type === NOTIFICATION_TYPES.COMPLETION_REMINDER)
+  assert.equal(completion.dueAt, now.toISOString())
+})
+
 test('job offers schedule completion follow-up but no preparation reminder', () => {
   const jobs = notificationSchedule(
     scheduledCase({ stageKey: 'job-offer-discussion' }),

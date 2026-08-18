@@ -1674,7 +1674,7 @@ export function registerSlackHandlers(app, context) {
           caseMessageChannel: caseMessage.channel,
         },
       })
-      await publishHome({ client, userId: body.user.id, store, logger, config })
+      await publishHomeToRecruitmentTeam({ client, userId: body.user.id, store, logger, config })
       return
     }
 
@@ -1862,7 +1862,7 @@ export function registerSlackHandlers(app, context) {
         caseMessageChannel: caseMessage.channel,
       },
     })
-    await publishHome({ client, userId: body.user.id, store, logger, config });
+    await publishHomeToRecruitmentTeam({ client, userId: body.user.id, store, logger, config });
   });
 
   app.action('open_candidate_message_modal', async ({ ack, body, client }) => {
@@ -4338,7 +4338,7 @@ async function refreshSchedulingModal({ client, body, store, selectedStageKey })
 
 async function publishHome({ client, userId, store, logger, config }) {
   const [myCases, allCases] = await Promise.all([store.listCasesForUser(userId), store.listCases()]);
-  const teamCases = allCases.filter((item) => item.ownerSlackUserId !== userId && item.status !== 'Scheduled');
+  const teamCases = allCases.filter((item) => item.ownerSlackUserId !== userId);
 
   const dateFilter = homeDateFilters.get(userId) || null
   const myCasesTotal = myCases.length
@@ -5338,6 +5338,14 @@ export function hasCheckboxSelection(values, actionId) {
     if (element && Array.isArray(element.selected_options) && element.selected_options.length > 0) return true
   }
   return false
+}
+
+async function publishHomeToRecruitmentTeam({ client, userId, store, logger, config }) {
+  const userIds = [...new Set([
+    userId,
+    ...(config.security?.recruitmentUserIds || []),
+  ])].filter(Boolean)
+  await Promise.all(userIds.map((userId) => publishHome({ client, userId, store, logger, config })))
 }
 
 export function canonicalCheckboxSelection(values, actionId, metadataIds = []) {
