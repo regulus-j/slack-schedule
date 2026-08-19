@@ -46,7 +46,7 @@ test('health reports starting before application dependencies are ready', async 
   }
 })
 
-test('health reports outside operating hours without touching the store', async () => {
+test('health reports database readiness outside operating hours', async () => {
   let statsCalled = false
   const server = createHttpServer({
     config: {
@@ -66,9 +66,9 @@ test('health reports outside operating hours without touching the store', async 
   await once(server, 'listening')
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/health`)
-    assert.equal(response.status, 503)
-    assert.deepEqual(await response.json(), { ok: false, error: 'outside_operating_hours' })
-    assert.equal(statsCalled, false)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { ok: true })
+    assert.equal(statsCalled, true)
   } finally {
     server.close()
     await once(server, 'close')

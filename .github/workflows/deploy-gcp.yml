@@ -139,36 +139,41 @@ jobs:
             -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
             -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
-      - name: Deploy to Cloud Run
+      - name: Deploy callback service and application VM
         run: |
           IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/slack-scheduler-image/app:${{ github.sha }}"
           DB_INSTANCE="slack-scheduler-${{ inputs.environment || 'production' }}-db"
+          APP_INSTANCE="slack-scheduler-${{ inputs.environment || 'production' }}-app"
           DB_STATUS=$(gcloud compute instances describe "${DB_INSTANCE}" \
             --zone "${{ vars.GCP_REGION }}-a" --format='value(status)')
           if [ "${DB_STATUS}" != "RUNNING" ]; then
             gcloud compute instances start "${DB_INSTANCE}" \
-              --zone "${{ vars.GCP_REGION }}-a" --quiet
+            --zone "${{ vars.GCP_REGION }}-a" --quiet
           fi
+          for attempt in $(seq 1 24); do
+            if gcloud compute ssh "${DB_INSTANCE}" --zone "${{ vars.GCP_REGION }}-a" --quiet \
+              --command="sudo -u postgres pg_isready -d scheduler"; then
+              break
+            fi
+            test "${attempt}" -lt 24 || { echo "::error::PostgreSQL did not become ready."; exit 1; }
+            sleep 10
+          done
           gcloud run deploy slack-scheduler --region "${{ vars.GCP_REGION }}" --image "${IMAGE}" --quiet
           gcloud run jobs execute slack-scheduler-migrate --region "${{ vars.GCP_REGION }}" --wait
-          URL=$(gcloud run services describe slack-scheduler --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
-          SYDNEY_WEEKDAY=$(TZ=Australia/Sydney date +%u)
-          SYDNEY_HOUR=$(TZ=Australia/Sydney date +%H)
-          SYDNEY_MINUTE=$(TZ=Australia/Sydney date +%M)
-          SYDNEY_MINUTES=$((10#${SYDNEY_HOUR} * 60 + 10#${SYDNEY_MINUTE}))
-          if [ "${SYDNEY_WEEKDAY}" -le 5 ] && [ "${SYDNEY_MINUTES}" -ge 530 ] && [ "${SYDNEY_MINUTES}" -le 1090 ]; then
-            HEALTHY=0
-            for attempt in $(seq 1 18); do
-              if response=$(curl --fail --silent --show-error "${URL}/health"); then
-                echo "${response}"
-                HEALTHY=1
-                break
-              fi
-              echo "Health check attempt ${attempt}/18 was not ready: ${response:-no response}"
-              sleep 10
-            done
-            test "${HEALTHY}" -eq 1 || { echo "::error::Cloud Run health check did not become ready."; exit 1; }
-          else
-            echo "Outside Australia/Sydney operating window; Cloud Run health endpoint is intentionally not ready."
+          APP_STATUS=$(gcloud compute instances describe "${APP_INSTANCE}" \
+            --zone "${{ vars.GCP_REGION }}-a" --format='value(status)')
+          if [ "${APP_STATUS}" = "RUNNING" ]; then
+            gcloud compute instances stop "${APP_INSTANCE}" --zone "${{ vars.GCP_REGION }}-a" --quiet
           fi
-          echo "Deployed ${IMAGE} to ${URL}"
+          gcloud compute instances start "${APP_INSTANCE}" --zone "${{ vars.GCP_REGION }}-a" --quiet
+          for attempt in $(seq 1 30); do
+            if response=$(gcloud compute ssh "${APP_INSTANCE}" --zone "${{ vars.GCP_REGION }}-a" --quiet \
+              --command="curl --fail --silent http://127.0.0.1:3000/health"); then
+              echo "${response}"
+              break
+            fi
+            test "${attempt}" -lt 30 || { echo "::error::Application VM health check did not become ready."; exit 1; }
+            sleep 10
+          done
+          URL=$(gcloud run services describe slack-scheduler --region "${{ vars.GCP_REGION }}" --format='value(status.url)')
+          echo "Deployed callback service ${IMAGE} to ${URL}; application VM is ${APP_INSTANCE}"

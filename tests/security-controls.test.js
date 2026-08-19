@@ -60,7 +60,7 @@ test('Slack middleware blocks an unauthorized forged case action before next han
   assert.equal(nextCalled, false)
 })
 
-test('Slack middleware blocks authorized requests outside operating hours', async () => {
+test('Slack middleware allows authorized requests outside operating hours', async () => {
   let middleware
   installSlackSecurityMiddleware({
     use(handler) { middleware = handler },
@@ -88,7 +88,7 @@ test('Slack middleware blocks authorized requests outside operating hours', asyn
     ack: async () => {},
     next: async () => { nextCalled = true },
   })
-  assert.equal(nextCalled, false)
+  assert.equal(nextCalled, true)
 })
 
 test('rate-limit classes distinguish reads, mutations, side effects, and admin operations', () => {

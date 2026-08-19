@@ -1,5 +1,9 @@
 output "cloud_run_service" { value = google_cloud_run_v2_service.app.uri }
 
+output "application_instance" {
+  value = google_compute_instance.app.name
+}
+
 output "database_private_ip" {
   value = google_compute_address.db.address
 }

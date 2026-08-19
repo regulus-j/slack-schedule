@@ -21,6 +21,8 @@ configuration.
    - Local dev: `http://localhost:3000/oauth/google/callback`
    - Staging: `https://<staging-cloud-run-url>/oauth/google/callback`
    - Production: `https://<production-cloud-run-url>/oauth/google/callback`
+
+The Cloud Run URL remains the callback endpoint even though Socket Mode and notifications run on the scheduled application VM. The callback revision must use `APP_ROLE=oauth-callback`; it must not run a second Socket Mode connection.
 4. Set the corresponding env vars (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`).
 5. `GOOGLE_REDIRECT_URI` is optional — when unset, it defaults to
    `{PUBLIC_BASE_URL}/oauth/google/callback`. When set explicitly, it takes precedence.
@@ -52,7 +54,8 @@ match any authorized URI in the Google Cloud Console. Add it or fix the env var.
 Expected signals:
 
 - `health_server_started`
-- `slack_app_started`
+- `slack_app_started` from the application VM
+- `oauth_callback_server_started` from the callback service
 - successful `/health`
 - successful Cloud SQL connection
 - successful forced-error alert DM to configured users

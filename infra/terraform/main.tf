@@ -178,8 +178,13 @@ resource "google_compute_firewall" "postgres" {
     protocol = "tcp"
     ports    = ["5432"]
   }
-  source_ranges = ["10.8.0.0/28"]
+  source_ranges = ["10.8.0.0/28", "10.20.0.0/24"]
   target_tags   = ["slack-scheduler-db"]
+}
+resource "google_project_iam_member" "app_artifact_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.app.email}"
 }
 
 resource "google_compute_instance" "db" {
@@ -209,6 +214,64 @@ resource "google_compute_disk" "db_data" {
   size = var.db_disk_gb
 }
 
+resource "google_compute_instance" "app" {
+  name         = "${local.service_name}-${var.environment}-app"
+  machine_type = var.app_machine_type
+  zone         = "${var.region}-a"
+  tags         = ["slack-scheduler-app", "slack-scheduler-ssh"]
+
+  boot_disk {
+    initialize_params {
+      image = "ubuntu-os-cloud/ubuntu-2404-lts-amd64"
+      size  = 20
+      type  = "pd-balanced"
+    }
+  }
+
+  network_interface {
+    subnetwork = google_compute_subnetwork.app.id
+  }
+
+  service_account {
+    email  = google_service_account.app.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata = {
+    startup-script = templatefile("${path.module}/startup-script.tftpl", {
+      container_image           = var.container_image
+      container_registry        = "${var.region}-docker.pkg.dev"
+      database_name             = var.database_name
+      database_user             = var.database_user
+      db_ip                     = google_compute_address.db.address
+      google_client_id          = var.google_client_id
+      google_auth_slack_user_id = var.google_auth_slack_user_id
+      google_redirect_uri       = var.google_redirect_uri
+      google_shared_calendar_id = var.google_shared_calendar_id
+      kms_key_name              = google_kms_crypto_key.oauth_tokens.id
+      public_base_url           = var.public_base_url
+      public_base_url_domain    = replace(replace(var.public_base_url, "https://", ""), "http://", "")
+      runtime_config_secret_names = {
+        for name in local.runtime_config_secret_names : name => data.google_secret_manager_secret.runtime_config[name].secret_id
+      }
+      secret_names = merge(
+        { for name, secret in google_secret_manager_secret.app : name => secret.secret_id },
+        { for name in local.runtime_config_secret_names : name => data.google_secret_manager_secret.runtime_config[name].secret_id },
+      )
+      slack_admin_user_ids       = var.slack_admin_user_ids
+      slack_alert_user_ids       = var.slack_alert_user_ids
+      slack_posting_channel_id   = var.slack_posting_channel_id
+      slack_recruitment_user_ids = var.slack_recruitment_user_ids
+      slack_team_id              = var.slack_team_id
+    })
+  }
+
+  depends_on = [
+    google_secret_manager_secret_iam_member.app_access,
+    google_secret_manager_secret_iam_member.runtime_config_access,
+  ]
+}
+
 resource "google_project_iam_member" "backup_logging" {
   project = var.project_id
   role    = "roles/logging.logWriter"
@@ -229,9 +292,6 @@ resource "google_cloud_run_v2_service" "app" {
   location             = var.region
   deletion_protection  = var.environment == "production"
   invoker_iam_disabled = true
-  lifecycle {
-    ignore_changes = [template[0].scaling[0].min_instance_count]
-  }
   template {
     service_account = google_service_account.app.email
     scaling {
@@ -249,6 +309,10 @@ resource "google_cloud_run_v2_service" "app" {
       env {
         name  = "NODE_ENV"
         value = "production"
+      }
+      env {
+        name  = "APP_ROLE"
+        value = "oauth-callback"
       }
       env {
         name  = "DATABASE_BACKEND"
@@ -456,6 +520,11 @@ resource "google_project_iam_member" "scheduler_invoker" {
   role    = "roles/run.invoker"
   member  = "serviceAccount:${google_service_account.scheduler.email}"
 }
+resource "google_service_account_iam_member" "scheduler_service_agent_token_creator" {
+  service_account_id = google_service_account.scheduler.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+}
 resource "google_cloud_scheduler_job" "db_start" {
   name      = "${local.service_name}-db-start"
   region    = var.region
@@ -467,29 +536,25 @@ resource "google_cloud_scheduler_job" "db_start" {
     oauth_token { service_account_email = google_service_account.scheduler.email }
   }
 }
-resource "google_cloud_scheduler_job" "run_on" {
-  name      = "${local.service_name}-run-on"
+resource "google_cloud_scheduler_job" "app_start" {
+  name      = "${local.service_name}-app-start"
   region    = var.region
-  schedule  = "50 8 * * 1-5"
+  schedule  = "40 8 * * 1-5"
   time_zone = "Australia/Sydney"
   http_target {
-    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.app.name}?updateMask=template.scaling.minInstanceCount"
-    http_method = "PATCH"
-    body        = base64encode(jsonencode({ template = { scaling = { minInstanceCount = 1 } } }))
-    headers     = { "Content-Type" = "application/json" }
+    uri         = "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/zones/${var.region}-a/instances/${google_compute_instance.app.name}/start"
+    http_method = "POST"
     oauth_token { service_account_email = google_service_account.scheduler.email }
   }
 }
-resource "google_cloud_scheduler_job" "run_off" {
-  name      = "${local.service_name}-run-off"
+resource "google_cloud_scheduler_job" "app_stop" {
+  name      = "${local.service_name}-app-stop"
   region    = var.region
-  schedule  = "10 18 * * 1-5"
+  schedule  = "20 18 * * 1-5"
   time_zone = "Australia/Sydney"
   http_target {
-    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/services/${google_cloud_run_v2_service.app.name}?updateMask=template.scaling.minInstanceCount"
-    http_method = "PATCH"
-    body        = base64encode(jsonencode({ template = { scaling = { minInstanceCount = 0 } } }))
-    headers     = { "Content-Type" = "application/json" }
+    uri         = "https://compute.googleapis.com/compute/v1/projects/${var.project_id}/zones/${var.region}-a/instances/${google_compute_instance.app.name}/stop"
+    http_method = "POST"
     oauth_token { service_account_email = google_service_account.scheduler.email }
   }
 }

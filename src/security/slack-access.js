@@ -1,5 +1,4 @@
 import crypto from 'node:crypto'
-import { isWithinOperatingWindow } from '../time.js'
 
 const RATE_LIMITS = {
   read: { limit: 60, windowMs: 60 * 1000 },
@@ -68,16 +67,6 @@ export function installSlackSecurityMiddleware(app, { config, store, logger }) {
     const requestName = slackRequestName(args)
     const correlationId = crypto.randomUUID()
     if (args.context) args.context.correlationId = correlationId
-
-    if (config.operatingWindow && !isWithinOperatingWindow(config.operatingWindow.now || new Date(), config.operatingWindow)) {
-      logger.info('slack_request_outside_operating_window', {
-        userId,
-        requestName,
-        correlationId,
-      })
-      await denySlackRequest(args, 'This app is available Monday-Friday, 8:50 AM-6:10 PM Sydney time.')
-      return
-    }
 
     if (!userId && isTrustedWorkflowLauncher(args, config)) {
       await args.next()
