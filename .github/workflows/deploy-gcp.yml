@@ -266,6 +266,11 @@ jobs:
               gcloud run jobs executions describe "${LATEST_EXECUTION}" \
                 --region "${GCP_REGION}" --format='yaml(metadata.name,status)' || true
             fi
+            gcloud compute instances describe "${DB_INSTANCE}" \
+              --zone "${GCP_REGION}-a" --format='yaml(networkInterfaces[0].networkIP,tags.items)' || true
+            gcloud compute ssh "${DB_INSTANCE}" --zone "${GCP_REGION}-a" \
+              --tunnel-through-iap --quiet \
+              --command="sudo ss -lntp | grep 5432 || true; sudo grep -E '^[[:space:]]*listen_addresses' /etc/postgresql/*/main/postgresql.conf || true; sudo grep -E '^[[:space:]]*host[[:space:]]+scheduler' /etc/postgresql/*/main/pg_hba.conf || true" || true
             gcloud logging read \
               "resource.type=cloud_run_job AND resource.labels.job_name=slack-scheduler-migrate" \
               --project "${GCP_PROJECT_ID}" --freshness=30m --limit=100 \

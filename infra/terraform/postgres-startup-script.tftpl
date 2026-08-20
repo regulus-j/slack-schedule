@@ -22,7 +22,8 @@ DO $$ BEGIN
 END $$;
 SQL
 sudo -u postgres createdb -O ${db_user} ${db_name} 2>/dev/null || true
-sed -i "s/^#listen_addresses =.*/listen_addresses = '*' /" /etc/postgresql/*/main/postgresql.conf
+PG_CONFIG=$$(find /etc/postgresql -path '*/main/postgresql.conf' -print -quit)
+sed -i -E "s/^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=.*/listen_addresses = '*' /" "$${PG_CONFIG}"
 echo 'host ${db_name} ${db_user} ${db_ip}/32 scram-sha-256' >> /etc/postgresql/*/main/pg_hba.conf
 echo 'host ${db_name} ${db_user} 10.8.0.0/28 scram-sha-256' >> /etc/postgresql/*/main/pg_hba.conf
 echo 'host ${db_name} ${db_user} 10.20.0.0/24 scram-sha-256' >> /etc/postgresql/*/main/pg_hba.conf
