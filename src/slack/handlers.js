@@ -216,7 +216,7 @@ export function registerSlackHandlers(app, context) {
     if (!await verifyChannel({ config, command, client })) return
     if (command.text?.trim().toLowerCase() === 'button') {
       await client.chat.postMessage({
-        channel: resolvePostingChannel(config, command.channel_id),
+        channel: await openDm(client, command.user_id),
         text: '🚀 Start an interview scheduling case.',
         blocks: [
           {
@@ -257,7 +257,7 @@ export function registerSlackHandlers(app, context) {
     })) return
 
     await client.chat.postMessage({
-      channel: resolvePostingChannel(config, event.channel),
+      channel: await openDm(client, event.user),
       text: 'Start an interview scheduling case.',
       blocks: [
         {
@@ -362,7 +362,7 @@ export function registerSlackHandlers(app, context) {
     await ack();
     if (!await verifyChannel({ config, body, client })) return
     await client.chat.postMessage({
-      channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+      channel: await openDm(client, body.user.id),
       text: '🚀 Start an interview scheduling case.',
       blocks: [
         {

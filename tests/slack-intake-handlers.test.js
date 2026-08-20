@@ -907,7 +907,7 @@ test('refresh-jazz refreshes the open role list', async () => {
   setJazzhrJobs([])
 })
 
-test('workflow message trigger posts the schedule launcher', async () => {
+test('workflow message trigger sends the schedule launcher to the initiator DM', async () => {
   const events = new Map()
   const app = {
     action() {},
@@ -938,6 +938,11 @@ test('workflow message trigger posts the schedule launcher', async () => {
       user: 'UWORKFLOW',
     },
     client: {
+      conversations: {
+        async open() {
+          return { channel: { id: 'DUWORKFLOW' } }
+        },
+      },
       chat: {
         async postMessage(message) {
           posted.push(message)
@@ -947,7 +952,7 @@ test('workflow message trigger posts the schedule launcher', async () => {
   })
 
   assert.equal(posted.length, 1)
-  assert.equal(posted[0].channel, 'CWORKFLOW')
+  assert.equal(posted[0].channel, 'DUWORKFLOW')
   assert.equal(posted[0].blocks[0].accessory.action_id, 'open_schedule_intake')
 })
 
