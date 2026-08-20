@@ -738,7 +738,10 @@ function _flushQueue() {
   while (_limiter.queue.length > 0 && _limiter.active < _limiter.maxConcurrent) {
     if (Date.now() < _limiter.pausedUntil) break
     const gap = Date.now() - _limiter.lastRequestAt
-    if (_limiter.active === 0 && gap < _limiter.minGapMs) break
+    if (_limiter.active === 0 && gap < _limiter.minGapMs) {
+      setTimeout(_flushQueue, _limiter.minGapMs - gap)
+      break
+    }
     const next = _limiter.queue.shift()
     _limiter.active++
     _limiter.lastRequestAt = Date.now()
