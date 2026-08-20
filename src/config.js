@@ -19,7 +19,7 @@ export function loadConfig(env = process.env) {
   const value = (name) => secretValue(env, name)
   const nodeEnv = value('NODE_ENV') || 'development'
   const port = Number(value('PORT') || 3000)
-  const publicBaseUrl = cleanString(value('PUBLIC_BASE_URL'))
+  const publicBaseUrl = cleanString(value('PUBLIC_BASE_URL')).replace(/\/+$/, '')
   const googleRedirectUri = value('GOOGLE_REDIRECT_URI') || buildDefaultGoogleRedirectUri(publicBaseUrl, port)
   return {
     env: nodeEnv,

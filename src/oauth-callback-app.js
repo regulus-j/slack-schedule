@@ -28,16 +28,23 @@ export async function main() {
     })
   })
 
-  try {
-    await store.init()
-    storeReady = true
-  } catch (error) {
-    await new Promise((resolve) => httpServer.close(resolve))
-    await store.close?.()
-    throw error
+  let shuttingDown = false
+  const initializeStore = async () => {
+    while (!shuttingDown) {
+      try {
+        await store.init()
+        storeReady = true
+        logger.info('oauth_callback_store_ready')
+        return
+      } catch (error) {
+        logger.error('oauth_callback_store_init_failed', { error })
+        await new Promise((resolve) => setTimeout(resolve, 5000))
+      }
+    }
   }
 
-  let shuttingDown = false
+  void initializeStore()
+
   const shutdown = async (signal) => {
     if (shuttingDown) return
     shuttingDown = true

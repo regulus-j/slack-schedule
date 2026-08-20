@@ -161,5 +161,6 @@ test('google redirectUri strips trailing slashes from PUBLIC_BASE_URL', () => {
   const config = loadConfig({
     PUBLIC_BASE_URL: 'https://app.example.com/',
   })
+  assert.equal(config.publicBaseUrl, 'https://app.example.com')
   assert.equal(config.google.redirectUri, 'https://app.example.com/oauth/google/callback')
 })

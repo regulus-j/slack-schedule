@@ -251,8 +251,8 @@ resource "google_compute_instance" "app" {
       google_redirect_uri       = var.google_redirect_uri
       google_shared_calendar_id = var.google_shared_calendar_id
       kms_key_name              = google_kms_crypto_key.oauth_tokens.id
-      public_base_url           = var.public_base_url
-      public_base_url_domain    = replace(replace(var.public_base_url, "https://", ""), "http://", "")
+      public_base_url           = trim(var.public_base_url, "/")
+      public_base_url_domain    = trim(replace(replace(trim(var.public_base_url, "/"), "https://", ""), "http://", ""), "/")
       runtime_config_secret_names = {
         for name in local.runtime_config_secret_names : name => data.google_secret_manager_secret.runtime_config[name].secret_id
       }

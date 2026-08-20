@@ -123,6 +123,27 @@ jobs:
             -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
             -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
+      - name: Start PostgreSQL before service rollout
+        run: |
+          DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
+          DB_ZONE="${GCP_REGION}-a"
+          if ! gcloud compute instances describe "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet >/dev/null 2>&1; then
+            echo "PostgreSQL VM is not provisioned yet; Terraform will create it."
+            exit 0
+          fi
+          DB_STATUS=$(gcloud compute instances describe "${DB_INSTANCE}" \
+            --zone "${DB_ZONE}" --format='value(status)')
+          if [ "${DB_STATUS}" != "RUNNING" ]; then
+            gcloud compute instances start "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet
+          fi
+          for attempt in $(seq 1 24); do
+            if gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
+              --command="sudo -u postgres pg_isready -d scheduler"; then
+              break
+            fi
+            test "${attempt}" -lt 24 || { echo "::error::PostgreSQL did not become ready before Terraform apply."; exit 1; }
+            sleep 10
+          done
       - name: Terraform apply
         working-directory: infra/terraform
         env:
