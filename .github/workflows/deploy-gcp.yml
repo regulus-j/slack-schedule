@@ -263,7 +263,10 @@ jobs:
             fi
             sleep 10
           done
-          gcloud run deploy slack-scheduler --region "${GCP_REGION}" --image "${IMAGE}" --quiet
+          if ! timeout --foreground 120s gcloud run deploy slack-scheduler \
+            --region "${GCP_REGION}" --image "${IMAGE}" --quiet; then
+            echo "::warning::OAuth callback revision did not become ready within 120 seconds; preserving the last ready revision and continuing with the Slack app rollout."
+          fi
           echo "Cleaning up stale migration executions before starting the new migration."
           for execution in $(gcloud run jobs executions list \
             --job=slack-scheduler-migrate --region "${GCP_REGION}" \
