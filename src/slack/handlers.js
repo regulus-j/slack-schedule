@@ -138,6 +138,7 @@ import {
   scheduleTrackerModal,
   rescheduleApprovalModal,
   rescheduleModal,
+  scheduledMeetingBlocks,
   schedulingModal,
   schedulingPhaseTwo,
   filterHomeCasesByDateRange,
@@ -1660,10 +1661,9 @@ export function registerSlackHandlers(app, context) {
         recipientCount: customInvite.recipients.length,
       })
 
-      const caseMessage = await postSharedActionMessage({
+      const caseMessage = await postCaseDirectMessage({
         client,
-        channel: resolvePostingChannel(config, body.user.id),
-        actorSlackUserId: body.user.id,
+        userId: body.user.id,
         text: 'Event scheduling case created',
         blocks: caseMessageBlocks(caseRecord),
       })
@@ -1848,10 +1848,9 @@ export function registerSlackHandlers(app, context) {
       stageKey,
     });
 
-    const caseMessage = await postSharedActionMessage({
+    const caseMessage = await postCaseDirectMessage({
       client,
-      channel: resolvePostingChannel(config, body.user.id),
-      actorSlackUserId: body.user.id,
+      userId: body.user.id,
       text: 'Scheduling case created',
       blocks: caseMessageBlocks(caseRecord),
     });
@@ -1928,10 +1927,9 @@ export function registerSlackHandlers(app, context) {
       store, caseId: body.actions[0].value, client, body, config, logger,
       handler: async (caseRecord) => {
         if (!caseRecord.resumeLink) {
-          await postSharedActionMessage({
+          await postCaseDirectMessage({
             client,
-            channel: resolvePostingChannel(config, body.user.id),
-            actorSlackUserId: body.user.id,
+            userId: body.user.id,
             text: `📄 No resume has been uploaded for ${caseRecord.id} yet.`,
           });
           return;
@@ -1941,10 +1939,9 @@ export function registerSlackHandlers(app, context) {
           ? [`📄 Resume for ${caseRecord.id}:`, resumeSlackLink(caseRecord)].join('\n')
           : [`📄 Resume for ${caseRecord.id}:`, resumePlainLink(caseRecord)].join('\n');
 
-        await postSharedActionMessage({
+        await postCaseDirectMessage({
           client,
-          channel: resolvePostingChannel(config, body.user.id),
-          actorSlackUserId: body.user.id,
+          userId: body.user.id,
           text: details,
         });
         await store.addAudit({
@@ -2003,10 +2000,9 @@ export function registerSlackHandlers(app, context) {
     }
     if (hasBlockingEmailStatus(caseRecord.gmailSendStatus) && isSameEmail(caseRecord.candidateEmail, email)) {
       await ack();
-      await postSharedActionMessage({
+      await postCaseDirectMessage({
         client,
-        channel: resolvePostingChannel(config, body.user.id),
-        actorSlackUserId: body.user.id,
+        userId: body.user.id,
         text: `⚠️ This candidate email has already been sent for ${caseId}.`,
       });
       return
@@ -2031,10 +2027,9 @@ export function registerSlackHandlers(app, context) {
       templateId: caseRecord.templateId,
     });
     await publishHome({ client, userId: body.user.id, store, logger, config });
-    await postSharedActionMessage({
+    await postCaseDirectMessage({
       client,
-      channel: resolvePostingChannel(config, body.user.id),
-      actorSlackUserId: body.user.id,
+      userId: body.user.id,
       text: `Candidate message approved for ${caseId}.`,
       blocks: caseMessageBlocks(updated),
     });
@@ -2059,10 +2054,9 @@ export function registerSlackHandlers(app, context) {
       caseRecord.reminderScheduleVersion === caseRecord.scheduleVersion
     ) {
       await ack();
-      await postSharedActionMessage({
+      await postCaseDirectMessage({
         client,
-        channel: resolvePostingChannel(config, body.user.id),
-        actorSlackUserId: body.user.id,
+        userId: body.user.id,
         text: `⚠️ A reminder has already been sent for schedule version ${caseRecord.scheduleVersion}.`,
       });
       return;
@@ -2106,10 +2100,9 @@ export function registerSlackHandlers(app, context) {
       scheduleVersion: updated.reminderScheduleVersion,
     });
     await publishHome({ client, userId: body.user.id, store, logger, config });
-    await postSharedActionMessage({
+    await postCaseDirectMessage({
       client,
-      channel: resolvePostingChannel(config, body.user.id),
-      actorSlackUserId: body.user.id,
+      userId: body.user.id,
       text: `🔔 Reminder sent for ${caseId}.`,
       blocks: caseMessageBlocks(updated),
     });
@@ -2594,7 +2587,7 @@ export function registerSlackHandlers(app, context) {
         caseRecord: updated,
         text: 'Interview scheduled',
         blocks: caseMessageBlocks(updated),
-        saveAsScheduledMessage: true,
+        publishScheduledSummary: true,
       })
       return;
     } catch (error) {
@@ -2914,7 +2907,7 @@ export function registerSlackHandlers(app, context) {
           caseRecord: finalRecord,
           text: 'Event scheduled',
           blocks: caseMessageBlocks(finalRecord),
-          saveAsScheduledMessage: true,
+          publishScheduledSummary: true,
         })
         if (body.view?.id) {
           await client.views.update({
@@ -3030,7 +3023,7 @@ export function registerSlackHandlers(app, context) {
         caseRecord: reminderUpdated,
         text: 'Interview scheduled',
         blocks: caseMessageBlocks(reminderUpdated),
-        saveAsScheduledMessage: true,
+        publishScheduledSummary: true,
       })
     } catch (error) {
       const correlationId = crypto.randomUUID()
@@ -3354,11 +3347,9 @@ export function registerSlackHandlers(app, context) {
       : (result.alreadyCompleted
           ? 'This event was already marked complete. No duplicate feedback email was queued.'
           : 'Event marked complete. The candidate feedback request has been queued.')
-    const channel = body.channel?.id || await openDm(client, body.user.id)
-    await postSharedActionMessage({
+    await postCaseDirectMessage({
       client,
-      channel,
-      actorSlackUserId: body.user.id,
+      userId: body.user.id,
       text: message,
     })
     if (!result.alreadyCompleted && !result.stale) {
@@ -3459,7 +3450,7 @@ export function registerSlackHandlers(app, context) {
         caseRecord: updated,
         text: 'Invitation delivery updated',
         blocks: caseMessageBlocks(updated),
-        saveAsScheduledMessage: true,
+        publishScheduledSummary: false,
       })
       if (loadingViewId) {
         await client.views.update({
@@ -3564,27 +3555,25 @@ async function postCaseThreadMessage({
   caseRecord,
   text,
   blocks,
-  saveAsScheduledMessage = false,
+  publishScheduledSummary = false,
 }) {
-  const fallbackChannel = body.channel?.id || body.user?.id || body.user_id || caseRecord.channelId || caseRecord.ownerSlackUserId
-  const channel =
-    caseRecord.autofill?.scheduledMessageChannel ||
-    caseRecord.autofill?.caseMessageChannel ||
-    resolvePostingChannel(config, fallbackChannel)
-  const threadTs = saveAsScheduledMessage
-    ? null
-    : (caseRecord.autofill?.scheduledMessageTs || caseRecord.autofill?.caseMessageTs || body.message?.ts || null)
+  const userId = body.user?.id || body.user_id || caseRecord.ownerSlackUserId
+  if (!publishScheduledSummary) {
+    return postCaseDirectMessage({ client, userId, caseRecord, text, blocks })
+  }
 
-  const result = await postSharedActionMessage({
-    client,
+  const channel = config.slack?.postingChannelId
+  if (!channel) {
+    return postCaseDirectMessage({ client, userId, caseRecord, text, blocks })
+  }
+
+  const result = await client.chat.postMessage({
     channel,
-    actorSlackUserId: body.user?.id || body.user_id || '',
     text,
-    blocks,
-    ...(threadTs ? { thread_ts: threadTs } : {}),
+    blocks: scheduledMeetingBlocks(caseRecord),
   })
 
-  if (saveAsScheduledMessage && result?.ts) {
+  if (result?.ts) {
     await store.updateCase(caseRecord.id, {
       autofill: {
         ...(caseRecord.autofill || {}),
@@ -3796,6 +3785,18 @@ export function buildEditCaseDraft(caseRecord, templates) {
     googleAccountId: caseRecord.googleAccountId || '',
   })
 
+}
+
+async function postCaseDirectMessage({ client, userId, caseRecord, text, blocks }) {
+  const targetUserId = userId || caseRecord?.ownerSlackUserId
+  const channel = await openDm(client, targetUserId)
+  return postSharedActionMessage({
+    client,
+    channel,
+    actorSlackUserId: targetUserId,
+    text,
+    blocks,
+  })
 }
 
 async function updateCaseSlackMessage({ client, caseRecord }) {

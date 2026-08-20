@@ -201,6 +201,9 @@ test('custom invite submission creates a generic case without interview records'
           }
         },
       },
+      conversations: {
+        async open({ users }) { return { channel: { id: `D${users}` } } },
+      },
       chat: {
         async postMessage() {
           return { ts: '1.0', channel: 'C1' }
@@ -398,6 +401,9 @@ test('custom invite accepts a Slack user not in the recruitment sheet when resol
           }
         },
       },
+      conversations: {
+        async open({ users }) { return { channel: { id: `D${users}` } } },
+      },
       chat: {
         async postMessage() { return { ts: '1.0', channel: 'C1' } },
       },
@@ -512,6 +518,9 @@ test('custom invite submit uses selected option details when directory reload is
             },
           }
         },
+      },
+      conversations: {
+        async open({ users }) { return { channel: { id: `D${users}` } } },
       },
       chat: {
         async postMessage() {

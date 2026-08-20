@@ -34,7 +34,7 @@ import {
   selectableHiringManagersForRole,
   roleAutofillSelections,
 } from '../src/slack/handlers.js';
-import { actionButtonsForCase, caseDetailsModal, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, filterHomeCasesByDateRange, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
+import { actionButtonsForCase, caseDetailsModal, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, filterHomeCasesByDateRange, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, scheduledMeetingBlocks, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
 import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackRecruiters, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
@@ -100,6 +100,35 @@ test('unscheduled custom invite cases show the schedule action', () => {
 
   assert.deepEqual(visibleCaseActions(customInviteCase), ['scheduling_open', 'delete_case'])
   assert.ok(actionButtonsForCase(customInviteCase).some((item) => item.text.text === '📅 Schedule Interview'))
+})
+
+test('dedicated scheduled meeting summaries contain details without action buttons', () => {
+  const blocks = scheduledMeetingBlocks({
+    ...baseCase,
+    status: 'Scheduled',
+    interviewTimezone: 'Asia/Manila',
+    calendarEventId: 'event-1',
+    currentSchedule: {
+      date: '2026-07-01',
+      time: '09:00',
+      zoomLink: 'https://zoom.us/j/demo',
+      attendees: ['alex@example.com', 'jamal@example.com'],
+      attendeeDetails: [
+        { name: 'Alex Reyes', email: 'alex@example.com' },
+        { name: 'Jamal Al Badi', email: 'jamal@example.com' },
+      ],
+    },
+  })
+  const text = JSON.stringify(blocks)
+
+  assert.match(text, /Alex Reyes - Customer Support Specialist/)
+  assert.match(text, /2026-07-01/)
+  assert.match(text, /09:00/)
+  assert.match(text, /Asia\/Manila/)
+  assert.match(text, /zoom\.us/)
+  assert.match(text, /Jamal Al Badi/)
+  assert.doesNotMatch(text, /action_id/)
+  assert.doesNotMatch(text, /Schedule Interview/)
 })
 
 test('cancelled scheduled cases hide repeat email actions', () => {

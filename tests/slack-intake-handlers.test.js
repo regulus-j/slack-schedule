@@ -645,7 +645,7 @@ test('newly checked recruiter and hiring manager become primary selections', asy
   setJazzhrJobs([])
 })
 
-test('shared case creation notification mentions the action owner', async () => {
+test('case creation notification goes to the initiator DM with actions', async () => {
   setApplicants([{
     id: 'candidate-1',
     firstName: 'Alex',
@@ -736,6 +736,11 @@ test('shared case creation notification mentions the action owner', async () => 
           return { channel: message.channel, ts: '123.456' }
         },
       },
+      conversations: {
+        async open({ users }) {
+          return { channel: { id: `D${users}` } }
+        },
+      },
       views: {
         async publish() {},
       },
@@ -743,9 +748,9 @@ test('shared case creation notification mentions the action owner', async () => 
   })
 
   assert.equal(posted.length, 1)
-  assert.match(posted[0].text, /^<@UACTOR> Scheduling case created/)
-  assert.equal(posted[0].blocks[0].text.text, 'Action by <@UACTOR>')
-  assert.equal((JSON.stringify(posted[0].blocks).match(/<@UACTOR>/g) || []).length, 1)
+  assert.equal(posted[0].channel, 'DUACTOR')
+  assert.match(posted[0].text, /^Scheduling case created/)
+  assert.doesNotMatch(JSON.stringify(posted[0].blocks), /Action by <@UACTOR>/)
   setJazzhrJobs([])
   setSlackUsers([])
 })

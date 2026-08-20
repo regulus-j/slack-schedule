@@ -10,6 +10,7 @@ export async function verifyChannel({ config, body, command, client }) {
   const incomingChannel = command?.channel_id || body?.channel?.id
 
   if (!incomingChannel) return true
+  if (/^D[A-Z0-9]+$/i.test(incomingChannel)) return true
 
   if (incomingChannel === restricted) return true
 

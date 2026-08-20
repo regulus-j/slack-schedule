@@ -1177,6 +1177,41 @@ export function caseMessageBlocks(caseRecord) {
   ];
 }
 
+export function scheduledMeetingBlocks(caseRecord) {
+  const schedule = normalizeCaseSchedule(caseRecord).currentSchedule || {}
+  const customInvite = isCustomInviteCase(caseRecord)
+    ? normalizeCustomInviteMetadata(caseRecord)
+    : null
+  const title = customInvite?.title || caseTitle(caseRecord)
+  const candidate = caseRecord.applicant
+    ? [caseRecord.applicant.firstName, caseRecord.applicant.lastName].filter(Boolean).join(' ')
+    : ''
+  const meetingLink = schedule.zoomLink || customInvite?.meetingLink || caseRecord.autofill?.zoomLink || ''
+  const calendarLink = caseRecord.calendarEventHtmlLink || schedule.htmlLink || calendarEventUrl(caseRecord.calendarEventId)
+  const attendeeDetails = Array.isArray(schedule.attendeeDetails) ? schedule.attendeeDetails : []
+  const attendeeLabels = attendeeDetails.length > 0
+    ? attendeeDetails.map((attendee) => attendee.name || attendee.email).filter(Boolean)
+    : (schedule.attendees || customInvite?.recipients?.map((recipient) => recipient.email) || [])
+
+  const lines = [
+    `*${escapeSlackText(title)}*`,
+    ...(candidate ? [`Candidate: ${escapeSlackText(candidate)}`] : []),
+    `Date: ${escapeSlackText(schedule.date || caseRecord.selectedInterviewDate || 'TBD')}`,
+    `Time: ${escapeSlackText(schedule.time || caseRecord.selectedInterviewTime || 'TBD')}`,
+    ...(caseRecord.interviewTimezone ? [`Timezone: ${escapeSlackText(caseRecord.interviewTimezone)}`] : []),
+    ...(meetingLink ? [`Meeting link: ${escapeSlackText(meetingLink)}`] : []),
+    ...(calendarLink ? [`Calendar: <${calendarLink}|Open in Google Calendar>`] : []),
+    ...(attendeeLabels.length > 0
+      ? [`Attendees: ${attendeeLabels.map(escapeSlackText).join(', ')}`]
+      : []),
+  ]
+
+  return [
+    header('Meeting scheduled'),
+    section(lines.join('\n')),
+  ]
+}
+
 export function scheduleTrackerModal({ cases = [], filters = {}, scope = 'all', ownerSlackUserId = '', totalCount = 0 }) {
   const rows = cases.slice(0, 8).flatMap((item) => [
     section(caseSummary(item)),
