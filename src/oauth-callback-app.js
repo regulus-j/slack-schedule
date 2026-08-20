@@ -1,4 +1,4 @@
-import { App } from '@slack/bolt'
+import { WebClient } from '@slack/web-api'
 import { loadConfig, validateStartupConfig } from './config.js'
 import { createHttpServer } from './http-server.js'
 import { createStore } from './store/index.js'
@@ -9,13 +9,13 @@ export async function main() {
   validateStartupConfig(config, { role: 'oauth-callback' })
 
   const store = await createStore(config)
-  const slackApp = new App({ token: config.slack.botToken })
+  const slackClient = new WebClient(config.slack.botToken)
   let storeReady = false
   const httpServer = createHttpServer({
     config,
     store,
     logger,
-    slackClient: slackApp.client,
+    slackClient,
     isReady: () => storeReady,
   })
 
