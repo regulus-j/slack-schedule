@@ -29,7 +29,7 @@ data "google_secret_manager_secret" "runtime_config" {
 }
 
 resource "google_project_service" "apis" {
-  for_each           = toset(["artifactregistry.googleapis.com", "billingbudgets.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com", "run.googleapis.com", "secretmanager.googleapis.com", "storage.googleapis.com", "vpcaccess.googleapis.com", "cloudscheduler.googleapis.com", "serviceusage.googleapis.com"])
+  for_each           = toset(["artifactregistry.googleapis.com", "billingbudgets.googleapis.com", "compute.googleapis.com", "iamcredentials.googleapis.com", "iap.googleapis.com", "logging.googleapis.com", "monitoring.googleapis.com", "run.googleapis.com", "secretmanager.googleapis.com", "storage.googleapis.com", "vpcaccess.googleapis.com", "cloudscheduler.googleapis.com", "serviceusage.googleapis.com"])
   service            = each.value
   disable_on_destroy = false
 }
@@ -170,6 +170,7 @@ resource "google_compute_firewall" "iap_ssh" {
   }
   source_ranges = ["35.235.240.0/20"]
   target_tags   = ["slack-scheduler-ssh"]
+  depends_on    = [google_project_iam_member.deploy_roles]
 }
 resource "google_compute_firewall" "postgres" {
   name    = "${local.service_name}-${var.environment}-postgres"
@@ -180,6 +181,7 @@ resource "google_compute_firewall" "postgres" {
   }
   source_ranges = ["10.8.0.0/28", "10.20.0.0/24"]
   target_tags   = ["slack-scheduler-db"]
+  depends_on    = [google_project_iam_member.deploy_roles]
 }
 resource "google_project_iam_member" "app_artifact_reader" {
   project = var.project_id
@@ -607,6 +609,9 @@ resource "google_project_iam_member" "deploy_roles" {
     "roles/artifactregistry.writer",
     "roles/compute.instanceAdmin.v1",
     "roles/compute.networkAdmin",
+    "roles/compute.osAdminLogin",
+    "roles/compute.securityAdmin",
+    "roles/iap.tunnelResourceAccessor",
     "roles/iam.serviceAccountUser",
     "roles/iam.workloadIdentityPoolAdmin",
     "roles/cloudkms.admin",

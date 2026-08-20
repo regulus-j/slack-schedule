@@ -131,6 +131,14 @@ test('production Google validation requires the shared OAuth owner', () => {
   assert.throws(() => validateStartupConfig(config), /GOOGLE_AUTH_SLACK_USER_ID/)
 })
 
+test('OAuth callback validation does not require Socket Mode or JazzHR configuration', () => {
+  const config = loadConfig({
+    NODE_ENV: 'production', DATABASE_BACKEND: 'postgres', DATABASE_URL: 'postgresql://app@10.0.0.2/scheduler',
+    SLACK_BOT_TOKEN: 'bot', GOOGLE_KMS_KEY_NAME: 'projects/p/locations/a/keyRings/r/cryptoKeys/k',
+  })
+  assert.doesNotThrow(() => validateStartupConfig(config, { role: 'oauth-callback' }))
+})
+
 test('google redirectUri falls back to PUBLIC_BASE_URL when GOOGLE_REDIRECT_URI is unset', () => {
   const withExplicit = loadConfig({
     GOOGLE_REDIRECT_URI: 'https://example.com/custom/callback',

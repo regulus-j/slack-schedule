@@ -197,28 +197,31 @@ function normalizeAccountKey(value) {
   return cleanString(value).toLowerCase()
 }
 
-export function validateStartupConfig(config) {
+export function validateStartupConfig(config, { role = 'app' } = {}) {
   const missing = [];
+  const isOAuthCallback = role === 'oauth-callback';
 
   if (!config.slack.botToken) missing.push('SLACK_BOT_TOKEN');
-  if (!config.slack.appToken) missing.push('SLACK_APP_TOKEN');
-  if (config.jazzhr.accounts.length === 0) {
-    missing.push('JAZZHR_API_KEY (or JAZZHR_ACCOUNT_KEYS + JAZZHR_API_KEY_*)');
-  } else {
-    for (const account of config.jazzhr.accounts) {
-      if (!account.apiKey) {
-        const suffix = account.key === 'default' ? 'JAZZHR_API_KEY' : `JAZZHR_API_KEY_${account.key.toUpperCase()}`
-        missing.push(suffix)
+  if (!isOAuthCallback && !config.slack.appToken) missing.push('SLACK_APP_TOKEN');
+  if (!isOAuthCallback) {
+    if (config.jazzhr.accounts.length === 0) {
+      missing.push('JAZZHR_API_KEY (or JAZZHR_ACCOUNT_KEYS + JAZZHR_API_KEY_*)');
+    } else {
+      for (const account of config.jazzhr.accounts) {
+        if (!account.apiKey) {
+          const suffix = account.key === 'default' ? 'JAZZHR_API_KEY' : `JAZZHR_API_KEY_${account.key.toUpperCase()}`
+          missing.push(suffix)
+        }
       }
     }
+    if (config.notifications?.enabled && !config.notifications.feedbackFormUrl) {
+      missing.push('FEEDBACK_FORM_URL')
+    }
+    if (config.email?.testMode && !config.email.testRecipient) {
+      missing.push('EMAIL_TEST_RECIPIENT')
+    }
   }
-  if (config.notifications?.enabled && !config.notifications.feedbackFormUrl) {
-    missing.push('FEEDBACK_FORM_URL')
-  }
-  if (config.email?.testMode && !config.email.testRecipient) {
-    missing.push('EMAIL_TEST_RECIPIENT')
-  }
-  if (config.env === 'production' && config.security?.accessControlEnforced) {
+  if (!isOAuthCallback && config.env === 'production' && config.security?.accessControlEnforced) {
     if (config.security.recruitmentUserIds.length === 0) missing.push('SLACK_RECRUITMENT_USER_IDS')
     if (config.security.adminUserIds.length === 0) missing.push('SLACK_ADMIN_USER_IDS')
     if (config.security.alertUserIds.length === 0) missing.push('SLACK_ALERT_USER_IDS')
@@ -240,6 +243,7 @@ export function validateStartupConfig(config) {
     config.google?.clientId &&
     config.google?.clientSecret &&
     config.google?.sharedCalendarId &&
+    !isOAuthCallback &&
     !config.google?.authSlackUserId
   ) {
     missing.push('GOOGLE_AUTH_SLACK_USER_ID')

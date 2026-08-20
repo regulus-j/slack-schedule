@@ -6,7 +6,7 @@ import { logger } from './logger.js'
 
 export async function main() {
   const config = loadConfig()
-  validateStartupConfig(config)
+  validateStartupConfig(config, { role: 'oauth-callback' })
 
   const store = await createStore(config)
   const slackApp = new App({ token: config.slack.botToken })
