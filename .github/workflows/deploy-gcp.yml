@@ -162,16 +162,20 @@ jobs:
         run: |
           DB_IP=$(terraform output -raw database_private_ip)
           DATABASE_SECRET="database-url-${DEPLOY_ENVIRONMENT}"
+          DATABASE_PASSWORD_SECRET="database-password-${DEPLOY_ENVIRONMENT}"
           DATABASE_URL=$(gcloud secrets versions access latest --secret="${DATABASE_SECRET}")
+          DATABASE_PASSWORD=$(gcloud secrets versions access latest --secret="${DATABASE_PASSWORD_SECRET}")
+          echo "::add-mask::${DATABASE_PASSWORD}"
           UPDATED_DATABASE_URL=$(node -e '
             const url = new URL(process.argv[1])
             url.hostname = process.argv[2]
+            url.password = process.argv[3]
             process.stdout.write(url.toString())
-          ' "${DATABASE_URL}" "${DB_IP}")
+          ' "${DATABASE_URL}" "${DB_IP}" "${DATABASE_PASSWORD}")
           if [ "${UPDATED_DATABASE_URL}" != "${DATABASE_URL}" ]; then
             printf '%s' "${UPDATED_DATABASE_URL}" | gcloud secrets versions add "${DATABASE_SECRET}" --data-file=-
           fi
-          unset DATABASE_URL UPDATED_DATABASE_URL
+          unset DATABASE_URL DATABASE_PASSWORD UPDATED_DATABASE_URL
       - name: Start PostgreSQL before service rollout
         run: |
           DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
@@ -219,6 +223,8 @@ jobs:
           fi
           gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
             --command="PG_HBA=\$(find /etc/postgresql -path '*/main/pg_hba.conf' -print -quit); for ENTRY in 'host scheduler scheduler 10.20.0.2/32 scram-sha-256' 'host scheduler scheduler 10.8.0.0/28 scram-sha-256' 'host scheduler scheduler 10.20.0.0/24 scram-sha-256'; do if ! sudo grep -Fqx \"\${ENTRY}\" \"\${PG_HBA}\"; then echo \"\${ENTRY}\" | sudo tee -a \"\${PG_HBA}\" >/dev/null; fi; done; sudo systemctl reload postgresql; sudo pg_isready -d scheduler"
+          gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
+            --command="DB_PASSWORD=\$(gcloud secrets versions access latest --secret=database-password-${DEPLOY_ENVIRONMENT} --format='get(payload.data)' | base64 -d); sudo -u postgres psql -v ON_ERROR_STOP=1 --set=db_password=\"\${DB_PASSWORD}\" -c \"ALTER ROLE scheduler PASSWORD :'db_password'\"; unset DB_PASSWORD; sudo systemctl reload postgresql; sudo pg_isready -d scheduler"
       - name: Deploy callback service and application VM
         run: |
           wait_for_instance_status() {
