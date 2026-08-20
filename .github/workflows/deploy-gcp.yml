@@ -157,6 +157,21 @@ jobs:
             -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
             -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
+      - name: Synchronize PostgreSQL connection secret
+        working-directory: infra/terraform
+        run: |
+          DB_IP=$(terraform output -raw database_private_ip)
+          DATABASE_SECRET="database-url-${DEPLOY_ENVIRONMENT}"
+          DATABASE_URL=$(gcloud secrets versions access latest --secret="${DATABASE_SECRET}")
+          UPDATED_DATABASE_URL=$(node -e '
+            const url = new URL(process.argv[1])
+            url.hostname = process.argv[2]
+            process.stdout.write(url.toString())
+          ' "${DATABASE_URL}" "${DB_IP}")
+          if [ "${UPDATED_DATABASE_URL}" != "${DATABASE_URL}" ]; then
+            printf '%s' "${UPDATED_DATABASE_URL}" | gcloud secrets versions add "${DATABASE_SECRET}" --data-file=-
+          fi
+          unset DATABASE_URL UPDATED_DATABASE_URL
       - name: Start PostgreSQL before service rollout
         run: |
           DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
