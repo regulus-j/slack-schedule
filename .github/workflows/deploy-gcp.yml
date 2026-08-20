@@ -211,6 +211,12 @@ jobs:
             }
             sleep 10
           done
+          if ! gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
+            --command="sudo ss -lnt | grep -Eq '0\\.0\\.0\\.0:5432|\\*:5432|:::5432'"; then
+            echo "PostgreSQL is not listening on the private interface; applying the listener configuration."
+            gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
+              --command="PG_CONFIG=\$(find /etc/postgresql -path '*/main/postgresql.conf' -print -quit); sudo sed -i -E \"s/^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=.*/listen_addresses = '*' /\" \"\${PG_CONFIG}\"; sudo systemctl restart postgresql; sudo pg_isready -d scheduler"
+          fi
       - name: Deploy callback service and application VM
         run: |
           wait_for_instance_status() {
