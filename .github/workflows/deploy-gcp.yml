@@ -180,6 +180,20 @@ jobs:
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
       - name: Deploy callback service and application VM
         run: |
+          wait_for_instance_status() {
+            local instance="$1"
+            local expected_status="$2"
+            for attempt in $(seq 1 36); do
+              current_status=$(gcloud compute instances describe "${instance}" \
+                --zone "${GCP_REGION}-a" --format='value(status)' 2>/dev/null || true)
+              if [ "${current_status}" = "${expected_status}" ]; then
+                return 0
+              fi
+              sleep 10
+            done
+            echo "::error::Instance ${instance} did not reach ${expected_status}. Last status: ${current_status}"
+            return 1
+          }
           IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}"
           DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
           APP_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-app"
@@ -202,9 +216,11 @@ jobs:
           APP_STATUS=$(gcloud compute instances describe "${APP_INSTANCE}" \
             --zone "${GCP_REGION}-a" --format='value(status)')
           if [ "${APP_STATUS}" = "RUNNING" ]; then
-            gcloud compute instances stop "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --quiet
+            gcloud compute instances stop "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --async --quiet
+            wait_for_instance_status "${APP_INSTANCE}" TERMINATED
           fi
-          gcloud compute instances start "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --quiet
+          gcloud compute instances start "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --async --quiet
+          wait_for_instance_status "${APP_INSTANCE}" RUNNING
           for attempt in $(seq 1 45); do
             if response=$(gcloud compute ssh "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --tunnel-through-iap --quiet \
               --command="curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/health"); then
