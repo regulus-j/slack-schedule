@@ -453,6 +453,8 @@ resource "google_cloud_run_v2_job" "migrate" {
   location = var.region
   template {
     template {
+      timeout         = "300s"
+      max_retries     = 0
       service_account = google_service_account.app.email
       containers {
         image   = var.container_image

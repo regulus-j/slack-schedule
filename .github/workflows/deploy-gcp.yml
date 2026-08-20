@@ -235,7 +235,14 @@ jobs:
             sleep 10
           done
           gcloud run deploy slack-scheduler --region "${GCP_REGION}" --image "${IMAGE}" --quiet
-          gcloud run jobs execute slack-scheduler-migrate --region "${GCP_REGION}" --wait
+          if ! timeout --foreground 360s gcloud run jobs execute slack-scheduler-migrate --region "${GCP_REGION}" --wait; then
+            echo "::error::Migration job did not complete successfully within 6 minutes. Collecting Cloud Run job logs."
+            gcloud logging read \
+              "resource.type=cloud_run_job AND resource.labels.job_name=slack-scheduler-migrate" \
+              --project "${GCP_PROJECT_ID}" --freshness=30m --limit=100 \
+              --format='table(timestamp,severity,textPayload,jsonPayload.message)' || true
+            exit 1
+          fi
           APP_STATUS=$(gcloud compute instances describe "${APP_INSTANCE}" \
             --zone "${GCP_REGION}-a" --format='value(status)')
           if [ "${APP_STATUS}" = "RUNNING" ]; then
