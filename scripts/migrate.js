@@ -74,6 +74,15 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function describeDatabaseTarget(databaseUrl) {
+  try {
+    const parsed = new URL(databaseUrl)
+    return `${parsed.hostname}:${parsed.port || '5432'}/${parsed.pathname.replace(/^\//, '')}`
+  } catch {
+    return 'invalid-database-url'
+  }
+}
+
 async function connectWithRetry(pool) {
   let lastError
   for (let attempt = 1; attempt <= CONNECTION_ATTEMPTS; attempt += 1) {
@@ -93,6 +102,7 @@ async function run() {
   if (config.database.backend === 'json') {
     throw new Error('PostgreSQL configuration is required to run migrations.')
   }
+  console.log(`Database target: ${describeDatabaseTarget(config.databaseUrl)}`)
   const connection = await createPostgresPool(config)
   let client
 
