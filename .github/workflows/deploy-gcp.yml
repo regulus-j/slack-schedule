@@ -224,7 +224,7 @@ jobs:
           gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
             --command="PG_HBA=\$(find /etc/postgresql -path '*/main/pg_hba.conf' -print -quit); for ENTRY in 'host scheduler scheduler 10.20.0.2/32 scram-sha-256' 'host scheduler scheduler 10.8.0.0/28 scram-sha-256' 'host scheduler scheduler 10.20.0.0/24 scram-sha-256'; do if ! sudo grep -Fqx \"\${ENTRY}\" \"\${PG_HBA}\"; then echo \"\${ENTRY}\" | sudo tee -a \"\${PG_HBA}\" >/dev/null; fi; done; sudo systemctl reload postgresql; sudo pg_isready -d scheduler"
           gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-            --command="DB_PASSWORD=\$(gcloud secrets versions access latest --secret=database-password-${DEPLOY_ENVIRONMENT} --format='get(payload.data)' | base64 -d); sudo -u postgres psql -v ON_ERROR_STOP=1 --set=db_password=\"\${DB_PASSWORD}\" -c \"ALTER ROLE scheduler PASSWORD :'db_password'\"; unset DB_PASSWORD; sudo systemctl reload postgresql; sudo pg_isready -d scheduler"
+            --command="DB_PASSWORD=\$(gcloud secrets versions access latest --secret=database-password-${DEPLOY_ENVIRONMENT} --format='get(payload.data)' | base64 -d); sudo -u postgres psql -v ON_ERROR_STOP=1 --set=db_password=\"\${DB_PASSWORD}\" -c \"ALTER ROLE scheduler PASSWORD :'db_password'\"; PGPASSWORD=\"\${DB_PASSWORD}\" psql -h 127.0.0.1 -U scheduler -d scheduler -c 'SELECT 1' >/dev/null; unset DB_PASSWORD PGPASSWORD; sudo systemctl reload postgresql; sudo pg_isready -d scheduler"
       - name: Deploy callback service and application VM
         run: |
           wait_for_instance_status() {
