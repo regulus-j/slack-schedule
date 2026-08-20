@@ -441,8 +441,11 @@ resource "google_cloud_run_v2_service" "app" {
       }
     }
     vpc_access {
-      connector = google_vpc_access_connector.run.id
-      egress    = "PRIVATE_RANGES_ONLY"
+      egress = "PRIVATE_RANGES_ONLY"
+      network_interfaces {
+        network    = google_compute_network.private.id
+        subnetwork = google_compute_subnetwork.app.id
+      }
     }
   }
   depends_on = [google_secret_manager_secret_iam_member.app_access]
@@ -486,8 +489,11 @@ resource "google_cloud_run_v2_job" "migrate" {
         }
       }
       vpc_access {
-        connector = google_vpc_access_connector.run.id
-        egress    = "PRIVATE_RANGES_ONLY"
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = google_compute_network.private.id
+          subnetwork = google_compute_subnetwork.app.id
+        }
       }
     }
   }
@@ -529,8 +535,11 @@ resource "google_cloud_run_v2_job" "retention" {
         }
       }
       vpc_access {
-        connector = google_vpc_access_connector.run.id
-        egress    = "PRIVATE_RANGES_ONLY"
+        egress = "PRIVATE_RANGES_ONLY"
+        network_interfaces {
+          network    = google_compute_network.private.id
+          subnetwork = google_compute_subnetwork.app.id
+        }
       }
     }
   }
