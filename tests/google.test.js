@@ -261,13 +261,13 @@ test('createCalendarEvent explains missing shared calendar access', async () => 
 
 test('createCalendarEvent uses sendUpdates all normally and none in email test mode', async () => {
   const originalFetch = globalThis.fetch;
-  const requestBodies = [];
-  globalThis.fetch = async (_url, options) => {
-    requestBodies.push(JSON.parse(options.body));
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url: String(url), body: JSON.parse(options.body) });
     return {
       ok: true,
       async json() {
-        return { id: `event-${requestBodies.length}` };
+        return { id: `event-${requests.length}` };
       },
     };
   };
@@ -309,9 +309,11 @@ test('createCalendarEvent uses sendUpdates all normally and none in email test m
       config: { ...baseConfig, email: { testMode: true } },
     });
 
-    assert.equal(requestBodies[0].sendUpdates, 'all');
-    assert.equal(requestBodies[1].sendUpdates, 'none');
-    assert.deepEqual(requestBodies[1].attendees.map((attendee) => attendee.email), ['alex@example.com']);
+    assert.equal(new URL(requests[0].url).searchParams.get('sendUpdates'), 'all');
+    assert.equal(new URL(requests[1].url).searchParams.get('sendUpdates'), 'none');
+    assert.equal(requests[0].body.sendUpdates, undefined);
+    assert.equal(requests[1].body.sendUpdates, undefined);
+    assert.deepEqual(requests[1].body.attendees.map((attendee) => attendee.email), ['alex@example.com']);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -320,7 +322,9 @@ test('createCalendarEvent uses sendUpdates all normally and none in email test m
 test('updateCalendarEvent disables attendee emails in email test mode', async () => {
   const originalFetch = globalThis.fetch;
   let requestBody;
-  globalThis.fetch = async (_url, options) => {
+  let requestUrl;
+  globalThis.fetch = async (url, options) => {
+    requestUrl = String(url);
     requestBody = JSON.parse(options.body);
     return {
       ok: true,
@@ -359,7 +363,8 @@ test('updateCalendarEvent disables attendee emails in email test mode', async ()
       },
     });
 
-    assert.equal(requestBody.sendUpdates, 'none');
+    assert.equal(new URL(requestUrl).searchParams.get('sendUpdates'), 'none');
+    assert.equal(requestBody.sendUpdates, undefined);
     assert.deepEqual(requestBody.attendees.map((attendee) => attendee.email), ['alex@example.com']);
   } finally {
     globalThis.fetch = originalFetch;

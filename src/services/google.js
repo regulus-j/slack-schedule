@@ -107,12 +107,11 @@ export async function createCalendarEvent({ config, logger, caseRecord, eventInp
     return { mocked: true, eventId: `pending-google-${caseRecord.id}`, eventDraft };
   }
 
-  const response = await fetchWithTimeout(`${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events`, {
+  const response = await fetchWithTimeout(calendarEventsUrl(config), {
     method: 'POST',
     headers: buildAuthHeaders(accessToken),
     body: JSON.stringify({
       ...eventDraft,
-      sendUpdates: calendarSendUpdates(config),
     }),
   });
 
@@ -194,13 +193,12 @@ export async function updateCalendarEvent({ config, logger, caseRecord, eventInp
   }
 
   const response = await fetchWithTimeout(
-    `${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events/${encodeURIComponent(eventId)}`,
+    calendarEventUrl(config, eventId),
     {
       method: 'PATCH',
       headers: buildAuthHeaders(accessToken),
       body: JSON.stringify({
         ...eventDraft,
-        sendUpdates: calendarSendUpdates(config),
       }),
     },
   );
@@ -250,6 +248,16 @@ export async function sendRecruiterEmail({ config, logger, caseRecord, email, st
 
 function calendarSendUpdates(config) {
   return config?.email?.testMode ? 'none' : 'all'
+}
+
+function calendarEventsUrl(config) {
+  const url = `${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events`
+  return `${url}?sendUpdates=${encodeURIComponent(calendarSendUpdates(config))}`
+}
+
+function calendarEventUrl(config, eventId) {
+  const url = `${GOOGLE_CALENDAR_BASE_URL}/calendars/${encodeURIComponent(config.google.sharedCalendarId)}/events/${encodeURIComponent(eventId)}`
+  return `${url}?sendUpdates=${encodeURIComponent(calendarSendUpdates(config))}`
 }
 
 function emailForDelivery({ config, logger, caseRecord, email }) {
