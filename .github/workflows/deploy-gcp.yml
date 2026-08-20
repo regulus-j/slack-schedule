@@ -239,7 +239,8 @@ jobs:
           for execution in $(gcloud run jobs executions list \
             --job=slack-scheduler-migrate --region "${GCP_REGION}" \
             --limit=10 --format='value(name)'); do
-            gcloud run jobs executions cancel "${execution}" --region "${GCP_REGION}" --quiet || true
+            gcloud run jobs executions cancel "${execution}" \
+              --region "${GCP_REGION}" --async --quiet || true
           done
           if ! timeout --foreground 360s gcloud run jobs execute slack-scheduler-migrate --region "${GCP_REGION}" --wait; then
             echo "::error::Migration job did not complete successfully within 6 minutes. Collecting Cloud Run job logs."
