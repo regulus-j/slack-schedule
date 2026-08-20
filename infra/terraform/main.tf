@@ -228,12 +228,16 @@ resource "google_compute_instance" "db" {
     }
   }
   attached_disk { source = google_compute_disk.db_data.id }
-  network_interface { subnetwork = google_compute_subnetwork.app.id }
+  network_interface {
+    subnetwork = google_compute_subnetwork.app.id
+    network_ip = google_compute_address.db.address
+  }
   service_account {
     email  = google_service_account.db.email
     scopes = ["cloud-platform"]
   }
-  metadata = { startup-script = templatefile("${path.module}/postgres-startup-script.tftpl", { db_ip = google_compute_address.db.address, db_name = var.database_name, db_user = var.database_user, db_password_secret = google_secret_manager_secret.app["DATABASE_PASSWORD"].secret_id, backup_bucket = google_storage_bucket.backups.name }) }
+  metadata   = { startup-script = templatefile("${path.module}/postgres-startup-script.tftpl", { db_ip = google_compute_address.db.address, db_name = var.database_name, db_user = var.database_user, db_password_secret = google_secret_manager_secret.app["DATABASE_PASSWORD"].secret_id, backup_bucket = google_storage_bucket.backups.name }) }
+  depends_on = [google_compute_router_nat.private]
 }
 resource "google_compute_disk" "db_data" {
   name = "${local.service_name}-${var.environment}-db-data"
@@ -297,6 +301,7 @@ resource "google_compute_instance" "app" {
   depends_on = [
     google_secret_manager_secret_iam_member.app_access,
     google_secret_manager_secret_iam_member.runtime_config_access,
+    google_compute_router_nat.private,
   ]
 }
 
