@@ -54,7 +54,7 @@ export function visibleCaseActions(caseRecord) {
         ...(hasPendingCustomInviteDeliveries(caseRecord) ? ['retry_custom_invites'] : []),
       ]
     }
-    return ['delete_case']
+    return ['scheduling_open', 'delete_case']
   }
 
   if (caseRecord.rescheduleStatus === RESCHEDULE_STATUSES.CANCELLED) {

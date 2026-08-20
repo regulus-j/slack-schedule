@@ -88,6 +88,20 @@ test('scheduled cases show reschedule actions', () => {
   assert.ok(labels.includes('🔄 Reschedule interview'));
 });
 
+test('unscheduled custom invite cases show the schedule action', () => {
+  const customInviteCase = {
+    ...baseCase,
+    eventType: 'custom-invite',
+    customInvite: {
+      title: 'Client introduction',
+      recipients: [{ email: 'guest@example.com' }],
+    },
+  }
+
+  assert.deepEqual(visibleCaseActions(customInviteCase), ['scheduling_open', 'delete_case'])
+  assert.ok(actionButtonsForCase(customInviteCase).some((item) => item.text.text === '📅 Schedule Interview'))
+})
+
 test('cancelled scheduled cases hide repeat email actions', () => {
   const cancelledCase = {
     ...baseCase,
