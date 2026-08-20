@@ -123,45 +123,6 @@ jobs:
             -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
             -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
-      - name: Start PostgreSQL before service rollout
-        run: |
-          DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
-          DB_ZONE="${GCP_REGION}-a"
-          if ! gcloud compute instances describe "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet >/dev/null 2>&1; then
-            echo "PostgreSQL VM is not provisioned yet; Terraform will create it."
-            exit 0
-          fi
-          DB_STATUS=$(gcloud compute instances describe "${DB_INSTANCE}" \
-            --zone "${DB_ZONE}" --format='value(status)')
-          if [ "${DB_STATUS}" != "RUNNING" ]; then
-            gcloud compute instances start "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet
-          else
-            DB_READY=false
-            for probe in $(seq 1 3); do
-              if gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-                --command="command -v pg_isready >/dev/null 2>&1 && sudo pg_isready -d scheduler" >/dev/null 2>&1; then
-                DB_READY=true
-                break
-              fi
-              sleep 10
-            done
-            if [ "${DB_READY}" != "true" ]; then
-              echo "PostgreSQL is running but not ready; rebooting it to retry the startup script."
-              gcloud compute instances reset "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet
-            fi
-          fi
-          for attempt in $(seq 1 60); do
-            if gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-              --command="sudo pg_isready -d scheduler"; then
-              break
-            fi
-            test "${attempt}" -lt 60 || {
-              echo "::error::PostgreSQL did not become ready before Terraform apply."
-              gcloud compute instances get-serial-port-output "${DB_INSTANCE}" --zone "${DB_ZONE}" --port=1 | tail -n 120 || true
-              exit 1
-            }
-            sleep 10
-          done
       - name: Terraform apply
         working-directory: infra/terraform
         env:
@@ -196,6 +157,45 @@ jobs:
             -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
             -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
+      - name: Start PostgreSQL before service rollout
+        run: |
+          DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
+          DB_ZONE="${GCP_REGION}-a"
+          if ! gcloud compute instances describe "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet >/dev/null 2>&1; then
+            echo "PostgreSQL VM is not provisioned yet; Terraform will create it."
+            exit 0
+          fi
+          DB_STATUS=$(gcloud compute instances describe "${DB_INSTANCE}" \
+            --zone "${DB_ZONE}" --format='value(status)')
+          if [ "${DB_STATUS}" != "RUNNING" ]; then
+            gcloud compute instances start "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet
+          else
+            DB_READY=false
+            for probe in $(seq 1 3); do
+              if gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
+                --command="command -v pg_isready >/dev/null 2>&1 && sudo pg_isready -d scheduler" >/dev/null 2>&1; then
+                DB_READY=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "${DB_READY}" != "true" ]; then
+              echo "PostgreSQL is running but not ready; rebooting it to retry the startup script."
+              gcloud compute instances reset "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet
+            fi
+          fi
+          for attempt in $(seq 1 60); do
+            if gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
+              --command="sudo pg_isready -d scheduler"; then
+              break
+            fi
+            test "${attempt}" -lt 60 || {
+              echo "::error::PostgreSQL did not become ready before service rollout."
+              gcloud compute instances get-serial-port-output "${DB_INSTANCE}" --zone "${DB_ZONE}" --port=1 | tail -n 120 || true
+              exit 1
+            }
+            sleep 10
+          done
       - name: Deploy callback service and application VM
         run: |
           wait_for_instance_status() {
