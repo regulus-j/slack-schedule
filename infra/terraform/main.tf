@@ -325,6 +325,9 @@ resource "google_cloud_run_v2_service" "app" {
   location             = var.region
   deletion_protection  = var.environment == "production"
   invoker_iam_disabled = true
+  lifecycle {
+    ignore_changes = [template[0].containers[0].image]
+  }
   template {
     service_account = google_service_account.app.email
     scaling {

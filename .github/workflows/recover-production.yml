@@ -1,0 +1,68 @@
+name: Recover production
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [staging, production]
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  recover:
+    environment: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Start PostgreSQL and Slack app
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
+          APP_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-app"
+          ZONE="${GCP_REGION}-a"
+
+          gcloud compute instances start "${DB_INSTANCE}" --zone "${ZONE}" --quiet || true
+          for attempt in $(seq 1 60); do
+            if gcloud compute ssh "${DB_INSTANCE}" --zone "${ZONE}" --tunnel-through-iap --quiet \
+              --command="sudo pg_isready -d scheduler"; then
+              break
+            fi
+            if [ "${attempt}" -eq 60 ]; then
+              echo "::error::PostgreSQL did not become ready during recovery."
+              exit 1
+            fi
+            sleep 10
+          done
+
+          gcloud compute instances start "${APP_INSTANCE}" --zone "${ZONE}" --quiet || true
+          for attempt in $(seq 1 45); do
+            if response=$(gcloud compute ssh "${APP_INSTANCE}" --zone "${ZONE}" --tunnel-through-iap --quiet \
+              --command="curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/health"); then
+              echo "${response}"
+              exit 0
+            fi
+            if [ "${attempt}" -eq 45 ]; then
+              echo "::error::Slack app did not become healthy during recovery."
+              gcloud compute ssh "${APP_INSTANCE}" --zone "${ZONE}" --tunnel-through-iap --quiet \
+                --command="sudo docker compose -f /opt/slack-scheduler/docker-compose.yml ps; sudo docker compose -f /opt/slack-scheduler/docker-compose.yml logs --tail=100 app caddy" || true
+              exit 1
+            fi
+            sleep 10
+          done
