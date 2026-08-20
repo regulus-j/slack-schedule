@@ -1,8 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq ca-certificates curl gpg unattended-upgrades
+required_packages=(ca-certificates curl gpg unattended-upgrades)
+missing_packages=()
+for package in "$${required_packages[@]}"; do
+  if ! dpkg-query -W -f='$${Status}' "$${package}" 2>/dev/null | grep -q 'install ok installed'; then
+    missing_packages+=("$${package}")
+  fi
+done
+if [ "$${#missing_packages[@]}" -gt 0 ]; then
+  apt-get update -qq
+  apt-get install -y -qq "$${missing_packages[@]}"
+fi
 if ! command -v gcloud >/dev/null; then
   curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
   echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list
@@ -15,6 +24,7 @@ if ! command -v docker >/dev/null; then
   apt-get update -qq
   apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
 fi
+systemctl enable --now docker
 gcloud auth configure-docker ${container_registry} --quiet
 mkdir -p /secrets /opt/slack-scheduler
 %{ for var_name, secret_id in secret_names ~}
@@ -73,4 +83,6 @@ until timeout 2 bash -c '</dev/tcp/${db_ip}/5432' >/dev/null 2>&1; do
   sleep 5
 done
 cd /opt/slack-scheduler
-docker compose up -d
+docker compose pull app
+docker compose up -d --remove-orphans
+docker compose ps

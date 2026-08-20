@@ -205,13 +205,18 @@ jobs:
             gcloud compute instances stop "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --quiet
           fi
           gcloud compute instances start "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --quiet
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 45); do
             if response=$(gcloud compute ssh "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --tunnel-through-iap --quiet \
-              --command="curl --fail --silent http://127.0.0.1:3000/health"); then
+              --command="curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/health"); then
               echo "${response}"
               break
             fi
-            test "${attempt}" -lt 30 || { echo "::error::Application VM health check did not become ready."; exit 1; }
+            if [ "${attempt}" -eq 45 ]; then
+              echo "::error::Application VM health check did not become ready. Collecting startup diagnostics."
+              gcloud compute ssh "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --tunnel-through-iap --quiet \
+                --command="sudo systemctl status google-startup-scripts.service --no-pager || true; sudo docker ps -a; sudo docker compose -f /opt/slack-scheduler/docker-compose.yml ps; sudo docker compose -f /opt/slack-scheduler/docker-compose.yml logs --tail=100 app caddy" || true
+              exit 1
+            fi
             sleep 10
           done
           URL=$(gcloud run services describe slack-scheduler --region "${GCP_REGION}" --format='value(status.url)')
