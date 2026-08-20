@@ -69,10 +69,36 @@ resource "google_compute_network" "private" {
 }
 
 resource "google_compute_subnetwork" "app" {
-  name          = "${local.service_name}-app"
-  region        = var.region
-  network       = google_compute_network.private.id
-  ip_cidr_range = "10.20.0.0/24"
+  name                     = "${local.service_name}-app"
+  region                   = var.region
+  network                  = google_compute_network.private.id
+  ip_cidr_range            = "10.20.0.0/24"
+  private_ip_google_access = true
+}
+
+resource "google_compute_router" "nat" {
+  name    = "${local.service_name}-${var.environment}-router"
+  region  = var.region
+  network = google_compute_network.private.id
+  bgp { asn = 64514 }
+}
+
+resource "google_compute_router_nat" "private" {
+  name                               = "${local.service_name}-${var.environment}-nat"
+  router                             = google_compute_router.nat.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
+
+  subnetwork {
+    name                    = google_compute_subnetwork.app.id
+    source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
+  }
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
 }
 
 resource "google_service_account" "app" {
