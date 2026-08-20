@@ -133,11 +133,23 @@ async function fetchAllSlackUsers({ client, config, logger }) {
     try {
       result = await client.users.list(buildSlackUsersListArgs({ cursor, teamId }))
     } catch (error) {
-      if (!teamId && isMissingTeamIdError(error)) {
-        teamId = await resolveSlackTeamId({ client, logger })
-        if (teamId) {
+      if (isTeamIdError(error)) {
+        const resolvedTeamId = await resolveSlackTeamId({ client, logger })
+        if (resolvedTeamId && resolvedTeamId !== teamId) {
+          teamId = resolvedTeamId
           logger.info('slack_directory_team_id_resolved')
-          result = await client.users.list(buildSlackUsersListArgs({ cursor, teamId }))
+          try {
+            result = await client.users.list(buildSlackUsersListArgs({ cursor, teamId }))
+          } catch (retryError) {
+            error = retryError
+          }
+        }
+        if (!result && teamId) {
+          try {
+            result = await client.users.list(buildSlackUsersListArgs({ cursor, teamId: '' }))
+          } catch (retryError) {
+            error = retryError
+          }
         }
       }
       if (!result) throw error
@@ -193,10 +205,14 @@ async function resolveSlackTeamId({ client, logger }) {
   }
 }
 
-function isMissingTeamIdError(error) {
+function isTeamIdError(error) {
   const slackError = error?.data?.error
   const needed = error?.data?.needed
-  return slackError === 'missing_argument' && (!needed || String(needed).includes('team_id'))
+  return (
+    (slackError === 'missing_argument' && (!needed || String(needed).includes('team_id'))) ||
+    slackError === 'team_not_found' ||
+    slackError === 'invalid_team'
+  )
 }
 
 function upsertBySlackId(users, user) {

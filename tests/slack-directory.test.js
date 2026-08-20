@@ -227,6 +227,45 @@ test('ensureSlackDirectory includes configured Slack team id on users.list calls
   assert.deepEqual(listArgs, [{ limit: 200, team_id: 'T456' }])
 })
 
+test('ensureSlackDirectory recovers from a stale configured team id', async () => {
+  setSlackUsers([])
+
+  const listArgs = []
+  const client = {
+    auth: {
+      async test() {
+        return { team_id: 'TREAL' }
+      },
+    },
+    users: {
+      async list(args) {
+        listArgs.push(args)
+        if (args.team_id === 'TOLD') {
+          const error = new Error('An API error occurred: team_not_found')
+          error.data = { error: 'team_not_found' }
+          throw error
+        }
+        return {
+          members: [{ id: 'U1', profile: { real_name_normalized: 'Recruiter One' } }],
+          response_metadata: { next_cursor: '' },
+        }
+      },
+    },
+  }
+
+  const infos = []
+  const result = await ensureSlackDirectory({
+    client,
+    logger: { info(event) { infos.push(event) }, warn() {} },
+    force: true,
+    config: { slack: { teamId: 'TOLD' } },
+  })
+
+  assert.equal(result.users.length, 1)
+  assert.deepEqual(listArgs, [{ limit: 200, team_id: 'TOLD' }, { limit: 200, team_id: 'TREAL' }])
+  assert.ok(infos.includes('slack_directory_team_id_resolved'))
+})
+
 test('slackApiErrorDetails omits raw Error objects and preserves Slack error codes', () => {
   const error = new Error('An API error occurred: team_access_not_granted')
   error.data = {
