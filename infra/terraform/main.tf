@@ -648,6 +648,7 @@ resource "google_project_iam_member" "deploy_roles" {
     "roles/iam.serviceAccountUser",
     "roles/iam.workloadIdentityPoolAdmin",
     "roles/cloudkms.admin",
+    "roles/logging.viewer",
     "roles/resourcemanager.projectIamAdmin",
     "roles/secretmanager.admin",
     "roles/serviceusage.serviceUsageAdmin",
