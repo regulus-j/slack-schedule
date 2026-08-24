@@ -278,6 +278,23 @@ test('final interview invite subject renders Final Interview', async () => {
   assert.doesNotMatch(email.subject, /2nd Interview/)
 })
 
+test('interview templates use the selected company branding', async () => {
+  const email = await buildScheduledCandidateEmail({
+    templateId: '2nd-or-Final-invite',
+    stageKey: '2nd-interview',
+    applicant: { firstName: 'Alex', lastName: 'Reyes', email: 'alex@example.com', jobTitle: 'Support Specialist' },
+    recruiter: { email: 'recruiter@example.com' },
+    hiringManager: { name: 'Hiring Manager', positionTitle: 'Operations Lead' },
+    autofill: { accountDisplayName: 'Acme Holdings' },
+    currentSchedule: { date: '2026-06-01', time: '10:00', zoomLink: 'https://zoom.test/acme', attendees: [] },
+    interviewTimezone: 'Asia/Manila',
+  })
+
+  assert.match(email.subject, /Acme Holdings/)
+  assert.match(email.htmlBody, /Acme Holdings/)
+  assert.doesNotMatch(email.htmlBody, /joining Outsourced Pro Global/)
+})
+
 test('candidate message modal does not include SMS blocks', () => {
   const modal = candidateMessageModal({
     caseRecord: {

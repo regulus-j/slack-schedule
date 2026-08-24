@@ -3121,7 +3121,6 @@ export function registerSlackHandlers(app, context) {
       return;
     }
 
-    await ack();
     const interviewTimeZone = caseRecord.interviewTimezone || SYDNEY_TIME_ZONE
     const selectedDate = view.state.values.date_block.date.selected_date
     const converted = convertLocalDateTimeToZone({
@@ -3164,12 +3163,12 @@ export function registerSlackHandlers(app, context) {
       action: 'reschedule_requested',
       reason: request.reason,
     });
-    await publishHome({ client, userId: body.user.id, store, logger, config });
     const recentAudits = await store.listAudits(caseId, 5);
-    await client.views.open({
-      trigger_id: body.trigger_id,
+    await ack({
+      response_action: 'update',
       view: rescheduleApprovalModal({ caseRecord: updated, email, recentAudits }),
     });
+    await publishHome({ client, userId: body.user.id, store, logger, config });
   });
 
   app.view('reschedule_approval_submit', async ({ ack, body, view, client }) => {
@@ -4633,10 +4632,14 @@ export function attendeeInviteRecipients(caseRecord) {
     : normalizeAttendees(caseRecord, resolveStageRules(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId), caseRecord.stageOverrides))
 
   const byEmail = new Map()
-  for (const attendee of details) {
+  for (const originalAttendee of details) {
+    const scheduledEmail = normalizeEmail(originalAttendee?.email)
+    const attendee = originalAttendee?.role === 'hiring_manager'
+      ? canonicalHiringManager(originalAttendee)
+      : originalAttendee
     const email = normalizeEmail(attendee.email)
     if (!email || excludedEmails.has(email)) continue
-    if (scheduledEmails.size > 0 && !scheduledEmails.has(email)) continue
+    if (scheduledEmails.size > 0 && !scheduledEmails.has(email) && !scheduledEmails.has(scheduledEmail)) continue
     byEmail.set(email, {
       name: attendee.name || attendee.email || 'there',
       email: attendee.email,
@@ -4805,6 +4808,7 @@ export function buildTemplateVariables(caseRecord) {
   const time = currentSchedule.time || caseRecord.selectedInterviewTime || '';
   const link = currentSchedule.zoomLink || caseRecord.autofill?.zoomLink || '';
   const hiringManagerName = caseRecord.hiringManager?.name || '';
+  const hiringManagerNames = buildHiringManagerNames(caseRecord);
   const positionTitle = caseRecord.hiringManager?.positionTitle || '';
   const resolvedStageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId));
   const interviewStage = stageLabel(resolvedStageKey);
@@ -4828,6 +4832,7 @@ export function buildTemplateVariables(caseRecord) {
     link,
     Link: link,
     hiring_manager_name: hiringManagerName,
+    hiring_manager_names: hiringManagerNames,
     position_title: positionTitle,
     interview_duration_minutes: String(interviewDurationMinutes),
     interview_duration_text: formatInterviewDuration(interviewDurationMinutes),
@@ -4837,6 +4842,24 @@ export function buildTemplateVariables(caseRecord) {
     schedule_your_interview_here: '',
     recruiter_phone_line: recruiterContactLine(caseRecord),
   };
+}
+
+function buildHiringManagerNames(caseRecord) {
+  const schedule = caseRecord.currentSchedule || {}
+  const details = Array.isArray(schedule.attendeeDetails) ? schedule.attendeeDetails : []
+  const managers = details.filter((person) => person?.role === 'hiring_manager')
+  if (caseRecord.hiringManager) managers.push(caseRecord.hiringManager)
+
+  const names = []
+  const seen = new Set()
+  for (const person of managers) {
+    const name = String(person?.name || [person?.firstName, person?.lastName].filter(Boolean).join(' ') || '').trim()
+    const key = name.toLowerCase()
+    if (!name || seen.has(key)) continue
+    seen.add(key)
+    names.push(name)
+  }
+  return names.join(', ')
 }
 
 function buildGuestListText(caseRecord) {
@@ -5887,10 +5910,35 @@ function asRecruiter(person) {
 
 function asHiringManager(person) {
   if (!person) return null
+  const canonical = canonicalHiringManager(person)
   return {
-    ...person,
+    ...canonical,
     role: 'hiring_manager',
   }
+}
+
+function canonicalHiringManager(person) {
+  const nameKey = normalizedPersonName(person?.name)
+  if (!nameKey) return person
+
+  const matches = getHiringManagers().filter((candidate) =>
+    normalizedPersonName(candidate?.name) === nameKey && normalizeEmail(candidate?.email)
+  )
+  if (matches.length !== 1) return person
+
+  const match = matches[0]
+  if (normalizeEmail(match.email) === normalizeEmail(person.email)) return person
+  return { ...person, ...match }
+}
+
+function normalizedPersonName(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
 }
 
 function extractResumeFileReference(values) {

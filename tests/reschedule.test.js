@@ -35,7 +35,7 @@ import {
   roleAutofillSelections,
 } from '../src/slack/handlers.js';
 import { actionButtonsForCase, caseDetailsModal, caseMessageBlocks, externalAttendeeModal, finalizeEmailPreviewModal, finalizeModal, filterHomeCasesByDateRange, homeView, intakeModal, peopleCheckboxOptions, rescheduleModal, scheduledMeetingBlocks, schedulingModal, scheduleTrackerModal } from '../src/slack/views.js';
-import { setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackRecruiters, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js';
+import { getHiringManagers, setApplicants, setRecruiters, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackRecruiters, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js';
 import { SAMPLE_APPLICANTS, SAMPLE_PEOPLE } from '../src/data/sample-data.js';
 
 const baseCase = {
@@ -87,6 +87,19 @@ test('scheduled cases show reschedule actions', () => {
   const labels = actionButtonsForCase(scheduledCase).map((item) => item.text.text);
   assert.ok(labels.includes('🔄 Reschedule interview'));
 });
+
+test('cancel interview action includes a confirmation dialog', () => {
+  const scheduledCase = {
+    ...baseCase,
+    status: 'Scheduled',
+    calendarEventId: 'event-1',
+  }
+
+  const cancelButton = actionButtonsForCase(scheduledCase).find((item) => item.action_id === 'cancel_interview')
+  assert.equal(cancelButton.confirm.title.text, 'Cancel interview?')
+  assert.equal(cancelButton.confirm.confirm.text, 'Cancel interview')
+  assert.equal(cancelButton.confirm.deny.text, 'Keep interview')
+})
 
 test('unscheduled custom invite cases show the schedule action', () => {
   const customInviteCase = {
@@ -2247,6 +2260,58 @@ test('builds intake draft recruiter from the selected applicant', () => {
   assert.equal(draft.applicant.jobTitle, 'Support Specialist');
 });
 
+test('intake draft repairs mispaired emails for every hiring manager in a multi-manager role', () => {
+  const savedHiringManagers = getHiringManagers()
+  try {
+    setHiringManagers([
+      { id: 'hm-arvind', name: 'Arvind Tamilarasan', email: 'arvind@example.com', role: 'hiring_manager' },
+      { id: 'hm-crisielle', name: 'Crisielle Manalastas', email: 'crisielle@example.com', role: 'hiring_manager' },
+      { id: 'hm-damian', name: 'Damian Power', email: 'damian@example.com', role: 'hiring_manager' },
+      { id: 'hm-peter', name: 'Peter Bassilios', email: 'peter@example.com', role: 'hiring_manager' },
+    ])
+
+    const draft = buildIntakeDraft({}, [], {
+      eventType: '2nd-interview',
+      stageKey: '2nd-interview',
+      hiringManagerIds: ['sheet-role-hm-arvind', 'sheet-role-hm-crisielle', 'sheet-role-hm-damian', 'sheet-role-hm-peter'],
+      availableHiringManagers: [
+        { id: 'sheet-role-hm-arvind', name: 'Arvind Tamilarasan', email: 'damian@example.com', role: 'hiring_manager' },
+        { id: 'sheet-role-hm-crisielle', name: 'Crisielle Manalastas', email: 'peter@example.com', role: 'hiring_manager' },
+        { id: 'sheet-role-hm-damian', name: 'Damian Power', email: 'arvind@example.com', role: 'hiring_manager' },
+        { id: 'sheet-role-hm-peter', name: 'Peter Bassilios', email: 'crisielle@example.com', role: 'hiring_manager' },
+      ],
+    })
+
+    assert.deepEqual(draft.selectedHiringManagers.map((manager) => ({ name: manager.name, email: manager.email })), [
+      { name: 'Arvind Tamilarasan', email: 'arvind@example.com' },
+      { name: 'Crisielle Manalastas', email: 'crisielle@example.com' },
+      { name: 'Damian Power', email: 'damian@example.com' },
+      { name: 'Peter Bassilios', email: 'peter@example.com' },
+    ])
+
+    const recipients = attendeeInviteRecipients({
+      ...baseCase,
+      currentSchedule: {
+        attendees: ['damian@example.com', 'peter@example.com', 'arvind@example.com', 'crisielle@example.com'],
+        attendeeDetails: [
+          { name: 'Arvind Tamilarasan', email: 'damian@example.com', role: 'hiring_manager' },
+          { name: 'Crisielle Manalastas', email: 'peter@example.com', role: 'hiring_manager' },
+          { name: 'Damian Power', email: 'arvind@example.com', role: 'hiring_manager' },
+          { name: 'Peter Bassilios', email: 'crisielle@example.com', role: 'hiring_manager' },
+        ],
+      },
+    })
+    assert.deepEqual(recipients.map((recipient) => ({ name: recipient.name, email: recipient.email })), [
+      { name: 'Arvind Tamilarasan', email: 'arvind@example.com' },
+      { name: 'Crisielle Manalastas', email: 'crisielle@example.com' },
+      { name: 'Damian Power', email: 'damian@example.com' },
+      { name: 'Peter Bassilios', email: 'peter@example.com' },
+    ])
+  } finally {
+    setHiringManagers(savedHiringManagers)
+  }
+})
+
 test('initial submission fallback keeps applicant recruiter when checkbox state is empty', () => {
   setApplicants([
     {
@@ -2472,6 +2537,7 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.time, '09:30');
   assert.equal(variables.link, 'https://zoom.us/j/demo');
   assert.equal(variables.hiring_manager_name, 'Ana Cruz');
+  assert.equal(variables.hiring_manager_names, 'Ana Cruz');
   assert.equal(variables.position_title, 'Operations Manager');
   assert.equal(variables.interview_duration_minutes, '55');
   assert.equal(variables.interview_duration_text, '55-minute');
@@ -2507,6 +2573,8 @@ test('2nd/final candidate email describes the resume attachment and includes all
   });
 
   assert.match(email.body, /The applicant's resume is attached to this email/);
+  assert.match(email.plainBody, /Our hiring managers, Ana Cruz, will meet with you via Zoom/);
+  assert.doesNotMatch(email.plainBody, /our \[position_title\]/);
   assert.match(email.plainBody, /The applicant's resume is attached to this email/);
   assert.match(email.body, /font-family:Arial,Helvetica,sans-serif/);
   assert.match(email.body, /font-size:14px/);

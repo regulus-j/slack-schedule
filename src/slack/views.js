@@ -1476,6 +1476,15 @@ export function actionButtonsForCase(caseRecord, compact = false) {
     ),
   }
 
+  if (actionMap.cancel_interview) {
+    actionMap.cancel_interview.confirm = {
+      title: plain('Cancel interview?'),
+      text: plain('This will cancel the calendar event and send a cancellation email to the recruiter.'),
+      confirm: plain('Cancel interview'),
+      deny: plain('Keep interview'),
+    }
+  }
+
   return visibleCaseActions(caseRecord).map((actionId) => actionMap[actionId]).filter(Boolean)
 }
 

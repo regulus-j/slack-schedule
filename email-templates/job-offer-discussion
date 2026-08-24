@@ -5,7 +5,7 @@ Body:
 <body style="font-family:Arial,Helvetica,sans-serif;color:#000000;font-size:14px;line-height:1.38;margin:0;padding:0;">
 <p style="line-height:1.38;margin-top:0;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Hi [applicant_first_name],</strong></span></span></p>
 
-<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">We are pleased to inform you that you have been selected for the <strong style="font-weight:700">[job_title]</strong> role at <strong style="font-weight:700">Outsourced Pro Global</strong>.</span></span></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">We are pleased to inform you that you have been selected for the <strong style="font-weight:700">[job_title]</strong> role at <strong style="font-weight:700">[company_name]</strong>.</span></span></p>
 
 <p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif">As the next step, we would like to invite you for a <strong style="font-weight:700">job offer discussion</strong>. During this discussion, we will:</span></span></p>
 
@@ -36,7 +36,7 @@ Body:
 </ul>
 
 <p style="line-height:1.38;margin-top:16px;margin-bottom:4px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Warm regards,</strong></span></span></p>
-<p style="line-height:1.38;margin-top:0;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Recruitment Team, Outsourced Pro Global</strong></span></span></p>
+<p style="line-height:1.38;margin-top:0;margin-bottom:16px;"><span style="font-size:14px"><span style="font-family:Arial,Helvetica,sans-serif"><strong style="font-weight:700">Recruitment Team, [company_name]</strong></span></span></p>
 
 [signature]
 </body>

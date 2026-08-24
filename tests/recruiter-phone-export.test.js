@@ -58,6 +58,19 @@ test('normalizeRecruiterPhoneRow accepts recruiter detail header variants and no
   assert.equal(row.zoomLink, 'https://zoom.us/j/mara')
 })
 
+test('normalizeRecruiterPhoneRow extracts descriptive phone and Zoom sheet headers', () => {
+  const row = normalizeRecruiterPhoneRow({
+    'First Name': 'Armi',
+    'Last Name': 'Escamilla',
+    'Work Email': 'armi@example.com',
+    'Contact / WhatsApp Number': '0480 002 413',
+    'Personal Zoom Meeting': 'https://zoom.us/my/armi.escamilla',
+  })
+
+  assert.equal(row.phone, '0480 002 413')
+  assert.equal(row.zoomLink, 'https://zoom.us/my/armi.escamilla')
+})
+
 test('fetchRecruiterPhoneRows sends file id and accepts xlsx export payload shape', async () => {
   const originalFetch = globalThis.fetch
   const requestedUrls = []

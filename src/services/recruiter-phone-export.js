@@ -69,7 +69,11 @@ export function normalizeRecruiterPhoneRow(row) {
     'Mobile Number',
     'Phone',
     'Phone Number',
-  ])
+    'Contact Number',
+    'Contact No',
+    'Contact Phone',
+  ]) || firstMatchingClean(row, (header) =>
+    /(aircall|phone|mobile|contact|whatsapp|telephone|tel|number)/.test(header))
   const email = normalizeEmail(firstClean(row, [
     'Work Email',
     'Work Email Address',
@@ -81,7 +85,10 @@ export function normalizeRecruiterPhoneRow(row) {
     'Zoom Link',
     'Personal Zoom',
     'Zoom URL',
-  ])
+    'Zoom Meeting Link',
+    'Meeting Link',
+  ]) || firstMatchingClean(row, (header) =>
+    /zoom/.test(header) && (header === 'zoom' || /(link|url|meeting|account|personal)/.test(header)))
   const legalName = [firstName, lastName].filter(Boolean).join(' ').trim()
   const displayName = [preferredName || firstName, lastName].filter(Boolean).join(' ').trim() || legalName
 
@@ -174,8 +181,12 @@ function clean(value) {
 
 function firstClean(row, keys) {
   const aliases = new Set(keys.map(normalizeHeader))
+  return firstMatchingClean(row, (header) => aliases.has(header))
+}
+
+function firstMatchingClean(row, matches) {
   for (const [key, rawValue] of Object.entries(row || {})) {
-    if (!aliases.has(normalizeHeader(key))) continue
+    if (!matches(normalizeHeader(key))) continue
     const value = clean(rawValue)
     if (value) return value
   }
