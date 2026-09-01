@@ -5,17 +5,8 @@ apt-get update -qq
 apt-get install -y -qq ca-certificates curl gpg postgresql postgresql-contrib docker.io docker-compose-v2 unattended-upgrades
 systemctl enable --now docker postgresql
 DB_PASSWORD=$(gcloud secrets versions access latest --secret="${database_password_secret}" --format='get(payload.data)' | base64 -d)
-sudo -u postgres psql -v ON_ERROR_STOP=1 --set=db_password="$${DB_PASSWORD}" <<'SQL'
-DO $$
-DECLARE p text := :'db_password';
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${database_user}') THEN
-    EXECUTE format('CREATE ROLE ${database_user} LOGIN PASSWORD %L', p);
-  ELSE
-    EXECUTE format('ALTER ROLE ${database_user} PASSWORD %L', p);
-  END IF;
-END $$;
-SQL
+DB_PASSWORD_B64=$(printf '%s' "$${DB_PASSWORD}" | base64 -w0)
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE p text := convert_from(decode('$${DB_PASSWORD_B64}', 'base64'), 'UTF8'); BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${database_user}') THEN EXECUTE format('CREATE ROLE ${database_user} LOGIN PASSWORD %L', p); ELSE EXECUTE format('ALTER ROLE ${database_user} PASSWORD %L', p); END IF; END \$\$;"
 sudo -u postgres createdb -O ${database_user} ${database_name} 2>/dev/null || true
 mkdir -p /secrets /opt/slack-scheduler
 %{ for var_name, secret_id in secret_names ~}
