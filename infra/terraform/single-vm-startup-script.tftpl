@@ -12,13 +12,13 @@ mkdir -p /secrets /opt/slack-scheduler
 %{ for var_name, secret_id in secret_names ~}
 mkdir -p "/secrets/${var_name}"
 gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | base64 -d > "/secrets/${var_name}/${var_name}"
-chmod 400 "/secrets/${var_name}/${var_name}"
+chmod 444 "/secrets/${var_name}/${var_name}"
 %{ endfor ~}
 sed -i -E 's#@[^:/]+(:[0-9]+)?/#@127.0.0.1:5432/#' /secrets/DATABASE_URL/DATABASE_URL || true
 %{ for var_name, secret_id in runtime_config_secret_names ~}
 mkdir -p "/secrets/${var_name}"
 gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | base64 -d > "/secrets/${var_name}/${var_name}"
-chmod 400 "/secrets/${var_name}/${var_name}"
+chmod 444 "/secrets/${var_name}/${var_name}"
 %{ endfor ~}
 gcloud auth configure-docker ${container_registry} --quiet
 cat > /opt/slack-scheduler/docker-compose.yml <<'COMPOSE_EOF'
