@@ -118,6 +118,7 @@ jobs:
           )
           terraform validate
           terraform apply -auto-approve "${args[@]}"
+          gcloud compute instances reset "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" --zone "${GCP_REGION}-a" --quiet
       - name: Verify application
         run: |
           VM_IP=$(gcloud compute instances describe "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" --zone "${GCP_REGION}-a" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
