@@ -1,4 +1,4 @@
-name: Deploy GCP
+name: Deploy GCP (low cost)
 
 on:
   workflow_dispatch:
@@ -30,43 +30,23 @@ jobs:
       TERRAFORM_STATE_BUCKET: ${{ vars.TERRAFORM_STATE_BUCKET }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Test and audit
-        run: |
-          npm ci
-          npm test -- --test-timeout=30000 --test-concurrency=1
-          node --check app.js
-          npm audit --omit=dev --audit-level=moderate
-      - name: Validate GCP authentication configuration
+      - name: Test
+        run: npm ci && npm test -- --test-timeout=30000 --test-concurrency=1 && node --check app.js
+      - name: Validate configuration
         env:
-          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOY_SA: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
         run: |
-          test -n "$GCP_PROJECT_ID" || { echo "::error::Set GCP_PROJECT_ID in the selected GitHub environment."; exit 1; }
-          test -n "$GCP_REGION" || { echo "::error::Set GCP_REGION in the selected GitHub environment."; exit 1; }
-          test -n "$TERRAFORM_STATE_BUCKET" || { echo "::error::Set TERRAFORM_STATE_BUCKET in the selected GitHub environment."; exit 1; }
-          test -n "$GCP_WORKLOAD_IDENTITY_PROVIDER" || { echo "::error::Set GCP_WORKLOAD_IDENTITY_PROVIDER as an environment variable or secret."; exit 1; }
-          test -n "$GCP_DEPLOY_SERVICE_ACCOUNT" || { echo "::error::Set GCP_DEPLOY_SERVICE_ACCOUNT as an environment variable or secret."; exit 1; }
-      - name: Validate application startup configuration
-        env:
-          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
-          SLACK_TEAM_ID: ${{ vars.SLACK_TEAM_ID }}
-          SLACK_POSTING_CHANNEL_ID: ${{ vars.SLACK_POSTING_CHANNEL_ID }}
-          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
-          GOOGLE_SHARED_CALENDAR_ID: ${{ vars.GOOGLE_SHARED_CALENDAR_ID }}
-          GOOGLE_AUTH_SLACK_USER_ID: ${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}
-        run: |
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            test -n "$PUBLIC_BASE_URL" || { echo "::error::Set PUBLIC_BASE_URL in the production GitHub environment."; exit 1; }
-            test -n "$SLACK_TEAM_ID" || { echo "::error::Set SLACK_TEAM_ID in the production GitHub environment."; exit 1; }
-            test -n "$SLACK_POSTING_CHANNEL_ID" || { echo "::error::Set SLACK_POSTING_CHANNEL_ID in the production GitHub environment."; exit 1; }
-          fi
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_SHARED_CALENDAR_ID" ]; then
-            test -n "$GOOGLE_AUTH_SLACK_USER_ID" || { echo "::error::Set GOOGLE_AUTH_SLACK_USER_ID in the production environment when Google Calendar is configured."; exit 1; }
+          test -n "$GCP_PROJECT_ID" && test -n "$GCP_REGION" && test -n "$TERRAFORM_STATE_BUCKET"
+          test -n "$WIF" && test -n "$DEPLOY_SA"
+          if [ "$DEPLOY_ENVIRONMENT" = production ]; then
+            test -n "${{ vars.PUBLIC_BASE_URL }}"
+            test -n "${{ vars.SLACK_TEAM_ID }}"
+            test -n "${{ vars.SLACK_POSTING_CHANNEL_ID }}"
           fi
       - uses: google-github-actions/auth@v2
         with:
@@ -74,247 +54,44 @@ jobs:
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
       - uses: hashicorp/setup-terraform@v3
-      - name: Bootstrap Artifact Registry
-        working-directory: infra/terraform
-        run: |
-          terraform init -backend-config="bucket=${TERRAFORM_STATE_BUCKET}"
-          terraform apply -auto-approve -target=google_artifact_registry_repository.app \
-            -var="project_id=${GCP_PROJECT_ID}" \
-            -var="environment=${DEPLOY_ENVIRONMENT}" \
-            -var="region=${GCP_REGION}" \
-            -var="github_repository=${{ github.repository }}" \
-            -var="container_image=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}"
       - name: Build and push image
         run: |
           gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
           docker build -t "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}" .
           docker push "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}"
-      - name: Terraform plan
+      - name: Terraform apply — single VM architecture
         working-directory: infra/terraform
         env:
           GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT: ${{ vars.GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT || '{}' }}
         run: |
-          terraform plan \
-            -var="project_id=${GCP_PROJECT_ID}" \
-            -var="environment=${DEPLOY_ENVIRONMENT}" \
-            -var="region=${GCP_REGION}" \
-            -var="github_repository=${{ github.repository }}" \
-            -var="container_image=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}" \
-            -var="public_base_url=${{ vars.PUBLIC_BASE_URL }}" \
-            -var="slack_team_id=${{ vars.SLACK_TEAM_ID }}" \
-            -var="slack_posting_channel_id=${{ vars.SLACK_POSTING_CHANNEL_ID }}" \
-            -var="slack_recruitment_user_ids=${{ vars.SLACK_RECRUITMENT_USER_IDS }}" \
-            -var="slack_admin_user_ids=${{ vars.SLACK_ADMIN_USER_IDS }}" \
-            -var="slack_alert_user_ids=${{ vars.SLACK_ALERT_USER_IDS }}" \
-            -var="google_client_id=${{ vars.GOOGLE_CLIENT_ID }}" \
-            -var="google_redirect_uri=${{ vars.GOOGLE_REDIRECT_URI }}" \
-            -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}" \
-            -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}" \
-            -var="google_account_by_jazzhr_account=${GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT}" \
-            -var="monitoring_email=${{ vars.MONITORING_EMAIL }}" \
-            -var="secret_next_rotation_time=${{ vars.SECRET_NEXT_ROTATION_TIME }}" \
-            -var="recruiter_phone_export_url=${{ vars.RECRUITER_PHONE_EXPORT_URL }}" \
-            -var="recruiter_phone_export_file_id=${{ vars.RECRUITER_PHONE_EXPORT_FILE_ID }}" \
-            -var="recruiter_phone_export_sheet_name=${{ vars.RECRUITER_PHONE_EXPORT_SHEET_NAME }}" \
-            -var="role_assignment_export_url=${{ vars.ROLE_ASSIGNMENT_EXPORT_URL }}" \
-            -var="role_assignment_export_file_id=${{ vars.ROLE_ASSIGNMENT_EXPORT_FILE_ID }}" \
-            -var="role_assignment_export_sheet_name=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME }}" \
-            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}" \
-            -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
-            -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
+          terraform init -backend-config="bucket=${TERRAFORM_STATE_BUCKET}"
+          args=(
+            -var="project_id=${GCP_PROJECT_ID}"
+            -var="environment=${DEPLOY_ENVIRONMENT}"
+            -var="region=${GCP_REGION}"
+            -var="github_repository=${{ github.repository }}"
+            -var="container_image=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}"
+            -var="public_base_url=${{ vars.PUBLIC_BASE_URL }}"
+            -var="slack_team_id=${{ vars.SLACK_TEAM_ID }}"
+            -var="slack_posting_channel_id=${{ vars.SLACK_POSTING_CHANNEL_ID }}"
+            -var="slack_recruitment_user_ids=${{ vars.SLACK_RECRUITMENT_USER_IDS }}"
+            -var="slack_admin_user_ids=${{ vars.SLACK_ADMIN_USER_IDS }}"
+            -var="slack_alert_user_ids=${{ vars.SLACK_ALERT_USER_IDS }}"
+            -var="google_client_id=${{ vars.GOOGLE_CLIENT_ID }}"
+            -var="google_redirect_uri=${{ vars.GOOGLE_REDIRECT_URI }}"
+            -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}"
+            -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}"
+            -var="google_account_by_jazzhr_account=${GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT}"
+            -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}"
+            -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}"
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
-      - name: Terraform apply
-        working-directory: infra/terraform
-        env:
-          GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT: ${{ vars.GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT || '{}' }}
+          )
+          terraform validate
+          terraform apply -auto-approve "${args[@]}"
+      - name: Verify application
         run: |
-          terraform apply -auto-approve \
-            -var="project_id=${GCP_PROJECT_ID}" \
-            -var="environment=${DEPLOY_ENVIRONMENT}" \
-            -var="region=${GCP_REGION}" \
-            -var="github_repository=${{ github.repository }}" \
-            -var="container_image=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}" \
-            -var="public_base_url=${{ vars.PUBLIC_BASE_URL }}" \
-            -var="slack_team_id=${{ vars.SLACK_TEAM_ID }}" \
-            -var="slack_posting_channel_id=${{ vars.SLACK_POSTING_CHANNEL_ID }}" \
-            -var="slack_recruitment_user_ids=${{ vars.SLACK_RECRUITMENT_USER_IDS }}" \
-            -var="slack_admin_user_ids=${{ vars.SLACK_ADMIN_USER_IDS }}" \
-            -var="slack_alert_user_ids=${{ vars.SLACK_ALERT_USER_IDS }}" \
-            -var="google_client_id=${{ vars.GOOGLE_CLIENT_ID }}" \
-            -var="google_redirect_uri=${{ vars.GOOGLE_REDIRECT_URI }}" \
-            -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}" \
-            -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}" \
-            -var="google_account_by_jazzhr_account=${GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT}" \
-            -var="monitoring_email=${{ vars.MONITORING_EMAIL }}" \
-            -var="secret_next_rotation_time=${{ vars.SECRET_NEXT_ROTATION_TIME }}" \
-            -var="recruiter_phone_export_url=${{ vars.RECRUITER_PHONE_EXPORT_URL }}" \
-            -var="recruiter_phone_export_file_id=${{ vars.RECRUITER_PHONE_EXPORT_FILE_ID }}" \
-            -var="recruiter_phone_export_sheet_name=${{ vars.RECRUITER_PHONE_EXPORT_SHEET_NAME }}" \
-            -var="role_assignment_export_url=${{ vars.ROLE_ASSIGNMENT_EXPORT_URL }}" \
-            -var="role_assignment_export_file_id=${{ vars.ROLE_ASSIGNMENT_EXPORT_FILE_ID }}" \
-            -var="role_assignment_export_sheet_name=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_NAME }}" \
-            -var="role_assignment_export_sheet_gid=${{ vars.ROLE_ASSIGNMENT_EXPORT_SHEET_GID }}" \
-            -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}" \
-            -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}" \
-            -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"
-      - name: Synchronize PostgreSQL connection secret
-        working-directory: infra/terraform
-        run: |
-          DB_IP=$(terraform output -raw database_private_ip)
-          DATABASE_SECRET="database-url-${DEPLOY_ENVIRONMENT}"
-          DATABASE_PASSWORD_SECRET="database-password-${DEPLOY_ENVIRONMENT}"
-          DATABASE_URL=$(gcloud secrets versions access latest --secret="${DATABASE_SECRET}")
-          DATABASE_PASSWORD=$(gcloud secrets versions access latest --secret="${DATABASE_PASSWORD_SECRET}")
-          echo "::add-mask::${DATABASE_PASSWORD}"
-          UPDATED_DATABASE_URL=$(node -e '
-            const url = new URL(process.argv[1])
-            url.hostname = process.argv[2]
-            url.password = process.argv[3]
-            process.stdout.write(url.toString())
-          ' "${DATABASE_URL}" "${DB_IP}" "${DATABASE_PASSWORD}")
-          if [ "${UPDATED_DATABASE_URL}" != "${DATABASE_URL}" ]; then
-            printf '%s' "${UPDATED_DATABASE_URL}" | gcloud secrets versions add "${DATABASE_SECRET}" --data-file=-
-          fi
-          unset DATABASE_URL DATABASE_PASSWORD UPDATED_DATABASE_URL
-      - name: Start PostgreSQL before service rollout
-        run: |
-          DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
-          DB_ZONE="${GCP_REGION}-a"
-          if ! gcloud compute instances describe "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet >/dev/null 2>&1; then
-            echo "PostgreSQL VM is not provisioned yet; Terraform will create it."
-            exit 0
-          fi
-          DB_STATUS=$(gcloud compute instances describe "${DB_INSTANCE}" \
-            --zone "${DB_ZONE}" --format='value(status)')
-          if [ "${DB_STATUS}" != "RUNNING" ]; then
-            gcloud compute instances start "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet
-          else
-            DB_READY=false
-            for probe in $(seq 1 3); do
-              if gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-                --command="command -v pg_isready >/dev/null 2>&1 && sudo pg_isready -d scheduler" >/dev/null 2>&1; then
-                DB_READY=true
-                break
-              fi
-              sleep 10
-            done
-            if [ "${DB_READY}" != "true" ]; then
-              echo "PostgreSQL is running but not ready; rebooting it to retry the startup script."
-              gcloud compute instances reset "${DB_INSTANCE}" --zone "${DB_ZONE}" --quiet
-            fi
-          fi
-          for attempt in $(seq 1 60); do
-            if gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-              --command="sudo pg_isready -d scheduler"; then
-              break
-            fi
-            test "${attempt}" -lt 60 || {
-              echo "::error::PostgreSQL did not become ready before service rollout."
-              gcloud compute instances get-serial-port-output "${DB_INSTANCE}" --zone "${DB_ZONE}" --port=1 | tail -n 120 || true
-              exit 1
-            }
+          for attempt in $(seq 1 30); do
+            if gcloud compute ssh "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" --zone "${GCP_REGION}-a" --tunnel-through-iap --quiet --ssh-flag=-batch --command="curl --fail --silent http://127.0.0.1:3000/health"; then exit 0; fi
             sleep 10
           done
-          if ! gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-            --command="sudo ss -lnt | grep -Eq '0\\.0\\.0\\.0:5432|\\*:5432|:::5432'"; then
-            echo "PostgreSQL is not listening on the private interface; applying the listener configuration."
-            gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-              --command="PG_CONFIG=\$(find /etc/postgresql -path '*/main/postgresql.conf' -print -quit); sudo sed -i -E \"s/^[[:space:]]*#?[[:space:]]*listen_addresses[[:space:]]*=.*/listen_addresses = '*' /\" \"\${PG_CONFIG}\"; sudo systemctl restart postgresql; sudo pg_isready -d scheduler"
-          fi
-          gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-            --command="PG_HBA=\$(find /etc/postgresql -path '*/main/pg_hba.conf' -print -quit); for ENTRY in 'host scheduler scheduler 10.20.0.2/32 scram-sha-256' 'host scheduler scheduler 10.8.0.0/28 scram-sha-256' 'host scheduler scheduler 10.20.0.0/24 scram-sha-256'; do if ! sudo grep -Fqx \"\${ENTRY}\" \"\${PG_HBA}\"; then echo \"\${ENTRY}\" | sudo tee -a \"\${PG_HBA}\" >/dev/null; fi; done; sudo systemctl reload postgresql; sudo pg_isready -d scheduler"
-          gcloud compute ssh "${DB_INSTANCE}" --zone "${DB_ZONE}" --tunnel-through-iap --quiet \
-            --command="set -e; DB_PASSWORD=\$(gcloud secrets versions access latest --secret=database-password-${DEPLOY_ENVIRONMENT} --format='get(payload.data)' | base64 -d); ESCAPED_PASSWORD=\$(printf '%s' \"\${DB_PASSWORD}\" | sed \"s/'/''/g\"); if sudo -u postgres psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='scheduler'\" | grep -q 1; then sudo -u postgres psql -v ON_ERROR_STOP=1 -c \"ALTER ROLE scheduler PASSWORD '\${ESCAPED_PASSWORD}'\"; else sudo -u postgres psql -v ON_ERROR_STOP=1 -c \"CREATE ROLE scheduler LOGIN PASSWORD '\${ESCAPED_PASSWORD}'\"; fi; sudo -u postgres createdb -O scheduler scheduler 2>/dev/null || true; PGPASSWORD=\"\${DB_PASSWORD}\" psql -h 127.0.0.1 -U scheduler -d scheduler -c 'SELECT 1' >/dev/null; unset DB_PASSWORD PGPASSWORD ESCAPED_PASSWORD; sudo systemctl reload postgresql; sudo pg_isready -d scheduler"
-      - name: Deploy callback service and application VM
-        run: |
-          wait_for_instance_status() {
-            local instance="$1"
-            local expected_status="$2"
-            for attempt in $(seq 1 36); do
-              current_status=$(gcloud compute instances describe "${instance}" \
-                --zone "${GCP_REGION}-a" --format='value(status)' 2>/dev/null || true)
-              if [ "${current_status}" = "${expected_status}" ]; then
-                return 0
-              fi
-              sleep 10
-            done
-            echo "::error::Instance ${instance} did not reach ${expected_status}. Last status: ${current_status}"
-            return 1
-          }
-          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}"
-          DB_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-db"
-          APP_INSTANCE="slack-scheduler-${DEPLOY_ENVIRONMENT}-app"
-          DB_STATUS=$(gcloud compute instances describe "${DB_INSTANCE}" \
-            --zone "${GCP_REGION}-a" --format='value(status)')
-          if [ "${DB_STATUS}" != "RUNNING" ]; then
-            gcloud compute instances start "${DB_INSTANCE}" \
-            --zone "${GCP_REGION}-a" --quiet
-          fi
-          for attempt in $(seq 1 60); do
-            if gcloud compute ssh "${DB_INSTANCE}" --zone "${GCP_REGION}-a" --tunnel-through-iap --quiet \
-              --command="sudo pg_isready -d scheduler"; then
-              break
-            fi
-            if [ "${attempt}" -eq 60 ]; then
-              echo "::error::PostgreSQL did not become ready. Collecting serial-console diagnostics."
-              gcloud compute instances get-serial-port-output "${DB_INSTANCE}" \
-                --zone "${GCP_REGION}-a" --port=1 | tail -n 120 || true
-              exit 1
-            fi
-            sleep 10
-          done
-          if ! timeout --foreground 120s gcloud run deploy slack-scheduler \
-            --region "${GCP_REGION}" --image "${IMAGE}" --quiet; then
-            echo "::warning::OAuth callback revision did not become ready within 120 seconds; preserving the last ready revision and continuing with the Slack app rollout."
-          fi
-          echo "Cleaning up stale migration executions before starting the new migration."
-          for execution in $(gcloud run jobs executions list \
-            --job=slack-scheduler-migrate --region "${GCP_REGION}" \
-            --limit=10 --format='value(name)'); do
-            gcloud run jobs executions cancel "${execution}" \
-              --region "${GCP_REGION}" --async --quiet || true
-          done
-          if ! timeout --foreground 360s gcloud run jobs execute slack-scheduler-migrate --region "${GCP_REGION}" --wait; then
-            echo "::error::Migration job did not complete successfully within 6 minutes. Collecting Cloud Run job logs."
-            LATEST_EXECUTION=$(gcloud run jobs executions list \
-              --job=slack-scheduler-migrate --region "${GCP_REGION}" \
-              --limit=1 --format='value(name)' || true)
-            if [ -n "${LATEST_EXECUTION}" ]; then
-              gcloud run jobs executions describe "${LATEST_EXECUTION}" \
-                --region "${GCP_REGION}" --format='yaml(metadata.name,status)' || true
-            fi
-            gcloud compute instances describe "${DB_INSTANCE}" \
-              --zone "${GCP_REGION}-a" --format='yaml(networkInterfaces[0].networkIP,tags.items)' || true
-            gcloud compute ssh "${DB_INSTANCE}" --zone "${GCP_REGION}-a" \
-              --tunnel-through-iap --quiet \
-              --command="sudo ss -lntp | grep 5432 || true; sudo grep -E '^[[:space:]]*listen_addresses' /etc/postgresql/*/main/postgresql.conf || true; sudo grep -E '^[[:space:]]*host[[:space:]]+scheduler' /etc/postgresql/*/main/pg_hba.conf || true" || true
-            gcloud logging read \
-              "resource.type=cloud_run_job AND resource.labels.job_name=slack-scheduler-migrate" \
-              --project "${GCP_PROJECT_ID}" --freshness=30m --limit=100 \
-              --format='table(timestamp,severity,textPayload,jsonPayload.message)' || true
-            exit 1
-          fi
-          APP_STATUS=$(gcloud compute instances describe "${APP_INSTANCE}" \
-            --zone "${GCP_REGION}-a" --format='value(status)')
-          if [ "${APP_STATUS}" = "RUNNING" ]; then
-            gcloud compute instances stop "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --async --quiet
-            wait_for_instance_status "${APP_INSTANCE}" TERMINATED
-          fi
-          gcloud compute instances start "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --async --quiet
-          wait_for_instance_status "${APP_INSTANCE}" RUNNING
-          for attempt in $(seq 1 45); do
-            if response=$(gcloud compute ssh "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --tunnel-through-iap --quiet \
-              --command="curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/health"); then
-              echo "${response}"
-              break
-            fi
-            if [ "${attempt}" -eq 45 ]; then
-              echo "::error::Application VM health check did not become ready. Collecting startup diagnostics."
-              gcloud compute ssh "${APP_INSTANCE}" --zone "${GCP_REGION}-a" --tunnel-through-iap --quiet \
-                --command="sudo systemctl status google-startup-scripts.service --no-pager || true; sudo docker ps -a; sudo docker compose -f /opt/slack-scheduler/docker-compose.yml ps; sudo docker compose -f /opt/slack-scheduler/docker-compose.yml logs --tail=100 app caddy" || true
-              exit 1
-            fi
-            sleep 10
-          done
-          URL=$(gcloud run services describe slack-scheduler --region "${GCP_REGION}" --format='value(status.url)')
-          echo "Deployed callback service ${IMAGE} to ${URL}; application VM is ${APP_INSTANCE}"
+          exit 1

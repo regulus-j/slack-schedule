@@ -1,0 +1,78 @@
+#!/bin/bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq ca-certificates curl gpg postgresql postgresql-contrib docker.io docker-compose-v2 unattended-upgrades
+systemctl enable --now docker postgresql
+DB_PASSWORD=$(gcloud secrets versions access latest --secret="${database_password_secret}" --format='get(payload.data)' | base64 -d)
+sudo -u postgres psql -v ON_ERROR_STOP=1 --set=db_password="$${DB_PASSWORD}" <<'SQL'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${database_user}') THEN CREATE ROLE ${database_user} LOGIN PASSWORD :'db_password'; ELSE ALTER ROLE ${database_user} PASSWORD :'db_password'; END IF;
+END $$;
+SQL
+sudo -u postgres createdb -O ${database_user} ${database_name} 2>/dev/null || true
+mkdir -p /secrets /opt/slack-scheduler
+%{ for var_name, secret_id in secret_names ~}
+mkdir -p "/secrets/${var_name}"
+gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | base64 -d > "/secrets/${var_name}/${var_name}"
+chmod 400 "/secrets/${var_name}/${var_name}"
+%{ endfor ~}
+sed -i -E 's#@[^:/]+(:[0-9]+)?/#@127.0.0.1:5432/#' /secrets/DATABASE_URL/DATABASE_URL || true
+%{ for var_name, secret_id in runtime_config_secret_names ~}
+gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | base64 -d > "/secrets/${var_name}/${var_name}"
+chmod 400 "/secrets/${var_name}/${var_name}"
+%{ endfor ~}
+gcloud auth configure-docker ${container_registry} --quiet
+cat > /opt/slack-scheduler/docker-compose.yml <<'COMPOSE_EOF'
+services:
+  app:
+    image: ${container_image}
+    container_name: slack-scheduler
+    restart: unless-stopped
+    ports: ["127.0.0.1:3000:3000"]
+    volumes: ["/secrets:/secrets:ro"]
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      PUBLIC_BASE_URL: ${public_base_url}
+      DATABASE_BACKEND: postgres
+      DATABASE_SSL_MODE: disable
+      DATABASE_URL_FILE: /secrets/DATABASE_URL/DATABASE_URL
+      GOOGLE_KMS_KEY_NAME: ${kms_key_name}
+      SLACK_BOT_TOKEN_FILE: /secrets/SLACK_BOT_TOKEN/SLACK_BOT_TOKEN
+      SLACK_APP_TOKEN_FILE: /secrets/SLACK_APP_TOKEN/SLACK_APP_TOKEN
+      JAZZHR_API_KEY_FILE: /secrets/JAZZHR_API_KEY/JAZZHR_API_KEY
+      GOOGLE_CLIENT_SECRET_FILE: /secrets/GOOGLE_CLIENT_SECRET/GOOGLE_CLIENT_SECRET
+      RECRUITER_PHONE_EXPORT_TOKEN_FILE: /secrets/RECRUITER_PHONE_EXPORT_TOKEN/RECRUITER_PHONE_EXPORT_TOKEN
+      ROLE_ASSIGNMENT_EXPORT_TOKEN_FILE: /secrets/ROLE_ASSIGNMENT_EXPORT_TOKEN/ROLE_ASSIGNMENT_EXPORT_TOKEN
+      SLACK_TEAM_ID: ${slack_team_id}
+      SLACK_POSTING_CHANNEL_ID: ${slack_posting_channel_id}
+      SLACK_RECRUITMENT_USER_IDS: ${slack_recruitment_user_ids}
+      SLACK_ADMIN_USER_IDS: ${slack_admin_user_ids}
+      SLACK_ALERT_USER_IDS: ${slack_alert_user_ids}
+      ACCESS_CONTROL_ENFORCED: "true"
+      GOOGLE_CLIENT_ID: ${google_client_id}
+      GOOGLE_REDIRECT_URI: ${google_redirect_uri}
+      GOOGLE_SHARED_CALENDAR_ID: ${google_shared_calendar_id}
+      GOOGLE_AUTH_SLACK_USER_ID: ${google_auth_slack_user_id}
+%{ for var_name, secret_id in runtime_config_secret_names ~}
+      ${var_name}_FILE: /secrets/${var_name}/${var_name}
+%{ endfor ~}
+  caddy:
+    image: caddy:2-alpine
+    container_name: slack-scheduler-caddy
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443"]
+    volumes: ["/opt/slack-scheduler/Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+volumes: { caddy_data: {}, caddy_config: {} }
+COMPOSE_EOF
+cat > /opt/slack-scheduler/Caddyfile <<'CADDY_EOF'
+${public_base_url_domain} { reverse_proxy app:3000 }
+CADDY_EOF
+cd /opt/slack-scheduler
+docker compose pull app
+docker compose up -d --remove-orphans
+docker compose run --rm app npm run migrate
+docker image prune -af --filter "until=168h" || true
+docker compose ps
