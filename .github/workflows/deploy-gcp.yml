@@ -71,6 +71,30 @@ jobs:
           GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT: ${{ vars.GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT || '{}' }}
         run: |
           terraform init -backend-config="bucket=${TERRAFORM_STATE_BUCKET}"
+          terraform state rm \
+            google_vpc_access_connector.run \
+            google_cloud_run_v2_service.app \
+            google_cloud_run_v2_job.migrate \
+            google_cloud_run_v2_job.retention \
+            google_compute_router_nat.private \
+            google_compute_router.nat \
+            google_compute_address.db \
+            google_compute_instance.db \
+            google_compute_disk.db_data \
+            google_compute_firewall.postgres \
+            google_cloud_scheduler_job.db_start \
+            google_cloud_scheduler_job.app_start \
+            google_cloud_scheduler_job.app_stop \
+            google_cloud_scheduler_job.db_stop \
+            google_cloud_scheduler_job.retention \
+            google_service_account.scheduler \
+            google_service_account.db \
+            google_project_iam_member.scheduler_compute \
+            google_project_iam_member.scheduler_run \
+            google_project_iam_member.scheduler_invoker \
+            google_service_account_iam_member.scheduler_service_agent_token_creator \
+            google_secret_manager_secret_iam_member.db_password_access \
+            || true
           args=(
             -var="project_id=${GCP_PROJECT_ID}"
             -var="environment=${DEPLOY_ENVIRONMENT}"
