@@ -120,8 +120,9 @@ jobs:
           terraform apply -auto-approve "${args[@]}"
       - name: Verify application
         run: |
+          VM_IP=$(gcloud compute instances describe "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" --zone "${GCP_REGION}-a" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
           for attempt in $(seq 1 30); do
-            if gcloud compute ssh "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" --zone "${GCP_REGION}-a" --tunnel-through-iap --strict-host-key-checking=no --quiet --command="curl --fail --silent http://127.0.0.1:3000/health"; then exit 0; fi
+            if curl --fail --silent --show-error --max-time 10 "http://${VM_IP}/health"; then exit 0; fi
             sleep 10
           done
           exit 1

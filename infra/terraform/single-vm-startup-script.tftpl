@@ -68,7 +68,7 @@ services:
 volumes: { caddy_data: {}, caddy_config: {} }
 COMPOSE_EOF
 cat > /opt/slack-scheduler/Caddyfile <<'CADDY_EOF'
-${public_base_url_domain} { reverse_proxy app:3000 }
+:80 { reverse_proxy app:3000 }
 CADDY_EOF
 cd /opt/slack-scheduler
 docker compose pull app
