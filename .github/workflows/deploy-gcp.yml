@@ -59,6 +59,12 @@ jobs:
           gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
           docker build -t "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}" .
           docker push "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}"
+      - name: Remove legacy paid runtime resources
+        run: |
+          gcloud run services delete slack-scheduler --region "${GCP_REGION}" --quiet || true
+          gcloud run jobs delete slack-scheduler-migrate --region "${GCP_REGION}" --quiet || true
+          gcloud run jobs delete slack-scheduler-retention --region "${GCP_REGION}" --quiet || true
+          gcloud compute networks vpc-access connectors delete ss-production --region "${GCP_REGION}" --quiet || true
       - name: Terraform apply — single VM architecture
         working-directory: infra/terraform
         env:

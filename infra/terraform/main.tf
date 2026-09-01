@@ -190,7 +190,7 @@ resource "google_service_account_iam_member" "github_deploy" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
 }
 resource "google_project_iam_member" "deploy_roles" {
-  for_each = toset(["roles/artifactregistry.writer", "roles/compute.instanceAdmin.v1", "roles/compute.networkAdmin", "roles/compute.osAdminLogin", "roles/compute.securityAdmin", "roles/iap.tunnelResourceAccessor", "roles/iam.serviceAccountUser", "roles/iam.workloadIdentityPoolAdmin", "roles/cloudkms.admin", "roles/logging.viewer", "roles/resourcemanager.projectIamAdmin", "roles/secretmanager.admin", "roles/serviceusage.serviceUsageAdmin", "roles/storage.admin"])
+  for_each = toset(["roles/artifactregistry.writer", "roles/compute.instanceAdmin.v1", "roles/compute.networkAdmin", "roles/compute.osAdminLogin", "roles/compute.securityAdmin", "roles/iap.tunnelResourceAccessor", "roles/iam.serviceAccountUser", "roles/iam.workloadIdentityPoolAdmin", "roles/cloudkms.admin", "roles/logging.viewer", "roles/resourcemanager.projectIamAdmin", "roles/secretmanager.admin", "roles/serviceusage.serviceUsageAdmin", "roles/storage.admin", "roles/vpcaccess.admin"])
   project  = var.project_id
   role     = each.value
   member   = "serviceAccount:${google_service_account.deploy.email}"
