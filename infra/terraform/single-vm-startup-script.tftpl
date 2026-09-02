@@ -4,6 +4,14 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl gpg postgresql postgresql-contrib docker.io docker-compose-v2 unattended-upgrades
 systemctl enable --now docker postgresql
+# PostgreSQL runs on the VM while the app runs in Docker. Enable TCP access
+# from Docker's private bridge only; the database remains unreachable from
+# the public interface because the VM firewall does not expose port 5432.
+PG_HBA_FILE=$(sudo -u postgres psql -tAc "show hba_file" | xargs)
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET listen_addresses = '*';"
+grep -qF "host ${database_name} ${database_user} 172.16.0.0/12 scram-sha-256" "$PG_HBA_FILE" || \
+  echo "host ${database_name} ${database_user} 172.16.0.0/12 scram-sha-256" >> "$PG_HBA_FILE"
+systemctl restart postgresql
 DB_PASSWORD=$(gcloud secrets versions access latest --secret="${database_password_secret}" --format='get(payload.data)' | base64 -d)
 DB_PASSWORD_B64=$(printf '%s' "$${DB_PASSWORD}" | base64 -w0)
 sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DO \$\$ DECLARE p text := convert_from(decode('$${DB_PASSWORD_B64}', 'base64'), 'UTF8'); BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${database_user}') THEN EXECUTE format('CREATE ROLE ${database_user} LOGIN PASSWORD %L', p); ELSE EXECUTE format('ALTER ROLE ${database_user} PASSWORD %L', p); END IF; END \$\$;"
