@@ -2732,7 +2732,12 @@ export function registerSlackHandlers(app, context) {
     const finalCaseRecord = {
       ...caseRecord,
       stageKey: finalizeStageKey,
-      templateId: resolveTemplateFromStage(finalizeStageKey) || caseRecord.templateId,
+      templateId: (() => {
+        const selectedTemplateId = view.state.values.template_block?.template_select?.selected_option?.value
+        return selectedTemplateId && resolveStageFromTemplate(selectedTemplateId) === finalizeStageKey
+          ? selectedTemplateId
+          : resolveTemplateFromStage(finalizeStageKey) || caseRecord.templateId
+      })(),
       stageOverrides,
     }
     const allAttendees = normalizeAttendees(finalCaseRecord, finalizeStageRules)
@@ -5085,7 +5090,10 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const stageKey = normalizeStageKey(customInvite
     ? (selectedStageKey || resolveStageFromTemplate(legacyTemplateId) || '1st-interview')
     : (stageKeyForEventType(eventType) || selectedStageKey || resolveStageFromTemplate(legacyTemplateId)));
-  const templateId = resolveTemplateFromStage(stageKey) || legacyTemplateId;
+  const selectedTemplateId = overrides.templateId ?? legacyTemplateId
+  const templateId = selectedTemplateId && resolveStageFromTemplate(selectedTemplateId) === stageKey
+    ? selectedTemplateId
+    : resolveTemplateFromStage(stageKey) || selectedTemplateId;
   const interviewTimezone = overrides.interviewTimezone ?? (values.timezone_block?.timezone_select?.selected_option?.value || '');
 
   const applicant = manualCandidateMode

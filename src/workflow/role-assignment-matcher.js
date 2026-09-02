@@ -71,12 +71,21 @@ export function roleTitleSimilarity(left, right) {
   if (!normalizedLeft || !normalizedRight) return 0
   if (normalizedLeft === normalizedRight) return 1
 
-  const tokenScore = diceCoefficient(
-    new Set(normalizedLeft.split(' ')),
-    new Set(normalizedRight.split(' ')),
-  )
+  const leftTokens = new Set(normalizedLeft.split(' '))
+  const rightTokens = new Set(normalizedRight.split(' '))
+  const tokenScore = diceCoefficient(leftTokens, rightTokens)
   const characterScore = levenshteinSimilarity(normalizedLeft, normalizedRight)
-  return roundConfidence((tokenScore * 0.6) + (characterScore * 0.4))
+  const baseScore = (tokenScore * 0.6) + (characterScore * 0.4)
+
+  // Open-role titles often use a shortened primary title while the mapping
+  // sheet includes a secondary title after a slash. Treat the shorter title
+  // as a match when it is a meaningful, complete subset of the longer title.
+  // The normal ranking/ambiguity checks still apply when multiple mappings
+  // share that same primary title.
+  const shorterTokens = leftTokens.size <= rightTokens.size ? leftTokens : rightTokens
+  const longerTokens = shorterTokens === leftTokens ? rightTokens : leftTokens
+  const isMeaningfulSubset = shorterTokens.size >= 3 && [...shorterTokens].every((token) => longerTokens.has(token))
+  return roundConfidence(isMeaningfulSubset ? Math.max(baseScore, 0.85) : baseScore)
 }
 
 function groupAssignments(assignments) {

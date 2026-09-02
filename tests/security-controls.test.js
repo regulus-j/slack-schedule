@@ -219,6 +219,7 @@ test('OAuth state is opaque, single-use, team-bound, and expires', async () => {
       now: new Date('2026-06-23T00:02:00.000Z'),
     }), null)
   } finally {
+    await store.close()
     await rm(runtimeDir, { recursive: true, force: true })
   }
 })

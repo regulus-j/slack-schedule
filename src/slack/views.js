@@ -291,6 +291,16 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         options: intakeEventTypeOptions(),
         ...initialOption(draft.eventTypeOption),
       }, false, true),
+      ...(standardEvent && ['2nd-interview', 'final-interview'].includes(eventType) &&
+        schedulingTemplateOptions(templates).length > 0 ? [
+        input('Client email template', 'template_block', {
+          type: 'static_select',
+          action_id: 'template_select',
+          placeholder: plain('Select client template'),
+          options: schedulingTemplateOptions(templates),
+          initial_option: schedulingTemplateOption(templates, draft.templateId),
+        }, false, true),
+      ] : []),
       ...remoteUpdateBlocks,
       ...(accounts.length > 1 && !selectedAccountKey && !draft.accountKey ? [] : standardRoleBlocks),
       ...(customInvite ? [
@@ -664,6 +674,21 @@ export function finalizeModal(caseRecord, recentAudits = []) {
         options: stageSelectOptions(stageKey),
         initial_option: stageSelectOption(stageKey),
       }),
+      ...(stageKey === '2nd-interview' || stageKey === 'final-interview' ? [
+        input('Client email template', 'template_block', {
+          type: 'static_select',
+          action_id: 'template_select',
+          placeholder: plain('Select client template'),
+          options: schedulingTemplateOptions([
+            { id: '2nd-or-Final-invite', label: '2nd/final interview invite' },
+            { id: '2nd-or-Final-invite-propertywise', label: '2nd/final interview invite - Propertywise' },
+          ]),
+          initial_option: schedulingTemplateOption([
+            { id: '2nd-or-Final-invite', label: '2nd/final interview invite' },
+            { id: '2nd-or-Final-invite-propertywise', label: '2nd/final interview invite - Propertywise' },
+          ], caseRecord.templateId),
+        }, false, true),
+      ] : []),
       input('Duration', 'duration_block', {
         type: 'static_select',
         action_id: 'duration_select',
@@ -1816,6 +1841,17 @@ function stageSelectOption(key) {
   const stage = STAGE_OPTIONS.find((item) => item.key === normalized)
   if (!stage) return undefined
   return { text: plain(stage.label), value: stage.key }
+}
+
+function schedulingTemplateOptions(templates) {
+  return templates
+    .filter((template) => template.id === '2nd-or-Final-invite' || template.id === '2nd-or-Final-invite-propertywise')
+    .map((template) => ({ text: plain(template.label), value: template.id }))
+}
+
+function schedulingTemplateOption(templates, templateId) {
+  const options = schedulingTemplateOptions(templates)
+  return options.find((option) => option.value === templateId) || options[0]
 }
 
 function intakeStageOptions() {

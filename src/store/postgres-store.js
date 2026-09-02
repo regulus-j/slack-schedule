@@ -6,6 +6,9 @@ export function createPostgresStore(config, tokenCipher) {
   let pool;
   let closePool;
 
+  const STARTUP_CONNECTION_ATTEMPTS = 12
+  const STARTUP_CONNECTION_RETRY_DELAY_MS = 5000
+
   async function getPool() {
     if (!pool) {
       const connection = await createPostgresPool(config)
@@ -174,7 +177,19 @@ export function createPostgresStore(config, tokenCipher) {
 
   return {
     async init() {
-      await query('SELECT 1');
+      let lastError
+      for (let attempt = 1; attempt <= STARTUP_CONNECTION_ATTEMPTS; attempt += 1) {
+        try {
+          await query('SELECT 1')
+          return
+        } catch (error) {
+          lastError = error
+          const transient = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH'].includes(error?.code)
+          if (!transient || attempt === STARTUP_CONNECTION_ATTEMPTS) throw error
+          await new Promise((resolve) => setTimeout(resolve, STARTUP_CONNECTION_RETRY_DELAY_MS))
+        }
+      }
+      throw lastError
     },
 
     async stats() {

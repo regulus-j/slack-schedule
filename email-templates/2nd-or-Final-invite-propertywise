@@ -1,0 +1,20 @@
+Subject: [applicant_full_name] - [job_title] [interview_stage] with Propertywise AU Pty Ltd
+
+Body:
+<html>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#000000;font-size:14px;line-height:1.38;margin:0;padding:0;">
+<p style="line-height:1.38;margin-top:0;margin-bottom:16px;"><strong>Hi [applicant_first_name],</strong></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">Thank you for your interest in the role! We're excited to let you know that your profile has been shortlisted, and you're moving forward to the next step in our hiring process.</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;">As part of the next stage, you'll be meeting with <strong>[hiring_manager_names]</strong>, our client at <strong>Propertywise AU Pty Ltd</strong>. This meeting will provide both you and the client an opportunity to learn more about each other and align on expectations. Please find the Zoom meeting link below:</p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:16px;"><strong>Zoom Link:</strong> <a href="[Link]" style="color:#1155cc;text-decoration:underline">[Link]</a></p>
+<p style="line-height:1.38;margin-top:16px;margin-bottom:8px;"><strong>Friendly Reminders:</strong></p>
+<ul style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.38;color:#000000;margin-top:0;margin-bottom:16px;padding-left:22px;">
+<li style="margin-bottom:8px;">Kindly <strong>connect 10 minutes early</strong> to make sure your camera and microphone are working properly.</li>
+<li style="margin-bottom:8px;">Use your laptop or PC for this interview.</li>
+<li style="margin-bottom:8px;">Make sure that your <strong>Full Name</strong> and the <strong>role</strong> you are interviewing for are reflected in the Zoom meeting.</li>
+<li style="margin-bottom:8px;">Kindly ensure that you are <strong>presentable and appropriately dressed</strong> for the meeting.</li>
+<li style="margin-bottom:8px;">If you have any questions, feel free to reach out to any of our recruiters at <strong>[recruiter_phone_line]</strong>.</li>
+</ul>
+[signature]
+</body>
+</html>

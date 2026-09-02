@@ -21,7 +21,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      - run: npm test -- --test-concurrency=1
       - run: npm run check
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=moderate

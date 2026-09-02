@@ -43,6 +43,16 @@ test('role matcher accepts one high-confidence fuzzy title', () => {
   assert.ok(result.confidence >= 0.72)
 })
 
+test('role matcher accepts a shortened primary title with a mapped secondary title', () => {
+  const result = matchRoleAssignments(
+    { title: 'Senior Loan Associate - Parabroker' },
+    assignments,
+  )
+  assert.equal(result.matchType, 'fuzzy')
+  assert.equal(result.matchedTitle, assignments[1].roleTitle)
+  assert.ok(result.confidence >= 0.72)
+})
+
 test('role matcher rejects ambiguous fuzzy titles', () => {
   const result = matchRoleAssignments(
     { title: 'Sales Consultant Full Training Provided' },

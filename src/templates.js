@@ -3,7 +3,7 @@ import path from 'node:path';
 import { generateSignatureHTML, signaturePlainText } from './signature.js';
 
 const TEMPLATE_DIR = path.join(process.cwd(), 'email-templates');
-export const SCHEDULING_TEMPLATE_IDS = ['1st-interview-invite', '2nd-or-Final-invite', 'job-offer-discussion'];
+export const SCHEDULING_TEMPLATE_IDS = ['1st-interview-invite', '2nd-or-Final-invite', '2nd-or-Final-invite-propertywise', 'job-offer-discussion'];
 export const CUSTOM_INVITE_TEMPLATE_IDS = [
   'custom-invite-general-meeting',
   'custom-invite-assessment',
@@ -13,6 +13,7 @@ export const CUSTOM_INVITE_MANUAL_TEMPLATE_ID = 'custom';
 export const TEMPLATE_LABELS = {
   '1st-interview-invite': '1st interview invite',
   '2nd-or-Final-invite': '2nd/final interview invite',
+  '2nd-or-Final-invite-propertywise': '2nd/final interview invite - Propertywise',
   'job-offer-discussion': 'Job offer discussion invite',
   'interview-reminder': 'Interview reminder',
   'interview-reminder (unresponsive candidate)': 'Unresponsive candidate reminder',
@@ -27,6 +28,10 @@ export const TEMPLATE_METADATA = {
     resumeRequired: false,
   },
   '2nd-or-Final-invite': {
+    interviewStage: '2nd/Final Interview',
+    resumeRequired: true,
+  },
+  '2nd-or-Final-invite-propertywise': {
     interviewStage: '2nd/Final Interview',
     resumeRequired: true,
   },

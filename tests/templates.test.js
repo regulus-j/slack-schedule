@@ -164,6 +164,7 @@ test('loadSchedulingTemplates only exposes interview invite templates', async ()
   assert.deepEqual(templates.map((template) => template.id).sort(), [
     '1st-interview-invite',
     '2nd-or-Final-invite',
+    '2nd-or-Final-invite-propertywise',
     'job-offer-discussion',
   ])
   assert.ok(!templates.some((template) => template.id.endsWith('.eml')))
@@ -199,6 +200,7 @@ test('loadIntakeTemplates combines scheduling and custom invite templates', asyn
   assert.deepEqual(templates.map((template) => template.id).sort(), [
     '1st-interview-invite',
     '2nd-or-Final-invite',
+    '2nd-or-Final-invite-propertywise',
     'custom-invite-assessment',
     'custom-invite-general-meeting',
     'job-offer-discussion',

@@ -39,6 +39,7 @@ const STAGE_ALIASES = {
 const TEMPLATE_TO_STAGE = {
   '1st-interview-invite': '1st-interview',
   '2nd-or-Final-invite': '2nd-interview',
+  '2nd-or-Final-invite-propertywise': '2nd-interview',
   'job-offer-discussion': 'job-offer-discussion',
   'Thank You Email - 2nd-or-Final Interview': '2nd-interview',
   'interview-reminder': null,

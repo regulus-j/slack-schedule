@@ -70,7 +70,11 @@ cat > /opt/slack-scheduler/Caddyfile <<'CADDY_EOF'
 CADDY_EOF
 cd /opt/slack-scheduler
 docker compose pull app
+# Wait for PostgreSQL after boot/reboot before starting migrations or the app.
+until pg_isready -h 127.0.0.1 -p 5432 -d postgres >/dev/null 2>&1; do
+  sleep 2
+done
+docker compose run --rm --no-deps app npm run migrate
 docker compose up -d --remove-orphans
-docker compose run --rm app npm run migrate
 docker image prune -af --filter "until=168h" || true
 docker compose ps
