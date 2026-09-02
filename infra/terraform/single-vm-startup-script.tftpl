@@ -14,7 +14,9 @@ mkdir -p "/secrets/${var_name}"
 gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | base64 -d > "/secrets/${var_name}/${var_name}"
 chmod 444 "/secrets/${var_name}/${var_name}"
 %{ endfor ~}
-sed -i -E 's#@[^:/]+(:[0-9]+)?/#@127.0.0.1:5432/#' /secrets/DATABASE_URL/DATABASE_URL || true
+# The app and migration run in Docker, so localhost would point at the
+# container rather than the VM-hosted PostgreSQL service.
+sed -i -E 's#@[^:/]+(:[0-9]+)?/#@host.docker.internal:5432/#' /secrets/DATABASE_URL/DATABASE_URL || true
 %{ for var_name, secret_id in runtime_config_secret_names ~}
 mkdir -p "/secrets/${var_name}"
 gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | base64 -d > "/secrets/${var_name}/${var_name}"
@@ -27,6 +29,8 @@ services:
     image: ${container_image}
     container_name: slack-scheduler
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports: ["127.0.0.1:3000:3000"]
     volumes: ["/secrets:/secrets:ro"]
     environment:
@@ -66,7 +70,9 @@ services:
 volumes: { caddy_data: {}, caddy_config: {} }
 COMPOSE_EOF
 cat > /opt/slack-scheduler/Caddyfile <<'CADDY_EOF'
-:80 { reverse_proxy app:3000 }
+:80 {
+  reverse_proxy app:3000
+}
 CADDY_EOF
 cd /opt/slack-scheduler
 docker compose pull app
