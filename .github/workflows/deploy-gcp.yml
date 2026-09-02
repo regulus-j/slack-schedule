@@ -127,3 +127,20 @@ jobs:
             sleep 10
           done
           exit 1
+      - name: Collect VM diagnostics after failed verification
+        if: failure()
+        run: |
+          set +e
+          VM_NAME="slack-scheduler-${DEPLOY_ENVIRONMENT}-app"
+          ZONE="${GCP_REGION}-a"
+          echo "=== VM status ==="
+          gcloud compute instances describe "$VM_NAME" --zone "$ZONE" \
+            --format='yaml(name,status,lastStartTimestamp,networkInterfaces[0].accessConfigs[0].natIP)'
+          echo "=== Serial console ==="
+          gcloud compute instances get-serial-port-output "$VM_NAME" --zone "$ZONE" --port=1 | tail -n 300
+          echo "=== Service and container status ==="
+          gcloud compute ssh "$VM_NAME" --zone "$ZONE" --tunnel-through-iap --quiet \
+            --command="sudo systemctl --no-pager status docker postgresql; sudo docker compose -f /opt/slack-scheduler/docker-compose.yml ps"
+          echo "=== Application and startup logs ==="
+          gcloud compute ssh "$VM_NAME" --zone "$ZONE" --tunnel-through-iap --quiet \
+            --command="sudo docker compose -f /opt/slack-scheduler/docker-compose.yml logs --tail=200 app caddy; sudo journalctl -u google-startup-scripts.service --no-pager -n 200"
