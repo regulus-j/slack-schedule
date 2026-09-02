@@ -119,6 +119,11 @@ resource "google_compute_firewall" "web" {
   source_ranges = ["0.0.0.0/0"]
   target_tags   = ["slack-scheduler-app"]
 }
+resource "google_compute_address" "app" {
+  name         = "${local.service_name}-${var.environment}-app"
+  address_type = "EXTERNAL"
+  region       = var.region
+}
 resource "google_project_iam_member" "app_artifact_reader" {
   project = var.project_id
   role    = "roles/artifactregistry.reader"
@@ -138,7 +143,9 @@ resource "google_compute_instance" "app" {
   }
   network_interface {
     subnetwork = google_compute_subnetwork.app.id
-    access_config {}
+    access_config {
+      nat_ip = google_compute_address.app.address
+    }
   }
   service_account {
     email  = google_service_account.app.email

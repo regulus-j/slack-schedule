@@ -11,6 +11,7 @@ import { hydrateJazzhrCacheFromStore, refreshJazzhrCache, refreshJazzhrOpenJobs 
 import { ensureSlackDirectory, slackApiErrorDetails } from './src/services/slack-directory.js'
 import { startEventLoopLagMonitor } from './src/event-loop-monitor.js'
 import { main as mainOAuthCallback } from './src/oauth-callback-app.js'
+import { main as mainOAuthProxy } from './src/oauth-proxy-app.js'
 import { createSlackAlertDispatcher } from './src/observability/slack-alerts.js'
 import { loadTemplates } from './src/templates.js'
 import {
@@ -200,7 +201,11 @@ function listenHttpServer(server, port, logger) {
   })
 }
 
-const startup = process.env.APP_ROLE === 'oauth-callback' ? mainOAuthCallback : main
+const startup = process.env.APP_ROLE === 'oauth-callback'
+  ? mainOAuthCallback
+  : process.env.APP_ROLE === 'oauth-proxy'
+    ? mainOAuthProxy
+    : main
 
 startup().catch((error) => {
   logger.fatal('application_startup_failed', { error })

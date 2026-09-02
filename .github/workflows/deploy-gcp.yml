@@ -119,6 +119,17 @@ jobs:
           terraform validate
           terraform apply -auto-approve "${args[@]}"
           gcloud compute instances reset "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" --zone "${GCP_REGION}-a" --quiet
+      - name: Deploy HTTPS OAuth callback proxy
+        run: |
+          VM_IP=$(gcloud compute instances describe "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" \
+            --zone "${GCP_REGION}-a" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
+          gcloud run deploy slack-scheduler \
+            --region "${GCP_REGION}" \
+            --image "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}" \
+            --port 3000 \
+            --allow-unauthenticated \
+            --set-env-vars "APP_ROLE=oauth-proxy,TARGET_URL=http://${VM_IP}" \
+            --quiet
       - name: Verify application
         run: |
           VM_IP=$(gcloud compute instances describe "slack-scheduler-${DEPLOY_ENVIRONMENT}-app" --zone "${GCP_REGION}-a" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
