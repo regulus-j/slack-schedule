@@ -106,6 +106,22 @@ test('normalizeRoleAssignmentRows reads people from the live role sheet columns'
   ])
 })
 
+test('normalizeRoleAssignmentRows keeps authoritative automation names paired with Column V emails', () => {
+  const rows = normalizeRoleAssignmentRows([{
+    '4': 'Senior Loan Associate - Parabroker / Senior Credit Specialist',
+    'Column B': 'Kirk, Liam, Apurva',
+    'For Automation': 'Arvind Tamilarasan, Crisielle Manalastas, Damian Power, Peter Bassilios',
+    'Column V': 'arvind@example.com, crisielle@example.com, damian@example.com, peter@example.com',
+  }])
+
+  assert.deepEqual(rows.map((row) => [row.hiringManagerName, row.hiringManagerEmail]), [
+    ['Arvind Tamilarasan', 'arvind@example.com'],
+    ['Crisielle Manalastas', 'crisielle@example.com'],
+    ['Damian Power', 'damian@example.com'],
+    ['Peter Bassilios', 'peter@example.com'],
+  ])
+})
+
 test('normalizeRoleAssignmentRows expands multiple recruiters and hiring managers with normalized emails', () => {
   const rows = normalizeRoleAssignmentRows([
     {

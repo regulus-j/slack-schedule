@@ -99,8 +99,7 @@ export function normalizeRoleAssignmentRow(row) {
     'Recruiter Email Addresses',
     'Talent Recruiter Email',
   ]).join('\n'))
-  const hiringManagerName = allClean(row, [
-    'For Automation',
+  const hiringManagerName = firstNonEmptyField(row, ['For Automation']) || allClean(row, [
     'Hiring Manager',
     'Hiring Managers',
     'Hiring Manager(s)',
@@ -114,8 +113,7 @@ export function normalizeRoleAssignmentRow(row) {
     'Second/Final Interviewers',
     'Column B',
   ]).join('\n') || hiringManagerFromColumnB
-  const hiringManagerEmail = normalizeEmailList(allClean(row, [
-    'Column V',
+  const hiringManagerEmail = normalizeEmailList(firstNonEmptyField(row, ['Column V']) || allClean(row, [
     'Hiring Manager Email',
     'Hiring Manager Emails',
     'Hiring Manager Email(s)',
@@ -247,6 +245,14 @@ function firstClean(row, keys) {
   // Prefer the longest value — a full job title is always longer than a
   // generic label like "Intern" that might sit in a shorter "Role" column.
   return values.reduce((longest, value) => value.length > longest.length ? value : longest, values[0])
+}
+
+function firstNonEmptyField(row, keys) {
+  const normalizedKeys = new Set(keys.map(normalizeHeader))
+  for (const [key, value] of Object.entries(row || {})) {
+    if (normalizedKeys.has(normalizeHeader(key)) && clean(value)) return clean(value)
+  }
+  return ''
 }
 
 function allClean(row, keys) {
