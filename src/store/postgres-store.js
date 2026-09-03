@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { candidateInactiveReason, normalizeJazzhrCandidate, normalizeJazzhrCandidates } from './candidate-index.js';
 import { createPostgresPool } from './postgres-connection.js';
+import { logger } from '../logger.js';
 
 export function createPostgresStore(config, tokenCipher) {
   let pool;
@@ -11,7 +12,9 @@ export function createPostgresStore(config, tokenCipher) {
 
   async function getPool() {
     if (!pool) {
-      const connection = await createPostgresPool(config)
+      const connection = await createPostgresPool(config, {
+        onError: (error) => logger.warn('postgres_pool_connection_error', { error }),
+      })
       pool = connection.pool
       closePool = connection.close
     }
@@ -184,7 +187,9 @@ export function createPostgresStore(config, tokenCipher) {
           return
         } catch (error) {
           lastError = error
-          const transient = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH'].includes(error?.code)
+          const transientCodes = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH']
+          const transientMessage = /connection terminated unexpectedly|server closed the connection unexpectedly|connection terminated/i.test(String(error?.message || ''))
+          const transient = transientCodes.includes(error?.code) || transientMessage
           if (!transient || attempt === STARTUP_CONNECTION_ATTEMPTS) throw error
           await new Promise((resolve) => setTimeout(resolve, STARTUP_CONNECTION_RETRY_DELAY_MS))
         }

@@ -1,4 +1,4 @@
-export async function createPostgresPool(config) {
+export async function createPostgresPool(config, { onError } = {}) {
   const { Pool } = await import('pg')
   if (config?.database?.backend === 'cloudsql') {
     const { Connector, IpAddressTypes } = await import('@google-cloud/cloud-sql-connector')
@@ -21,6 +21,7 @@ export async function createPostgresPool(config) {
       connectionTimeoutMillis: config.database?.connectionTimeoutMs || 10000,
       idleTimeoutMillis: config.database?.idleTimeoutMs || 30000,
     })
+    pool.on('error', (error) => onError?.(error))
     return {
       pool,
       async close() {
@@ -40,6 +41,7 @@ export async function createPostgresPool(config) {
     connectionTimeoutMillis: config?.database?.connectionTimeoutMs || 10000,
     idleTimeoutMillis: config?.database?.idleTimeoutMs || 30000,
   })
+  pool.on('error', (error) => onError?.(error))
   return {
     pool,
     async close() {
