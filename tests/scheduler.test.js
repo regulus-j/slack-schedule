@@ -150,6 +150,27 @@ test('does not generate slots before today in the interview timezone', () => {
   assert.ok(slots.every((slot) => formatDateForInput(slot.start, SYDNEY_TIME_ZONE) >= todayStr))
 })
 
+test('does not generate already-past slots on the current interview day', () => {
+  const now = new Date('2026-09-03T00:15:00.000Z') // 10:15 AM in Sydney
+  const slots = generateCandidateSlots({
+    startDate: '2026-09-03',
+    endDate: '2026-09-03',
+    durationMinutes: 60,
+    timeZone: SYDNEY_TIME_ZONE,
+    now,
+  })
+
+  assert.ok(slots.length > 0)
+  assert.ok(slots.every((slot) => new Date(slot.start) > now))
+  assert.equal(formatDateForInput(slots[0].start, SYDNEY_TIME_ZONE), '2026-09-03')
+  assert.equal(new Intl.DateTimeFormat('en-AU', {
+    timeZone: SYDNEY_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(slots[0].start)), '11:00')
+})
+
 test('returns empty for invalid date range (end before start)', () => {
   const slots = generateCandidateSlots({
     startDate: '2099-06-05',

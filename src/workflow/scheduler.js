@@ -119,7 +119,8 @@ export function generateCandidateSlots({
   durationMinutes = 30,
   timeZone = SYDNEY_TIME_ZONE,
   businessStart = BUSINESS_DAY_START,
-  businessEnd = BUSINESS_DAY_END
+  businessEnd = BUSINESS_DAY_END,
+  now = new Date()
 }) {
   const slots = []
   const durationMs = durationMinutes * 60 * 1000
@@ -129,7 +130,8 @@ export function generateCandidateSlots({
 
   let cursor = parseDateToLocalMidnight(startDate, timeZone)
   const endCursor = parseDateToLocalMidnight(endDate, timeZone)
-  const todayStr = formatDateForInput(new Date(), timeZone)
+  const currentTime = now instanceof Date ? now : new Date(now)
+  const todayStr = formatDateForInput(currentTime, timeZone)
   const todayStart = parseDateToLocalMidnight(todayStr, timeZone)
 
   while (cursor <= endCursor) {
@@ -146,6 +148,14 @@ export function generateCandidateSlots({
 
         const slotStart = buildTimeOnDate(cursor, timeStr, timeZone)
         const slotEnd = new Date(slotStart.getTime() + durationMs)
+
+        // A same-day availability request must not offer times that have
+        // already started. Compare instants so this remains correct for the
+        // interview timezone and for daylight-saving transitions.
+        if (slotStart <= currentTime) {
+          slotMinutes += durationMinutes
+          continue
+        }
 
         slots.push({
           start: slotStart.toISOString(),
