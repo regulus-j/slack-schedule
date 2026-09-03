@@ -127,7 +127,7 @@ jobs:
             --region "${GCP_REGION}" \
             --image "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}" \
             --port 3000 \
-            --allow-unauthenticated \
+            --no-invoker-iam-check \
             --set-env-vars "APP_ROLE=oauth-proxy,TARGET_URL=http://${VM_IP}" \
             --quiet
       - name: Verify application
