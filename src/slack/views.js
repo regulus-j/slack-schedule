@@ -184,6 +184,17 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
   const availableHiringManagers = draft.availableHiringManagers?.length
     ? draft.availableHiringManagers
     : uniquePeopleById([...(draft.selectedHiringManagers || []), ...(draft.suggestedHiringManagers || [])])
+  const selectedHiringManagers = draft.selectedHiringManagers?.length
+    ? draft.selectedHiringManagers
+    : uniquePeopleById([
+        ...(draft.suggestedHiringManagers || []).filter((person) => (draft.hiringManagerIds || []).includes(person.id)),
+        ...(draft.hiringManagerName || draft.hiringManagerEmail ? [{
+          id: draft.hiringManagerId,
+          name: draft.hiringManagerName,
+          email: draft.hiringManagerEmail,
+          role: 'hiring_manager',
+        }] : []),
+      ])
   const remoteUpdateBlocks = draft.remoteUpdateStatus
     ? [
         section(draft.remoteUpdateStatus === 'loading'
@@ -220,6 +231,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           selectedIds: draft.recruiterIds,
           required: true,
         }),
+        ...personContactCorrectionBlocks('recruiter', draft.selectedRecruiters),
         ...(showStandardHiringManagers ? [
           section(draft.suggestedHiringManagers?.length
             ? [
@@ -239,23 +251,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
             selectedIds: draft.hiringManagerIds,
             required: hmRequired,
           }),
-          ...(draft.hiringManagerNeedsEmail ? [
-            input(
-              'Hiring manager email',
-              dynamicBlockId('hiring_manager_email_block', draft.hiringManagerId),
-              {
-                type: 'plain_text_input',
-                action_id: 'hiring_manager_email_override',
-                placeholder: plain('Enter the hiring manager email'),
-                ...(draft.hiringManagerEmailOverride ? {
-                  initial_value: draft.hiringManagerEmailOverride,
-                } : {}),
-              },
-              false,
-              false,
-              `${draft.hiringManagerName || 'The selected hiring manager'} is missing a valid email in the mapped directory.`,
-            ),
-          ] : []),
+          ...personContactCorrectionBlocks('hiring_manager', selectedHiringManagers),
         ] : []),
       ]
     : []
@@ -1930,6 +1926,45 @@ function peopleCheckboxBlocks({
       ...(initialOptions.length ? { initial_options: initialOptions } : {}),
     }, !required, true, 'Selected people are shown first. You can select up to 10.'),
   ]
+}
+
+function personContactCorrectionBlocks(role, people = []) {
+  return (people || [])
+    .filter((person) => !String(person?.name || '').trim() || !isValidEmailForView(person?.email))
+    .map((person, index) => {
+      const missingName = !String(person?.name || '').trim()
+      const missingEmail = !isValidEmailForView(person?.email)
+      const field = missingName ? 'name' : 'email'
+      const label = `${role === 'hiring_manager' ? 'Hiring manager' : 'Recruiter'} ${field} — ${person?.name || person?.email || 'Selected person'}`
+      const prompt = missingName
+        ? 'Enter the full name'
+        : 'Enter the email address'
+      const legacyHiringManagerField = role === 'hiring_manager' && index === 0 && !missingName
+      return input(
+        label,
+        legacyHiringManagerField ? dynamicBlockId('hiring_manager_email_block', person?.id) : personCorrectionBlockId(role, person?.id),
+        {
+          type: 'plain_text_input',
+          action_id: legacyHiringManagerField ? 'hiring_manager_email_override' : personCorrectionActionId(role, person?.id),
+          placeholder: plain(prompt),
+        },
+        false,
+        false,
+        `The selected ${role === 'hiring_manager' ? 'hiring manager' : 'recruiter'} is missing a valid ${field}.`,
+      )
+    })
+}
+
+function personCorrectionActionId(role, id) {
+  return `person_contact_${role}_${String(id || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`
+}
+
+function personCorrectionBlockId(role, id) {
+  return `person_contact_block_${role}_${String(id || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`
+}
+
+function isValidEmailForView(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
 }
 
 function compactPersonCheckboxOption(person) {

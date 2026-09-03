@@ -1719,6 +1719,17 @@ export function registerSlackHandlers(app, context) {
     if (intakeDraft.recruiterEmail && !isValidEmail(intakeDraft.recruiterEmail)) {
       errors[findInputBlockId(values, standardEventType ? 'recruiter_checkboxes' : 'recruiter_select', standardEventType ? 'recruiters_block' : 'recruiter_block')] = 'Selected recruiter has an invalid email.';
     }
+    if (standardEventType) {
+      for (const recruiter of intakeDraft.selectedRecruiters || []) {
+        const actionId = personCorrectionActionId('recruiter', recruiter.id)
+        const blockId = personCorrectionBlockId('recruiter', recruiter.id)
+        if (!String(recruiter.name || '').trim()) {
+          errors[findInputBlockId(values, actionId, blockId)] = 'Enter the recruiter name.'
+        } else if (!isValidEmail(recruiter.email)) {
+          errors[findInputBlockId(values, actionId, blockId)] = 'Enter a valid recruiter email.'
+        }
+      }
+    }
     if (requiresHiringManager && intakeDraft.roleId && !intakeDraft.hiringManagerId) {
       errors[findInputBlockId(values, 'hiring_manager_checkboxes', 'hiring_managers_block')] = 'Choose a hiring manager.';
     }
@@ -1735,6 +1746,17 @@ export function registerSlackHandlers(app, context) {
       errors[findInputBlockId(values, hiringManagerEmailActionId, hiringManagerEmailBlockId)] = 'Enter the hiring manager email.';
     } else if (intakeDraft.hiringManagerEmail && !isValidEmail(intakeDraft.hiringManagerEmail)) {
       errors[findInputBlockId(values, hiringManagerEmailActionId, hiringManagerEmailBlockId)] = 'Enter a valid hiring manager email.';
+    }
+    if (requiresHiringManager) {
+      for (const hiringManager of intakeDraft.selectedHiringManagers || []) {
+        const actionId = personCorrectionActionId('hiring_manager', hiringManager.id)
+        const blockId = personCorrectionBlockId('hiring_manager', hiringManager.id)
+        if (!String(hiringManager.name || '').trim()) {
+          errors[findInputBlockId(values, actionId, blockId)] = 'Enter the hiring manager name.'
+        } else if (!isValidEmail(hiringManager.email)) {
+          errors[findInputBlockId(values, actionId, blockId)] = 'Enter a valid hiring manager email.'
+        }
+      }
     }
     if (Object.keys(errors).length > 0) {
       await ack({ response_action: 'errors', errors });
@@ -5149,9 +5171,15 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       ])
   const recruiterDirectoryById = new Map(availableRecruiters.map((person) => [String(person?.id || ''), person]))
   const selectedRecruiter = overrides.recruiterPerson || recruiterDirectoryById.get(recruiterId) || findMappedPersonById(recruiterId)
-  const recruiter = selectedRecruiter ? asRecruiter(selectedRecruiter) : null
+  const recruiter = selectedRecruiter
+    ? applyPersonContactCorrection(asRecruiter(selectedRecruiter), 'recruiter', values, overrides)
+    : null
   const selectedRecruiters = standardEventType
-    ? recruiterIds.map((id) => recruiterDirectoryById.get(id) || findMappedPersonById(id)).filter(Boolean).map(asRecruiter)
+    ? recruiterIds
+      .map((id) => recruiterDirectoryById.get(id) || findMappedPersonById(id))
+      .filter(Boolean)
+      .map(asRecruiter)
+      .map((person) => applyPersonContactCorrection(person, 'recruiter', values, overrides))
     : (recruiter ? [recruiter] : [])
   const availableHiringManagers = standardHiringManagersAllowed
     ? uniquePeople([
@@ -5160,10 +5188,18 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       ])
     : uniquePeople(overrides.availableHiringManagers || [])
   const hiringManagerDirectoryById = new Map(availableHiringManagers.map((person) => [String(person?.id || ''), person]))
-  const baseHiringManager = requiresHiringManager
+  const baseHiringManagerRecord = requiresHiringManager
     ? asHiringManager(overrides.hiringManagerPerson || hiringManagerDirectoryById.get(hiringManagerId) || findMappedPersonById(hiringManagerId))
     : null
-  const hiringManagerNeedsEmail = Boolean(baseHiringManager && !isValidEmail(baseHiringManager.email))
+  const baseHiringManager = baseHiringManagerRecord
+    ? applyPersonContactCorrection(
+        baseHiringManagerRecord,
+        'hiring_manager',
+        values,
+        overrides,
+      )
+    : null
+  const hiringManagerNeedsEmail = Boolean(baseHiringManagerRecord && !isValidEmail(baseHiringManagerRecord.email))
   const hiringManagerEmailOverride = String(
     overrides.hiringManagerEmailOverride !== undefined
       ? overrides.hiringManagerEmailOverride
@@ -5173,7 +5209,11 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     ? { ...baseHiringManager, email: hiringManagerEmailOverride }
     : baseHiringManager
   const selectedHiringManagers = standardHiringManagersAllowed
-    ? hiringManagerIds.map((id) => hiringManagerDirectoryById.get(id) || findMappedPersonById(id)).filter(Boolean).map(asHiringManager)
+    ? hiringManagerIds
+      .map((id) => hiringManagerDirectoryById.get(id) || findMappedPersonById(id))
+      .filter(Boolean)
+      .map(asHiringManager)
+      .map((person) => applyPersonContactCorrection(person, 'hiring_manager', values, overrides))
     : (hiringManager ? [hiringManager] : [])
   const suggestedHiringManagers = standardHiringManagersAllowed
     ? mappedHiringManagersForRole(roleId, accountKey)
@@ -5614,6 +5654,34 @@ function applyEmailOverride(person, emailOverride) {
     ...person,
     email,
   };
+}
+
+function applyPersonContactCorrection(person, role, values, overrides = {}) {
+  if (!person) return null
+  const missingName = !String(person.name || '').trim()
+  const missingEmail = !isValidEmail(person.email)
+  if (!missingName && !missingEmail) return person
+
+  const field = missingName ? 'name' : 'email'
+  const actionId = personCorrectionActionId(role, person.id)
+  const saved = overrides.contactCorrections?.[person.id]?.[field]
+  const legacyCorrection = role === 'hiring_manager' && field === 'email'
+    ? getInputValue(values, 'hiring_manager_email_override')
+    : ''
+  const correction = String(saved !== undefined ? saved : getInputValue(values, actionId) || legacyCorrection || '').trim()
+  if (!correction) return person
+  return {
+    ...person,
+    [field]: correction,
+  }
+}
+
+function personCorrectionActionId(role, id) {
+  return `person_contact_${role}_${String(id || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`
+}
+
+function personCorrectionBlockId(role, id) {
+  return `person_contact_block_${role}_${String(id || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`
 }
 
 function applyApplicantOverrides(applicant, { name = '', email = '', phone = '', jobTitle = '' } = {}) {
