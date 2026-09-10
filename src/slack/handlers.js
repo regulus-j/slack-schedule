@@ -733,6 +733,7 @@ export function registerSlackHandlers(app, context) {
         roleId,
         roleTitle: role?.title || '',
         roleTitleInput: role?.title || '',
+        client: selectedClientForRole(roleId, accountKey),
         recruiterIds,
         recruiterName: selectedRecruiters[0]?.name || '',
         recruiterEmail: selectedRecruiters[0]?.email || '',
@@ -792,6 +793,7 @@ export function registerSlackHandlers(app, context) {
         recruiterIds,
         hiringManagerIds,
         roleTitleInput: role?.title || '',
+        client: selectedClientForRole(roleId, accountKey),
         recruiterName: selectedRecruiters[0]?.name || '',
         recruiterEmail: selectedRecruiters[0]?.email || '',
         hiringManagerName: selectedHiringManagers[0]?.name || '',
@@ -1690,6 +1692,15 @@ export function registerSlackHandlers(app, context) {
     if (standardEventType && !intakeDraft.roleId) {
       errors.role_block = 'Choose an open JazzHR role.';
     }
+    if (standardEventType && intakeDraft.roleId && !intakeDraft.client) {
+      logger.warn('schedule_intake_missing_client', {
+        eventType: intakeDraft.eventType,
+        roleId: intakeDraft.roleId,
+        roleTitle: intakeDraft.roleTitle,
+        accountKey,
+      })
+      errors.role_block = 'The selected job has no client. Update the role assignment sheet before submitting.';
+    }
     if (standardEventType && intakeDraft.roleId && intakeDraft.recruiterIds.length === 0) {
       errors[findInputBlockId(values, 'recruiter_checkboxes', 'recruiters_block')] = 'Choose at least one recruiter.';
     }
@@ -1810,6 +1821,7 @@ export function registerSlackHandlers(app, context) {
           eventType: intakeDraft.eventType,
           roleId: intakeDraft.roleId,
           roleTitle: intakeDraft.roleTitle,
+          client: intakeDraft.client,
           accountKey,
           accountDisplayName,
         },
@@ -1852,6 +1864,7 @@ export function registerSlackHandlers(app, context) {
         coordinatorName: coordinator?.name || '',
         roleId: intakeDraft.roleId,
         roleTitle: intakeDraft.roleTitle,
+        client: intakeDraft.client,
         customInvitePurpose: intakeDraft.customInvitePurpose,
         accountKey,
         accountDisplayName,
@@ -3904,6 +3917,7 @@ function buildPrivateMetadata(view, overrides = {}) {
     : parsed.customInviteTemplateId || ''
   const roleId = 'roleId' in overrides ? overrides.roleId : parsed.roleId || ''
   const roleTitle = 'roleTitle' in overrides ? overrides.roleTitle : parsed.roleTitle || ''
+  const client = 'client' in overrides ? overrides.client : parsed.client || ''
   const recruiterIds = 'recruiterIds' in overrides ? overrides.recruiterIds : parsed.recruiterIds || []
   const hiringManagerIds = 'hiringManagerIds' in overrides ? overrides.hiringManagerIds : parsed.hiringManagerIds || []
   const recruiterSearchQuery = 'recruiterSearchQuery' in overrides
@@ -3948,6 +3962,7 @@ function buildPrivateMetadata(view, overrides = {}) {
     customInviteTemplateId,
     roleId,
     roleTitle,
+    client,
     recruiterIds,
     hiringManagerIds,
     recruiterSearchQuery,
@@ -4024,6 +4039,7 @@ export async function refreshIntakeModal({
     'customInviteTemplateId',
     'roleId',
     'roleTitle',
+    'client',
     'recruiterIds',
     'hiringManagerIds',
     'recruiterSearchQuery',
@@ -4135,6 +4151,7 @@ export async function refreshIntakeModal({
     customInviteTemplateId: draft.customInviteTemplateId,
     roleId: draft.roleId,
     roleTitle: draft.roleTitle,
+    client: draft.client,
     recruiterIds: draft.recruiterIds,
     hiringManagerIds: draft.hiringManagerIds,
     recruiterSearchQuery: draft.recruiterSearchQuery,
@@ -4848,6 +4865,7 @@ export function buildTemplateVariables(caseRecord) {
     applicant_first_name: caseRecord.applicant?.firstName || '',
     applicant_full_name: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
     job_title: caseRecord.applicant?.jobTitle || '',
+    client: caseRecord.autofill?.client || '',
     company_name: caseRecord.autofill?.accountDisplayName || 'Outsourced Pro Global',
     interview_stage: interviewStage,
     date,
@@ -4964,8 +4982,12 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const selectedEventType = overrides.eventType ?? (values.event_type_block?.event_type_select?.selected_option?.value || '')
   const eventType = selectedEventType || ''
   const standardEventType = isStandardIntakeEvent(eventType)
+  const accountKey = overrides.accountKey || 'default'
   const roleId = overrides.roleId ?? (values.role_block?.role_select?.selected_option?.value || '')
-  const role = roleById(roleId)
+  const role = roleById(roleId, accountKey)
+  const client = overrides.client !== undefined
+    ? String(overrides.client || '').trim()
+    : selectedClientForRole(roleId, accountKey)
   const roleTitle = overrides.roleTitleInput ?? (
     getInputValue(values, 'role_title_override') ||
     overrides.roleTitle ||
@@ -5041,6 +5063,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       eventType,
       eventTypeOption: toSlackOption(eventTypeLabel(eventType), eventType),
       standardEventType: false,
+      client: '',
       customInviteTitle,
       customInviteTemplateId,
       customInviteTemplateOption: toSlackOption(
@@ -5106,7 +5129,6 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     overrides.applicantPhone !== undefined ? overrides.applicantPhone : getInputValue(values, 'applicant_phone_override')
   const candidateSearchQuery = overrides.candidateSearchQuery ?? getInputValue(values, 'candidate_search')
   const candidateSearchPage = Number(overrides.candidateSearchPage || 0)
-  const accountKey = overrides.accountKey || 'default'
   const selectedStageKey = overrides.stageKey ?? (values.stage_block?.stage_select?.selected_option?.value || '');
   const legacyTemplateId = overrides.templateId ?? (values.template_block?.template_select?.selected_option?.value || '');
   const stageKey = normalizeStageKey(customInvite
@@ -5251,6 +5273,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     standardEventType,
     roleId,
     roleTitle,
+    client,
     role,
     roleOption,
     applicantId,
@@ -5765,6 +5788,12 @@ export function resolveRoleAssignmentsForRole(roleId, accountKey = 'default') {
 
 function roleAssignmentsForRole(roleId, accountKey = 'default') {
   return resolveRoleAssignmentsForRole(roleId, accountKey).assignments
+}
+
+function selectedClientForRole(roleId, accountKey = 'default') {
+  return roleAssignmentsForRole(roleId, accountKey)
+    .map((assignment) => String(assignment?.client || '').trim())
+    .find(Boolean) || ''
 }
 
 export function mappedRecruitersForRole(roleId, accountKey = 'default') {

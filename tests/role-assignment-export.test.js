@@ -12,6 +12,7 @@ test('normalizeRoleAssignmentRow tolerates role mapping headers', () => {
   const row = normalizeRoleAssignmentRow({
     'Job ID': 'job-123',
     'Job Title': 'Customer Support Specialist',
+    Client: 'Acme Client',
     'Job Status': 'Open',
     'Recruiter Name': 'Mara Santos',
     'Recruiter Email': 'MARA@example.com',
@@ -21,6 +22,7 @@ test('normalizeRoleAssignmentRow tolerates role mapping headers', () => {
 
   assert.equal(row.roleId, 'job-123')
   assert.equal(row.roleTitle, 'Customer Support Specialist')
+  assert.equal(row.client, 'Acme Client')
   assert.equal(row.recruiterEmail, 'mara@example.com')
   assert.equal(row.hiringManagerEmail, 'ana@example.com')
 })
@@ -34,6 +36,7 @@ test('normalizeRoleAssignmentRows supports current open roles tab shape', () => 
     },
     {
       '4': 'Loan Associate - Global',
+      Client: 'Acme Client',
       'Recruiters  to manage': '',
       'For Automation': 'Arvind Tamilarasan, Crisielle Manalastas',
     },
@@ -58,6 +61,7 @@ test('normalizeRoleAssignmentRows supports current open roles tab shape', () => 
     'Arvind Tamilarasan',
     'Crisielle Manalastas',
   ])
+  assert.deepEqual(rows.slice(0, 2).map((row) => row.client), ['Acme Client', 'Acme Client'])
   assert.equal(isOpenRoleStatus(rows[2].status), false)
 })
 

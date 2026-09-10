@@ -660,6 +660,7 @@ test('case creation notification goes to the initiator DM with actions', async (
   setRoleAssignments([{
     roleId: 'job-1',
     roleTitle: 'Support Specialist',
+    client: 'Acme Client',
     recruiter: { id: 'rec-mara', name: 'Mara Santos', email: 'mara@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/mara' },
   }])
   setJazzhrJobs([{ id: 'job-1', roleId: 'job-1', title: 'Support Specialist', status: 'Open' }])
@@ -750,6 +751,7 @@ test('case creation notification goes to the initiator DM with actions', async (
   assert.equal(posted.length, 1)
   assert.equal(posted[0].channel, 'DUACTOR')
   assert.match(posted[0].text, /^Scheduling case created/)
+  assert.equal(storedCase.autofill.client, 'Acme Client')
   assert.doesNotMatch(JSON.stringify(posted[0].blocks), /Action by <@UACTOR>/)
   setJazzhrJobs([])
   setSlackUsers([])

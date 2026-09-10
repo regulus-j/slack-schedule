@@ -854,6 +854,7 @@ test('standard intake omits Zoom initial option when selected recruiters have mi
       roleId: 'job-loan',
       roleKey: 'job-loan',
       roleTitle: 'Loan Associate',
+      client: 'Acme Client',
       recruiter: { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
       hiringManager: { id: 'hm-ana', name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
     },
@@ -1384,6 +1385,7 @@ test('role autofill defaults do not save additional mapped people as attendees',
       roleId: 'job-loan',
       roleKey: 'job-loan',
       roleTitle: 'Loan Associate',
+      client: 'Acme Client',
       recruiter: { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter', zoomLink: 'https://zoom.us/j/hanna' },
       hiringManager: { id: 'hm-arvind', name: 'Arvind Singh', email: 'arvind@example.com', role: 'hiring_manager' },
     },
@@ -1420,6 +1422,7 @@ test('role autofill defaults do not save additional mapped people as attendees',
     hiringManagerIds: ['hm-arvind'],
   })
   assert.equal(draft.recruiter.email, 'hanna@example.com')
+  assert.equal(draft.client, 'Acme Client')
   assert.equal(draft.hiringManager.email, 'arvind@example.com')
   assert.deepEqual(draft.recruiterIds, ['rec-hanna'])
   assert.deepEqual(draft.hiringManagerIds, ['hm-arvind'])
@@ -2507,6 +2510,9 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
       firstName: 'Alex',
       jobTitle: 'Support Specialist',
     },
+    autofill: {
+      client: 'Acme Client',
+    },
     hiringManager: {
       name: 'Ana Cruz',
       positionTitle: 'Operations Manager',
@@ -2532,6 +2538,7 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
 
   assert.equal(variables.applicant_first_name, 'Alex');
   assert.equal(variables.job_title, 'Support Specialist');
+  assert.equal(variables.client, 'Acme Client');
   assert.equal(variables.interview_stage, 'Final Interview');
   assert.equal(variables.date, '2026-05-20');
   assert.equal(variables.time, '09:30');

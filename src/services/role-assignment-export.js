@@ -53,6 +53,11 @@ export async function fetchRoleAssignmentRows({ config, logger }) {
 }
 
 export function normalizeRoleAssignmentRow(row) {
+  const client = firstClean(row, [
+    'Client',
+    'Client Name',
+    'Client Company',
+  ])
   const roleId = firstClean(row, [
     'JazzHR Job ID',
     'JazzHR Role ID',
@@ -131,6 +136,7 @@ export function normalizeRoleAssignmentRow(row) {
     roleId,
     roleTitle,
     roleKey: stableId(roleId || roleTitle),
+    client,
     status,
     recruiterName,
     recruiterEmail,
