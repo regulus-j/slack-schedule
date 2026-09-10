@@ -217,6 +217,13 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Edit the role title if needed'),
           ...(draft.roleTitle ? { initial_value: draft.roleTitle } : {}),
         }),
+        ...(!draft.client
+          ? [input('Client', 'client_block', {
+              type: 'plain_text_input',
+              action_id: 'client_input',
+              placeholder: plain('Enter the client company'),
+            })]
+          : []),
         ...(availableRecruiters.length > 0
           ? [section(recruiterContactSummary(availableRecruiters))]
           : []),

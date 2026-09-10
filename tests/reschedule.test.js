@@ -963,6 +963,32 @@ test('draft cases can be deleted until a calendar event is created', () => {
   assert.equal(actionButtonsForCase(scheduledCase).some((item) => item.action_id === 'delete_case'), false)
 })
 
+test('standard intake allows a manual client when the selected role has none', () => {
+  setJazzhrJobs([{ id: 'job-no-client', roleId: 'job-no-client', title: 'Unassigned Role', status: 'Open' }])
+  setRoleAssignments([{
+    roleId: 'job-no-client',
+    roleKey: 'job-no-client',
+    roleTitle: 'Unassigned Role',
+    recruiter: { id: 'rec-hanna', name: 'Hanna Marino', email: 'hanna@example.com', role: 'recruiter' },
+  }])
+
+  const draft = buildIntakeDraft({
+    event_type_block: { event_type_select: { selected_option: { value: '1st-interview' } } },
+    role_block: { role_select: { selected_option: { value: 'job-no-client' } } },
+    client_block: { client_input: { value: 'Manual Client' } },
+  }, [], {
+    roleId: 'job-no-client',
+    client: undefined,
+  })
+  const view = intakeModal({ templates: [], draft })
+
+  assert.equal(draft.client, 'Manual Client')
+  assert.equal(view.blocks.some((block) => block.block_id === 'client_block'), false)
+
+  setJazzhrJobs([])
+  setRoleAssignments([])
+})
+
 test('home view includes scheduled cases in the team queue', () => {
   const view = homeView({
     myCases: [],
@@ -1292,10 +1318,10 @@ test('standard first interview intake omits hiring manager selector', () => {
     'event_type_block',
     'role_block',
     'role_title_block_job-1',
+    'client_block',
     'recruiters_block',
     'candidate_search_block',
     'applicant_block_job-1',
-    'applicant_name_block',
   ])
   assert.equal(inputBlockIds.includes('hm_block'), false)
   assert.equal(JSON.stringify(view.blocks).includes('recruiter_name_override'), false)

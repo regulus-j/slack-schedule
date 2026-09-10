@@ -4987,7 +4987,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const role = roleById(roleId, accountKey)
   const client = overrides.client !== undefined
     ? String(overrides.client || '').trim()
-    : selectedClientForRole(roleId, accountKey)
+    : (getInputValue(values, 'client_input') || selectedClientForRole(roleId, accountKey)).trim()
   const roleTitle = overrides.roleTitleInput ?? (
     getInputValue(values, 'role_title_override') ||
     overrides.roleTitle ||
