@@ -112,6 +112,8 @@ jobs:
             -var="google_shared_calendar_id=${{ vars.GOOGLE_SHARED_CALENDAR_ID }}"
             -var="google_auth_slack_user_id=${{ vars.GOOGLE_AUTH_SLACK_USER_ID }}"
             -var="google_account_by_jazzhr_account=${GOOGLE_ACCOUNT_BY_JAZZHR_ACCOUNT}"
+            -var="email_test_mode=${{ vars.EMAIL_TEST_MODE || 'false' }}"
+            -var="email_test_recipient=${{ vars.EMAIL_TEST_RECIPIENT || '' }}"
             -var="billing_account_id=${{ vars.BILLING_ACCOUNT_ID || '' }}"
             -var="budget_amount=${{ vars.BUDGET_AMOUNT || '0' }}"
             -var="budget_currency_code=${{ vars.BUDGET_CURRENCY_CODE || 'AUD' }}"

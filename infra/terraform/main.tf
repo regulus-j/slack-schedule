@@ -172,6 +172,8 @@ resource "google_compute_instance" "app" {
     google_redirect_uri         = var.google_redirect_uri
     google_shared_calendar_id   = var.google_shared_calendar_id
     google_auth_slack_user_id   = var.google_auth_slack_user_id
+    email_test_mode             = var.email_test_mode
+    email_test_recipient       = var.email_test_recipient
   }) }
   depends_on = [google_project_iam_member.app_artifact_reader]
 }

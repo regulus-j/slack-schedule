@@ -98,6 +98,16 @@ variable "google_auth_slack_user_id" {
   default = ""
 }
 
+variable "email_test_mode" {
+  type    = bool
+  default = false
+}
+
+variable "email_test_recipient" {
+  type    = string
+  default = ""
+}
+
 variable "google_account_by_jazzhr_account" {
   type        = string
   description = "JSON mapping of JazzHR account keys to connected Google account IDs"
