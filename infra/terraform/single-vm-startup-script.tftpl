@@ -84,6 +84,59 @@ cat > /opt/slack-scheduler/Caddyfile <<'CADDY_EOF'
   reverse_proxy app:3000
 }
 CADDY_EOF
+
+cat > /usr/local/bin/slack-scheduler-health-recovery <<'HEALTH_EOF'
+#!/bin/bash
+set -euo pipefail
+exec 9>/run/slack-scheduler-health-recovery.lock
+flock -n 9 || exit 0
+
+if ! systemctl is-active --quiet postgresql; then
+  systemctl start postgresql
+fi
+if ! systemctl is-active --quiet docker; then
+  systemctl start docker
+fi
+
+if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/health >/dev/null; then
+  exit 0
+fi
+
+until pg_isready -h 127.0.0.1 -p 5432 -d scheduler >/dev/null 2>&1; do
+  sleep 2
+done
+cd /opt/slack-scheduler
+docker compose up -d --remove-orphans
+HEALTH_EOF
+chmod 755 /usr/local/bin/slack-scheduler-health-recovery
+
+cat > /etc/systemd/system/slack-scheduler-health-recovery.service <<'SERVICE_EOF'
+[Unit]
+Description=Recover the Slack Scheduler app when its local health check fails
+After=docker.service postgresql.service
+Requires=docker.service postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/slack-scheduler-health-recovery
+SERVICE_EOF
+
+cat > /etc/systemd/system/slack-scheduler-health-recovery.timer <<'TIMER_EOF'
+[Unit]
+Description=Check Slack Scheduler health periodically
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+RandomizedDelaySec=30s
+Unit=slack-scheduler-health-recovery.service
+
+[Install]
+WantedBy=timers.target
+TIMER_EOF
+systemctl daemon-reload
+systemctl enable --now slack-scheduler-health-recovery.timer
+
 cd /opt/slack-scheduler
 docker compose pull app
 # Wait for PostgreSQL after boot/reboot before starting migrations or the app.

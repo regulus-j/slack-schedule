@@ -31,6 +31,7 @@ export function createSlackAlertDispatcher({ client, config }) {
         details.correlationId ? `Reference: \`${details.correlationId}\`` : '',
         details.caseId ? `Case: \`${details.caseId}\`` : '',
         details.error ? `Error: ${details.error}` : '',
+        details.lagMs !== undefined ? `Event-loop lag: ${details.lagMs}ms` : '',
         details.warningCount ? `Repeated warnings: ${details.warningCount}` : '',
       ].filter(Boolean).join('\n')
       for (const userId of recipients) {

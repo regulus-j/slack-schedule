@@ -1,6 +1,6 @@
 # Operations Guide
 
-Production runs on GCP. Follow [gcp-deployment.md](gcp-deployment.md).
+Production runs on GCP. Follow [gcp-deployment.md](gcp-deployment.md). The Slack worker and PostgreSQL run together on the scheduled application VM; Cloud Run is only the OAuth callback proxy.
 
 ## Required production controls
 
@@ -58,6 +58,7 @@ Expected signals:
 - `oauth_callback_server_started` from the callback service
 - successful `/health`
 - successful Cloud SQL connection
+- `slack_socket_mode_ready` from the application VM
 - successful forced-error alert DM to configured users
 - retention dry-run output before enabling scheduled deletion
 
@@ -84,5 +85,7 @@ npm.cmd run notifications:test -- --today --type all --email test@example.com --
 ```
 
 ## Recovery
+
+The production recovery workflow starts the application VM, starts local PostgreSQL and Docker, recreates the Compose app, and verifies the local health endpoint. It does not reference a separate PostgreSQL VM. The VM's `slack-scheduler-health-recovery.timer` performs the same lightweight recovery automatically every three minutes when the app health check fails.
 
 Use [incident-response.md](incident-response.md) for credential exposure, OAuth compromise, unauthorized actions, duplicate sends, dependency vulnerabilities, and database recovery.

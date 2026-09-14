@@ -111,6 +111,14 @@ export async function main() {
 
   await app.start()
   logger.info('slack_app_started', { status: 'started' })
+  logger.info('slack_socket_mode_ready', { status: 'connected' })
+
+  let slackConnectivityTimer = setInterval(() => {
+    app.client.auth.test()
+      .then(() => logger.debug('slack_connectivity_check_succeeded'))
+      .catch((error) => logger.warn('slack_connectivity_check_failed', { error: error.message }))
+  }, 5 * 60 * 1000)
+  slackConnectivityTimer.unref?.()
 
   if (config.notifications.enabled) {
     const backfill = await backfillNotificationJobs({ store, logger })
@@ -143,6 +151,7 @@ export async function main() {
     shuttingDown = true
     logger.info('application_shutdown_started', { reason: signal })
     notificationWorker.stop()
+    clearInterval(slackConnectivityTimer)
     stopEventLoopMonitor()
     if (httpServerStarted) await new Promise((resolve) => httpServer.close(resolve))
     await app.stop()

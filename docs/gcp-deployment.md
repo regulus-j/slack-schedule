@@ -2,7 +2,7 @@
 
 ## Environments
 
-Use separate staging and production GCP projects in `us-central1`, with separate Slack apps, private PostgreSQL VMs, Secret Manager secrets, KMS keys, and service accounts.
+Use separate staging and production GCP projects in `us-central1`, with separate Slack apps, single application VMs that host PostgreSQL and Docker Compose, Secret Manager secrets, KMS keys, and service accounts.
 
 ## Bootstrap
 
@@ -27,7 +27,7 @@ The workflow:
 1. Ensures Artifact Registry exists.
 2. Builds and pushes an immutable commit-tagged image.
 3. Applies infrastructure.
-4. Runs the migration Cloud Run Job after PostgreSQL is ready.
+4. Runs database migrations on the application VM after local PostgreSQL is ready.
 5. Deploys the scale-to-zero OAuth callback service and refreshes the application VM.
 
 Production environment approval must be enabled in GitHub.
@@ -42,7 +42,7 @@ Production environment approval must be enabled in GitHub.
 
 ## Availability
 
-The application VM and PostgreSQL VM run Monday-Friday in `Australia/Sydney`. Cloud Scheduler starts PostgreSQL at 08:30, starts the application VM at 08:40, stops the application VM at 18:20, and stops PostgreSQL at 18:30. The application VM waits for PostgreSQL before starting its containers. Slack actions and notification processing are available whenever the scheduled application VM is running; they are no longer rejected by an internal time gate. The scale-to-zero Cloud Run service handles only the existing Google OAuth callback URL.
+The application VM runs Monday-Friday in `Australia/Sydney`; PostgreSQL runs on that same VM. Cloud Scheduler starts and stops the application VM on the existing schedule. The VM startup script waits for local PostgreSQL before starting Docker Compose, and a systemd health timer checks the app every three minutes and recreates the containers only when `/health` fails. Slack actions and notification processing are available whenever the scheduled application VM is running. The scale-to-zero Cloud Run service handles only the existing Google OAuth callback URL.
 
 The schedules reduce runtime compute cost but do not pause every billing item. Persistent disks, VPC Access connectors, Artifact Registry storage, Secret Manager, KMS, GCS backup storage, Cloud Scheduler, and retained static IPs remain billable. Configure a project billing budget separately with the billing account ID; budgets notify on thresholds but do not automatically disable all resources.
 

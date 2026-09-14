@@ -3343,6 +3343,22 @@ export function registerSlackHandlers(app, context) {
           }),
         ])
 
+        const calendarEventId = caseRecord.calendarEventId || caseRecord.currentSchedule?.eventId
+        if (calendarEventId && !calendarResult.deleted) {
+          await store.updateCase(caseRecord.id, {
+            status: caseRecord.status,
+            rescheduleStatus: caseRecord.rescheduleStatus,
+            cancellationEmailStatus: 'failed',
+            actionLock: null,
+          })
+          await client.chat.postEphemeral({
+            channel: resolvePostingChannel(config, body.channel?.id || body.user.id),
+            user: body.user.id,
+            text: '⚠️ The Google Calendar invite could not be deleted, so the interview was not cancelled. Check Google Calendar access and try again.',
+          })
+          return
+        }
+
         const cancellationResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingCancellation, email: cancellationEmail, store })
         const updated = await store.updateCase(caseRecord.id, {
           cancellationEmail,

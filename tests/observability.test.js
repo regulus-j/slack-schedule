@@ -48,8 +48,9 @@ test('Slack alert dispatcher thresholds warnings and immediately sends errors', 
   assert.equal(messages.length, 0)
   await dispatcher({ level: 'warn', event: 'repeat_warning', details: {} })
   assert.equal(messages.length, 1)
-  await dispatcher({ level: 'error', event: 'new_error', details: { correlationId: 'ref-1' } })
+  await dispatcher({ level: 'error', event: 'new_error', details: { correlationId: 'ref-1', lagMs: 847 } })
   assert.equal(messages.length, 2)
+  assert.match(messages[1].text, /Event-loop lag: 847ms/)
 })
 
 test.after(() => {

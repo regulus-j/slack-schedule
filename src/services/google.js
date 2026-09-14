@@ -129,7 +129,7 @@ export async function createCalendarEvent({ config, logger, caseRecord, eventInp
 }
 
 export async function deleteCalendarEvent({ config, logger, caseRecord, store, tokenOwnerId }) {
-  const eventId = caseRecord.calendarEventId
+  const eventId = caseRecord.calendarEventId || caseRecord.currentSchedule?.eventId
   if (!eventId) {
     logger.info('calendar_delete_skipped', { caseId: caseRecord.id, reason: 'no_event_id' })
     return { mocked: true, deleted: false, reason: 'no_event_id' }
