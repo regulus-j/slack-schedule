@@ -217,7 +217,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
           placeholder: plain('Edit the role title if needed'),
           ...(draft.roleTitle ? { initial_value: draft.roleTitle } : {}),
         }),
-        ...(!draft.client
+        ...(eventType === '1st-interview' && !draft.client
           ? [input('Client', 'client_block', {
               type: 'plain_text_input',
               action_id: 'client_input',
@@ -434,18 +434,6 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         placeholder: plain('Paste final Zoom link'),
         ...(draft.zoomLink ? { initial_value: draft.zoomLink } : {}),
       }, false),
-      input(
-        'Notes',
-        'notes_block',
-        {
-          type: 'plain_text_input',
-          action_id: 'notes',
-          multiline: true,
-          placeholder: plain('Optional scheduling context'),
-          ...(draft.notes ? { initial_value: draft.notes } : {}),
-        },
-        true,
-      ),
       ...(resumeRequired || draft.resumeLink ? [
         ...(draft.resumeLink ? [
           section(`*Existing resume:* ${resumeSlackLink(draft)}`),
@@ -472,7 +460,7 @@ export function intakeModal({ templates, draft = {}, timeZones = [], defaultTime
         ...initialOption(selectedTimeZoneOption),
       }),
       section(`🕐 Interview timezone drives calendar invites. Times are shown in PH (${PH_TIME_ZONE}) with interview timezone equivalents.`),
-      section('📝 Calendar descriptions are generated automatically from the schedule details. Add notes here only if you want extra intake context.'),
+      section('📝 Calendar descriptions are generated automatically from the schedule details.'),
       ] : []),
     ],
   };
@@ -552,13 +540,6 @@ function customInviteIntakeModal({ draft, selectedTimeZoneOption }) {
         action_id: 'custom_meeting_link',
         placeholder: plain('Optional Zoom, Meet, Teams, or other URL'),
         ...(draft.customInviteMeetingLink ? { initial_value: draft.customInviteMeetingLink } : {}),
-      }, true),
-      input('Notes', 'notes_block', {
-        type: 'plain_text_input',
-        action_id: 'notes',
-        multiline: true,
-        placeholder: plain('Optional scheduling context'),
-        ...(draft.notes ? { initial_value: draft.notes } : {}),
       }, true),
       input('Event timezone', 'timezone_block', {
         type: 'external_select',
@@ -662,8 +643,8 @@ export function finalizeModal(caseRecord, recentAudits = []) {
     type: 'modal',
     callback_id: 'finalize_schedule_submit',
     private_metadata: caseRecord.id,
-    title: plain('📅 Finalize Schedule'),
-    submit: plain('📅 Schedule'),
+    title: plain('Invite & Calendar'),
+    submit: plain('Create Invites'),
     close: plain('Cancel'),
     blocks: [
       ...caseProgressHeader(caseRecord, recentAudits),

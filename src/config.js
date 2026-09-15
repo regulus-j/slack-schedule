@@ -66,6 +66,11 @@ export function loadConfig(env = process.env) {
     email: {
       testMode: parseBoolean(value('EMAIL_TEST_MODE'), false),
       testRecipient: cleanString(value('EMAIL_TEST_RECIPIENT')),
+      testRecipients: {
+        candidate: cleanString(value('EMAIL_TEST_CANDIDATE_RECIPIENT')),
+        hiringManager: cleanString(value('EMAIL_TEST_HM_RECIPIENT')),
+        recruiter: cleanString(value('EMAIL_TEST_RECRUITER_RECIPIENT')),
+      },
     },
     recruiterPhoneExport: {
       url: value('RECRUITER_PHONE_EXPORT_URL') || null,
@@ -217,7 +222,8 @@ export function validateStartupConfig(config, { role = 'app' } = {}) {
     if (config.notifications?.enabled && !config.notifications.feedbackFormUrl) {
       missing.push('FEEDBACK_FORM_URL')
     }
-    if (config.email?.testMode && !config.email.testRecipient) {
+    if (config.email?.testMode && !config.email.testRecipient &&
+      !Object.values(config.email.testRecipients || {}).some(Boolean)) {
       missing.push('EMAIL_TEST_RECIPIENT')
     }
   }

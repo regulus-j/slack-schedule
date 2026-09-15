@@ -73,6 +73,7 @@ test('email test mode defaults off and requires an explicit test recipient', () 
   })
   assert.equal(defaults.email.testMode, false)
   assert.equal(defaults.email.testRecipient, '')
+  assert.deepEqual(defaults.email.testRecipients, { candidate: '', hiringManager: '', recruiter: '' })
 
   const configured = loadConfig({
     EMAIL_TEST_MODE: 'true',
@@ -80,6 +81,18 @@ test('email test mode defaults off and requires an explicit test recipient', () 
   })
   assert.equal(configured.email.testMode, true)
   assert.equal(configured.email.testRecipient, 'test-recipient@example.com')
+
+  const roleConfigured = loadConfig({
+    EMAIL_TEST_MODE: 'true',
+    EMAIL_TEST_CANDIDATE_RECIPIENT: ' candidate@example.com ',
+    EMAIL_TEST_HM_RECIPIENT: ' hm@example.com ',
+    EMAIL_TEST_RECRUITER_RECIPIENT: ' recruiter@example.com ',
+  })
+  assert.deepEqual(roleConfigured.email.testRecipients, {
+    candidate: 'candidate@example.com',
+    hiringManager: 'hm@example.com',
+    recruiter: 'recruiter@example.com',
+  })
 
 })
 

@@ -4,6 +4,119 @@ import assert from 'node:assert/strict'
 import { getOpenRoles, setApplicants, setHiringManagers, setJazzhrJobs, setRoleAssignments, setSlackUsers, setTalentRecruiters } from '../src/data/cache.js'
 import { registerSlackHandlers } from '../src/slack/handlers.js'
 
+test('scheduling action opens the invite and calendar form without free-busy', async () => {
+  const actions = new Map()
+  const app = {
+    action(id, handler) { actions.set(id, handler) },
+    command() {}, event() {}, options() {}, view() {}, message() {},
+  }
+  const caseRecord = {
+    id: 'case-two-step',
+    status: 'Draft',
+    ownerSlackUserId: 'U1',
+    applicant: { firstName: 'Alex', lastName: 'Reyes', email: 'alex@example.com', jobTitle: 'Analyst' },
+    recruiter: { id: 'rec-1', name: 'Recruiter One', email: 'recruiter@example.com', role: 'recruiter' },
+    templateId: '1st-interview-invite',
+    stageKey: '1st-interview',
+    stageOverrides: {},
+    attendanceOverrides: {},
+    externalAttendees: [],
+    interviewTimezone: 'Australia/Sydney',
+    autofill: { zoomLink: 'https://zoom.us/j/demo' },
+  }
+  registerSlackHandlers(app, {
+    config: { slack: {}, google: {}, scheduling: { timeZones: ['Australia/Sydney'] }, jazzhr: {} },
+    store: {
+      async getCase(id) { return id === caseRecord.id ? caseRecord : null },
+      async listAudits() { return [] },
+    },
+    logger: silentLogger(),
+  })
+  let opened
+  await actions.get('scheduling_open')({
+    ack: async () => {},
+    body: {
+      trigger_id: 'trigger-1',
+      user: { id: 'U1' },
+      channel: { id: 'D1' },
+      actions: [{ value: caseRecord.id }],
+    },
+    client: {
+      views: { async open(payload) { opened = payload } },
+      chat: { async postEphemeral() {} },
+    },
+  })
+  assert.equal(opened.view.callback_id, 'finalize_schedule_submit')
+  assert.equal(opened.view.title.text, 'Invite & Calendar')
+  assert.doesNotMatch(JSON.stringify(opened.view), /Check Availability|schedule_window|free.?busy/i)
+})
+
+test('invite and calendar form schedules directly without a preview form', async () => {
+  const views = new Map()
+  const app = {
+    action() {}, command() {}, event() {}, options() {}, message() {},
+    view(id, handler) { views.set(id, handler) },
+  }
+  let caseRecord = {
+    id: 'case-direct-schedule',
+    status: 'Draft',
+    ownerSlackUserId: 'U1',
+    channelId: 'D1',
+    applicant: { id: 'candidate-1', firstName: 'Alex', lastName: 'Reyes', email: 'alex@example.com', jobTitle: 'Analyst' },
+    recruiter: { id: 'rec-1', name: 'Recruiter One', email: 'recruiter@example.com', role: 'recruiter' },
+    templateId: '1st-interview-invite',
+    stageKey: '1st-interview',
+    stageOverrides: {},
+    attendanceOverrides: {},
+    externalAttendees: [],
+    interviewTimezone: 'Australia/Sydney',
+    scheduleVersion: 0,
+    roleEmailDeliveries: {},
+    autofill: { zoomLink: 'https://zoom.us/j/demo', client: 'Example Client' },
+  }
+  const audits = []
+  const store = {
+    async getCase(id) { return id === caseRecord.id ? caseRecord : null },
+    async updateCase(id, patch) { caseRecord = { ...caseRecord, ...patch }; return caseRecord },
+    async addAudit(entry) { audits.push(entry) },
+    async listCases() { return [caseRecord] },
+    async listCasesForUser() { return [caseRecord] },
+    async listAudits() { return [] },
+  }
+  registerSlackHandlers(app, {
+    config: { slack: {}, google: {}, notifications: { enabled: false }, scheduling: { timeZones: ['Australia/Sydney'] }, jazzhr: {} },
+    store,
+    logger: silentLogger(),
+  })
+  const acknowledgements = []
+  await views.get('finalize_schedule_submit')({
+    ack: async (payload) => { acknowledgements.push(payload) },
+    body: { user: { id: 'U1' }, channel: { id: 'D1' } },
+    view: {
+      private_metadata: caseRecord.id,
+      state: { values: {
+        stage_block: { stage_select: { selected_option: { value: '1st-interview' } } },
+        duration_block: { duration_select: { selected_option: { value: '30' } } },
+        date_block: { date: { selected_date: '2026-09-22' } },
+        time_block: { time: { selected_option: { value: '09:00' } } },
+        zoom_block: { zoom_link: { value: 'https://zoom.us/j/demo' } },
+      } },
+    },
+    client: {
+      views: { async publish() {} },
+      conversations: { async open() { return { channel: { id: 'D1' } } } },
+      chat: { async postMessage() { return {} }, async postEphemeral() {} },
+    },
+  })
+  assert.deepEqual(acknowledgements, [undefined])
+  assert.equal(caseRecord.status, 'Scheduled')
+  assert.equal(caseRecord.scheduleVersion, 1)
+  assert.equal(Object.keys(caseRecord.roleEmailDeliveries).length, 2)
+  assert.ok(Object.keys(caseRecord.roleEmailDeliveries).some((key) => key.includes(':candidate:alex@example.com')))
+  assert.ok(Object.keys(caseRecord.roleEmailDeliveries).some((key) => key.includes(':recruiter:recruiter@example.com')))
+  assert.ok(audits.some((entry) => entry.action === 'scheduled_role_invitations_sent'))
+})
+
 test('cached candidate selection hydrates exact JazzHR application details and clears search errors', async () => {
   setApplicants([])
   setHiringManagers([])

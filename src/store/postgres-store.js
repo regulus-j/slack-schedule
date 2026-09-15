@@ -113,6 +113,7 @@ export function createPostgresStore(config, tokenCipher) {
       completedBy: row.completed_by,
       feedbackEmail: normalizeJson(row.feedback_email),
       feedbackEmailStatus: row.feedback_email_status,
+      roleEmailDeliveries: normalizeJson(row.role_email_deliveries) || {},
       legalHold: Boolean(row.legal_hold),
       deletedAt: row.deleted_at?.toISOString?.() || row.deleted_at || null,
       deletedBy: row.deleted_by,
@@ -869,6 +870,7 @@ export function createPostgresStore(config, tokenCipher) {
           feedback_email_status = $51,
           legal_hold = $52,
           google_account_id = $53,
+          role_email_deliveries = $54,
           updated_at = now()
         WHERE id = $1
         RETURNING *`,
@@ -926,6 +928,7 @@ export function createPostgresStore(config, tokenCipher) {
           merged.feedbackEmailStatus || null,
           Boolean(merged.legalHold),
           merged.googleAccountId || null,
+          serializeJson(merged.roleEmailDeliveries || {}),
         ],
       );
       return rowToCase(result.rows[0]);

@@ -263,7 +263,8 @@ function calendarEventUrl(config, eventId) {
 function emailForDelivery({ config, logger, caseRecord, email }) {
   if (!config?.email?.testMode) return email
 
-  const testRecipient = normalizeTestRecipient(config)
+  const recipientRole = String(email?.recipientRole || '').trim().toLowerCase()
+  const testRecipient = normalizeTestRecipient(config, recipientRole)
   const originalRecipients = {
     to: normalizeEmailHeaderList(email?.to),
     cc: normalizeEmailHeaderList(email?.cc),
@@ -285,14 +286,20 @@ function emailForDelivery({ config, logger, caseRecord, email }) {
     bcc: [],
     testMode: {
       enabled: true,
+      recipientRole: recipientRole || 'default',
       originalRecipients,
       redirectedTo: testRecipient,
     },
   }
 }
 
-function normalizeTestRecipient(config) {
-  const recipient = String(config?.email?.testRecipient || '').trim()
+function normalizeTestRecipient(config, recipientRole = '') {
+  const roleRecipient = {
+    candidate: config?.email?.testRecipients?.candidate,
+    hiring_manager: config?.email?.testRecipients?.hiringManager,
+    recruiter: config?.email?.testRecipients?.recruiter,
+  }[recipientRole]
+  const recipient = String(roleRecipient || config?.email?.testRecipient || '').trim()
   if (!recipient) throw new Error('EMAIL_TEST_RECIPIENT is required when email test mode is enabled.')
   return recipient
 }

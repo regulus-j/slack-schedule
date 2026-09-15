@@ -103,6 +103,7 @@ export function buildRescheduleEmail(caseRecord, request) {
 
   return {
     to: caseRecord.applicant?.email,
+    recipientRole: 'candidate',
     from: caseRecord.recruiter?.email,
     subject: `Updated Interview Schedule for ${jobTitle}`,
     body: htmlBody,
@@ -154,6 +155,7 @@ export function buildReminderEmail(caseRecord) {
 
   return {
     to: caseRecord.applicant?.email,
+    recipientRole: 'candidate',
     from: caseRecord.recruiter?.email,
     subject: `Reminder: ${jobTitle} interview`,
     body: htmlBody,
@@ -192,6 +194,7 @@ export function buildFeedbackRequestEmail(caseRecord, feedbackFormUrl) {
   ])
   return {
     to: caseRecord.applicant?.email,
+    recipientRole: 'candidate',
     from: caseRecord.recruiter?.email,
     subject: `We value your feedback, ${fullName}`,
     body: htmlBody,

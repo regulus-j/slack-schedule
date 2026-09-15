@@ -44,6 +44,7 @@ test('builds a 30-minute calendar event with attendees', () => {
   assert.equal(event.description, '<html><body><p>Invite body</p></body></html>');
   assert.equal(event.start.timeZone, 'Asia/Manila');
   assert.equal(event.attendees.length, 2);
+  assert.equal(event.guestsCanSeeOtherGuests, false);
   assert.equal(
     new Date(event.end.dateTime).getTime() - new Date(event.start.dateTime).getTime(),
     30 * 60 * 1000,

@@ -176,6 +176,7 @@ export function buildCalendarEventDraft({
       timeZone,
     },
     attendees: attendees.map((email) => ({ email })),
+    guestsCanSeeOtherGuests: false,
   };
 }
 

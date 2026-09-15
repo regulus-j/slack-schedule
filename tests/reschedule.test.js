@@ -17,6 +17,7 @@ import {
   buildAttendeeInviteEmail,
   buildCancellationEmail,
   buildIntakeDraft,
+  buildLifecycleAttendeeEmail,
   buildEditCaseDraft,
   canonicalCheckboxSelection,
   recoverLiveCandidateSearchSession,
@@ -234,7 +235,7 @@ test('reschedule candidate email CCs recruiter and involved attendees only', () 
   );
 });
 
-test('cancellation email is sent to candidate and CCs involved meeting participants', () => {
+test('cancellation email is sent privately to the candidate', () => {
   const scheduledCase = {
     ...baseCase,
     status: 'Scheduled',
@@ -250,7 +251,7 @@ test('cancellation email is sent to candidate and CCs involved meeting participa
   const email = buildCancellationEmail(scheduledCase);
 
   assert.equal(email.to, 'alex@example.com');
-  assert.deepEqual(email.cc, ['jamal@example.com', 'ana@example.com', 'interviewer@example.com']);
+  assert.deepEqual(email.cc, []);
   assert.match(email.subject, /Interview cancelled/);
   assert.match(email.plainBody, /Your interview for Customer Support Specialist has been cancelled/);
   assert.match(email.plainBody, /Date: 2026-05-20/);
@@ -642,11 +643,46 @@ test('custom invite intake contains only generic event fields', () => {
     'custom_subject_block',
     'custom_body_block',
     'custom_meeting_link_block',
-    'notes_block',
     'timezone_block',
   ])
   assert.doesNotMatch(JSON.stringify(view.blocks), /Candidate|JazzHR|Recruiter|Hiring Manager|Resume|Stage/)
+  assert.equal(blockIds.includes('notes_block'), false)
 });
+
+test('recruiter and hiring manager lifecycle emails are private and resume-free', () => {
+  const caseRecord = {
+    ...baseCase,
+    currentSchedule: {
+      date: '2026-05-21',
+      time: '11:00',
+      zoomLink: 'https://zoom.us/j/demo',
+    },
+  }
+  const email = buildLifecycleAttendeeEmail(
+    caseRecord,
+    { name: 'Ana Cruz', email: 'ana@example.com', role: 'hiring_manager' },
+    'rescheduled',
+  )
+  assert.equal(email.to, 'ana@example.com')
+  assert.deepEqual(email.cc, [])
+  assert.doesNotMatch(email.plainBody, /resume/i)
+  assert.match(email.plainBody, /2026-05-21/)
+})
+
+test('standard intake omits notes and only requests an unmapped client for the first interview', () => {
+  const firstView = intakeModal({
+    templates: [],
+    draft: { eventType: '1st-interview', stageKey: '1st-interview', client: '' },
+  })
+  const laterView = intakeModal({
+    templates: [],
+    draft: { eventType: '2nd-interview', stageKey: '2nd-interview', client: '' },
+  })
+  assert.ok(firstView.blocks.some((block) => block.block_id === 'client_block'))
+  assert.equal(laterView.blocks.some((block) => block.block_id === 'client_block'), false)
+  assert.equal(firstView.blocks.some((block) => block.block_id === 'notes_block'), false)
+  assert.equal(laterView.blocks.some((block) => block.block_id === 'notes_block'), false)
+})
 
 test('check availability modal keeps target window fields', () => {
   const view = schedulingModal(baseCase, {
@@ -1766,6 +1802,19 @@ test('manual hiring manager email completes an incomplete mapped manager', () =>
   assert.equal(draft.hiringManager.email, 'mapped.manager@example.com')
   assert.equal(draft.hiringManagerEmail, 'mapped.manager@example.com')
 
+  const refreshedDraft = buildIntakeDraft({}, [], {
+    eventType: '2nd-interview',
+    roleId: 'job-1',
+    hiringManagerIds: ['hm-missing-email'],
+    contactCorrections: {
+      'hm-missing-email': { value: 'mapped.manager@example.com' },
+    },
+  })
+  assert.equal(refreshedDraft.hiringManager.email, 'mapped.manager@example.com')
+  assert.deepEqual(refreshedDraft.contactCorrections, {
+    'hm-missing-email': { value: 'mapped.manager@example.com' },
+  })
+
   setRoleAssignments([])
   setJazzhrJobs([])
 })
@@ -2576,13 +2625,14 @@ test('buildTemplateVariables fills scheduled invite dynamic fields', () => {
   assert.equal(variables.interview_duration_text, '55-minute');
   assert.equal(variables.resume_link, '<a href="https://example.com/resume.pdf">[Resume]Support Specialist - Alex</a>');
   assert.equal(variables.resume_link_plain, '[Resume]Support Specialist - Alex: https://example.com/resume.pdf');
-  assert.match(variables.guest_list_text, /Alex Reyes: alex@example\.com/);
-  assert.match(variables.guest_list_text, /Jamal Al Badi: jamal@example\.com/);
-  assert.match(variables.guest_list_text, /Ana Cruz: ana@example\.com/);
+  assert.doesNotMatch(variables.guest_list_text, /alex@example\.com|jamal@example\.com|ana@example\.com/);
+  assert.doesNotMatch(variables.guest_list_text, /Alex Reyes/);
+  assert.match(variables.guest_list_text, /Jamal Al Badi — Recruiter/);
+  assert.match(variables.guest_list_text, /Ana Cruz — Hiring Manager/);
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222');
 });
 
-test('2nd/final candidate email describes the resume attachment and includes all meeting guests', async () => {
+test('2nd/final candidate email excludes confidential resume details and participant addresses', async () => {
   const email = await buildScheduledCandidateEmail({
     ...baseCase,
     recruiter: {
@@ -2605,10 +2655,10 @@ test('2nd/final candidate email describes the resume attachment and includes all
     },
   });
 
-  assert.match(email.body, /The applicant's resume is attached to this email/);
+  assert.doesNotMatch(email.body, /resume is attached|example\.com\/resume/i);
   assert.match(email.plainBody, /Our hiring managers, Ana Cruz, will meet with you via Zoom/);
   assert.doesNotMatch(email.plainBody, /our \[position_title\]/);
-  assert.match(email.plainBody, /The applicant's resume is attached to this email/);
+  assert.doesNotMatch(email.plainBody, /resume is attached|example\.com\/resume/i);
   assert.match(email.body, /font-family:Arial,Helvetica,sans-serif/);
   assert.match(email.body, /font-size:14px/);
   assert.match(email.body, /line-height:1\.38/);
@@ -2618,12 +2668,12 @@ test('2nd/final candidate email describes the resume attachment and includes all
   assert.match(email.plainBody, /Jamal Al Badi: \+63 900 111 2222/);
   assert.doesNotMatch(email.body, /files\.slack\.com|example\.com\/resume/);
   assert.match(email.body, /Meeting guests:/);
-  assert.match(email.body, /Alex Reyes: alex@example\.com/);
-  assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);
-  assert.match(email.body, /Ana Cruz: ana@example\.com/);
+  assert.doesNotMatch(email.body, /alex@example\.com|jamal@example\.com|ana@example\.com/);
+  assert.match(email.body, /Jamal Al Badi — Recruiter/);
+  assert.match(email.body, /Ana Cruz — Hiring Manager/);
 });
 
-test('1st interview candidate email includes all meeting guests', async () => {
+test('1st interview candidate email includes interviewer names and roles only', async () => {
   const email = await buildScheduledCandidateEmail({
     ...baseCase,
     recruiter: {
@@ -2648,9 +2698,9 @@ test('1st interview candidate email includes all meeting guests', async () => {
   assert.match(email.body, /Meeting guests:/);
   assert.match(email.body, /Jamal Al Badi: \+63 900 111 2222/);
   assert.match(email.plainBody, /Jamal Al Badi: \+63 900 111 2222/);
-  assert.match(email.body, /Alex Reyes: alex@example\.com/);
-  assert.match(email.body, /Jamal Al Badi: jamal@example\.com/);
-  assert.match(email.body, /Ana Cruz: ana@example\.com/);
+  assert.doesNotMatch(email.body, /alex@example\.com|jamal@example\.com|ana@example\.com/);
+  assert.match(email.body, /Jamal Al Badi — Recruiter/);
+  assert.match(email.body, /Ana Cruz — Hiring Manager/);
 });
 
 test('unchanged finalize preview preserves rich scheduling template HTML', () => {
@@ -2754,7 +2804,7 @@ test('buildTemplateVariables renders recruiter phone first and includes coordina
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222 | Coordinator: coordinator@example.com');
 });
 
-test('attendee invite emails are personalized and exclude candidate and recruiter', () => {
+test('attendee invite emails are personalized for every recruiter and hiring manager', () => {
   const caseRecord = {
     ...baseCase,
     currentSchedule: {
@@ -2771,10 +2821,11 @@ test('attendee invite emails are personalized and exclude candidate and recruite
   };
 
   const recipients = attendeeInviteRecipients(caseRecord);
-  const email = buildAttendeeInviteEmail(caseRecord, recipients[0]);
+  const hiringManager = recipients.find((recipient) => recipient.role === 'hiring_manager');
+  const email = buildAttendeeInviteEmail(caseRecord, hiringManager);
   const variables = buildTemplateVariables(caseRecord);
 
-  assert.deepEqual(recipients.map((recipient) => recipient.email), ['ana@example.com']);
+  assert.deepEqual(recipients.map((recipient) => recipient.email), ['jamal@example.com', 'ana@example.com']);
   assert.deepEqual(variables.recruiter_phone_line, 'Jamal Al Badi: jamal@example.com');
   assert.equal(email.to, 'ana@example.com');
   assert.match(email.plainBody, /Hi Ana Cruz/);
@@ -2833,7 +2884,7 @@ test('candidate live search restart recovers a missing pagination session', () =
   }]);
 });
 
-test('scheduled candidate email cc includes recruiter and attendee recipients', async () => {
+test('scheduled candidate email has no cc recipients', async () => {
   const email = await buildScheduledCandidateEmail({
     ...baseCase,
     templateId: '1st-interview-invite',
@@ -2851,7 +2902,7 @@ test('scheduled candidate email cc includes recruiter and attendee recipients', 
   });
 
   assert.equal(email.to, 'alex@example.com');
-  assert.deepEqual(email.cc, ['jamal@example.com', 'ana@example.com']);
+  assert.deepEqual(email.cc, []);
 });
 
 test('slack case views hide backend application id and show calendar link', () => {

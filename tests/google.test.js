@@ -440,6 +440,66 @@ test('sendRecruiterEmail redirects recipients in email test mode', async () => {
   }
 });
 
+test('sendRecruiterEmail uses role-specific test recipients with legacy fallback', async () => {
+  const originalFetch = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (_url, options) => {
+    sent.push(JSON.parse(options.body).raw);
+    return { ok: true, async json() { return { id: 'message-role' }; } };
+  };
+
+  const config = {
+    google: {
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://example.com/oauth',
+      sharedCalendarId: 'primary',
+    },
+    email: {
+      testMode: true,
+      testRecipient: 'fallback@example.com',
+      testRecipients: {
+        candidate: 'candidate-test@example.com',
+        hiringManager: 'hm-test@example.com',
+        recruiter: 'recruiter-test@example.com',
+      },
+    },
+  };
+  const send = (recipientRole) => sendRecruiterEmail({
+    config,
+    logger: { warn() {}, info() {} },
+    caseRecord: { id: `case-${recipientRole}`, ownerSlackUserId: 'U123' },
+    email: {
+      to: `${recipientRole}@real.example.com`,
+      from: 'sender@example.com',
+      subject: 'Interview',
+      htmlBody: '<p>Hello</p>',
+      plainBody: 'Hello',
+      recipientRole,
+    },
+    store: { async getGoogleToken() { return { access_token: 'token' }; } },
+  });
+
+  try {
+    await send('candidate');
+    await send('hiring_manager');
+    await send('recruiter');
+    await send('interviewer');
+    const recipients = sent.map((raw) => {
+      const decoded = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+      return decoded.match(/^To: ([^\r\n]+)/m)?.[1]
+    });
+    assert.deepEqual(recipients, [
+      'candidate-test@example.com',
+      'hm-test@example.com',
+      'recruiter-test@example.com',
+      'fallback@example.com',
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('sendRecruiterEmail keeps recipients unchanged when email test mode is off', async () => {
   const originalFetch = globalThis.fetch;
   let sentRaw;

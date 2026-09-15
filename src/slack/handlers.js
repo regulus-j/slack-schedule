@@ -619,6 +619,7 @@ export function registerSlackHandlers(app, context) {
         candidateSearchComplete: false,
         candidateSearchSearching: false,
         candidateSearchError: '',
+        contactCorrections: {},
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
@@ -653,6 +654,7 @@ export function registerSlackHandlers(app, context) {
         candidateSearchComplete: false,
         candidateSearchSearching: false,
         candidateSearchError: '',
+        contactCorrections: {},
       },
       timeZones: schedulingTimeZones,
       defaultTimeZone,
@@ -741,6 +743,7 @@ export function registerSlackHandlers(app, context) {
         hiringManagerName: selectedHiringManagers[0]?.name || '',
         hiringManagerEmail: selectedHiringManagers[0]?.email || '',
         hiringManagerEmailOverride: '',
+        contactCorrections: {},
         recruiterSearchQuery: '',
         hiringManagerSearchQuery: '',
         showAdditionalRecruiters: false,
@@ -1554,6 +1557,7 @@ export function registerSlackHandlers(app, context) {
       ].filter(Boolean),
       customInviteSlackRecipientIds: selectedCustomInviteUserIds,
       customInviteSlackRecipients: selectedCustomInviteUsers,
+      contactCorrections: metadata.contactCorrections || {},
       remoteUpdateStatus: metadata.remoteUpdateStatus || '',
       remoteUpdateMessage: metadata.remoteUpdateMessage || '',
       manualCandidateMode: metadata.manualCandidateMode,
@@ -1563,7 +1567,7 @@ export function registerSlackHandlers(app, context) {
     const templateId = intakeDraft.templateId;
     const stageKey = intakeDraft.stageKey;
     const recruiterId = intakeDraft.recruiterId;
-    const notes = intakeDraft.notes;
+    const notes = editCase?.notes || intakeDraft.notes;
     const resumeLink = intakeDraft.resumeLink || editCase?.resumeLink || null;
     const resumeFile = intakeDraft.resumeFile || editCase?.resumeFile || null;
     const zoomLink = intakeDraft.zoomLink;
@@ -1692,7 +1696,7 @@ export function registerSlackHandlers(app, context) {
     if (standardEventType && !intakeDraft.roleId) {
       errors.role_block = 'Choose an open JazzHR role.';
     }
-    if (standardEventType && intakeDraft.roleId && !intakeDraft.client) {
+    if (intakeDraft.eventType === '1st-interview' && intakeDraft.roleId && !intakeDraft.client) {
       logger.warn('schedule_intake_missing_client', {
         eventType: intakeDraft.eventType,
         roleId: intakeDraft.roleId,
@@ -2022,17 +2026,9 @@ export function registerSlackHandlers(app, context) {
       htmlBody: emailBodies.htmlBody,
       plainBody: emailBodies.plainBody,
       to: caseRecord.applicant?.email,
+      recipientRole: 'candidate',
       from: caseRecord.recruiter?.email,
     };
-    try {
-      await addRequiredResumeAttachment({ email, caseRecord, client, config, logger })
-    } catch (error) {
-      await ack({
-        response_action: 'errors',
-        errors: { email_body_block: error.message },
-      })
-      return
-    }
     if (hasBlockingEmailStatus(caseRecord.gmailSendStatus) && isSameEmail(caseRecord.candidateEmail, email)) {
       await ack();
       await postCaseDirectMessage({
@@ -2114,6 +2110,7 @@ export function registerSlackHandlers(app, context) {
       htmlBody: emailBodies.htmlBody,
       plainBody: emailBodies.plainBody,
       to: caseRecord.applicant?.email,
+      recipientRole: 'candidate',
       from: caseRecord.recruiter?.email,
     };
     await ack();
@@ -2163,19 +2160,8 @@ export function registerSlackHandlers(app, context) {
     const caseId = body.actions?.[0]?.value || body.view?.private_metadata
     try {
       const caseRecord = await requireCase(store, caseId)
-      if (isCustomInviteCase(caseRecord)) {
-        const recentAudits = await store.listAudits(caseRecord.id, 5)
-        await openOrPushModal(client, body, { view: finalizeModal(caseRecord, recentAudits) })
-        return
-      }
-      const stageKey = normalizeStageKey(caseRecord.stageKey || resolveStageFromTemplate(caseRecord.templateId)) || '1st-interview'
-      const stageRules = resolveStageRules(stageKey, caseRecord.stageOverrides)
-      const attendees = normalizeAttendees(caseRecord, stageRules)
       const recentAudits = await store.listAudits(caseRecord.id, 5)
-
-      await openOrPushModal(client, body, {
-        view: schedulingModal(caseRecord, { phase: 1, stageRules, attendees, stageKey }, recentAudits),
-      })
+      await openOrPushModal(client, body, { view: finalizeModal(caseRecord, recentAudits) })
     } catch (error) {
       if (error instanceof CaseNotFoundError) {
         await notifyCaseNotFound({ caseId, client, body, config, logger })
@@ -2193,6 +2179,14 @@ export function registerSlackHandlers(app, context) {
   })
 
   app.view('scheduling_phase_one', async ({ ack, body, view, client }) => {
+    await ack()
+    await client.chat.postEphemeral({
+      channel: resolvePostingChannel(config, body.user.id),
+      user: body.user.id,
+      text: 'Availability checking has been retired. Reopen the case and use Invite & Calendar Scheduling.',
+    })
+    return
+    /* istanbul ignore next -- retained temporarily for stale Slack callback compatibility */
     let schedulingCaseId = null
     let schedulingCaseRecord = null
     try {
@@ -2459,6 +2453,13 @@ export function registerSlackHandlers(app, context) {
 
   app.view('scheduling_phase_two', async ({ ack, body, view, client }) => {
     await ack()
+    await client.chat.postEphemeral({
+      channel: resolvePostingChannel(config, body.user.id),
+      user: body.user.id,
+      text: 'This retired availability form can no longer schedule interviews. Reopen the case and use Invite & Calendar Scheduling.',
+    })
+    return
+    /* istanbul ignore next -- retained temporarily for stale Slack callback compatibility */
     let caseRecord
     try {
       let metadata = {}
@@ -2537,13 +2538,6 @@ export function registerSlackHandlers(app, context) {
         selectedInterviewTime: startTime,
       }
       const scheduledCandidateEmail = await buildScheduledCandidateEmail(previewCaseRecord)
-      await addRequiredResumeAttachment({
-        email: scheduledCandidateEmail,
-        caseRecord: previewCaseRecord,
-        client,
-        config,
-        logger,
-      })
       const eventResult = await createCalendarEvent({
         config,
         logger,
@@ -2558,7 +2552,6 @@ export function registerSlackHandlers(app, context) {
           zoomLink,
           attendees: allAttendeeEmails,
           timeZone: interviewTimeZone,
-          description: stripSignatureHtml(scheduledCandidateEmail.htmlBody || ''),
         },
       })
 
@@ -2589,8 +2582,8 @@ export function registerSlackHandlers(app, context) {
         via: slotValue ? 'slot_selection' : 'manual_entry'
       })
 
-      const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store })
-      const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
+      const candidateEmailResult = await sendTrackedRoleEmail({ config, logger, store, caseRecord: updated, email: scheduledCandidateEmail, role: 'candidate', lifecycle: 'scheduled' })
+      const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, client, caseRecord: updated })
       await store.updateCase(caseRecord.id, {
         candidateEmail: persistableEmail(scheduledCandidateEmail),
         gmailSendStatus: candidateEmailResult.mocked ? 'mocked' : 'sent',
@@ -2742,16 +2735,27 @@ export function registerSlackHandlers(app, context) {
         attendeeDetails,
         timeZone: interviewTimeZone,
       }
-      const recentAudits = await store.listAudits(caseId, 5)
-      await ack({
-        response_action: 'update',
-        view: finalizeEmailPreviewModal({
+      await ack()
+      try {
+        await completeCustomInviteSchedule({
+          config,
+          logger,
+          store,
+          client,
+          body,
           caseRecord: previewCaseRecord,
           scheduleInput,
           renderedTemplate,
-          recentAudits,
-        }),
-      })
+        })
+      } catch (error) {
+        const correlationId = crypto.randomUUID()
+        logger.error('custom_finalize_schedule_submit_error', { caseId, error, correlationId })
+        await client.chat.postEphemeral({
+          channel: resolvePostingChannel(config, body.user.id),
+          user: body.user.id,
+          text: `Could not schedule event. Reference: ${correlationId}`,
+        })
+      }
       return
     }
 
@@ -2812,16 +2816,27 @@ export function registerSlackHandlers(app, context) {
       }),
     }
     const renderedTemplate = await buildScheduledCandidateEmail(previewCaseRecord)
-    const recentAudits = await store.listAudits(caseId, 5)
-    await ack({
-      response_action: 'update',
-      view: finalizeEmailPreviewModal({
-        caseRecord: previewCaseRecord,
+    await ack()
+    try {
+      await completeStandardInterviewSchedule({
+        config,
+        logger,
+        store,
+        client,
+        body,
+        caseRecord: finalCaseRecord,
         scheduleInput,
-        renderedTemplate,
-        recentAudits,
-      }),
-    })
+        scheduledCandidateEmail: renderedTemplate,
+      })
+    } catch (error) {
+      const correlationId = crypto.randomUUID()
+      logger.error('finalize_schedule_submit_error', { caseId, error, correlationId })
+      await client.chat.postEphemeral({
+        channel: resolvePostingChannel(config, body.user.id),
+        user: body.user.id,
+        text: `Could not schedule interview. Reference: ${correlationId}`,
+      })
+    }
   });
 
   app.view('finalize_email_preview_submit', async ({ ack, body, view, client }) => {
@@ -2897,10 +2912,6 @@ export function registerSlackHandlers(app, context) {
             ...scheduleInput,
             eventTitle: customInvite.title,
             meetingLink: customInvite.meetingLink,
-            description: [
-              caseRecord.notes || '',
-              customInvite.meetingLink ? `Meeting link: ${customInvite.meetingLink}` : '',
-            ].filter(Boolean).join('\n'),
           },
         })
         const scheduleSnapshot = buildScheduleSnapshot({
@@ -2986,13 +2997,6 @@ export function registerSlackHandlers(app, context) {
         subject: emailSubject,
         ...emailBodies,
       }
-      await addRequiredResumeAttachment({
-        email: scheduledCandidateEmail,
-        caseRecord: previewCaseRecord,
-        client,
-        config,
-        logger,
-      })
       scheduledCandidateEmail.body = scheduledCandidateEmail.htmlBody
       const eventResult = await createCalendarEvent({
         config,
@@ -3001,7 +3005,6 @@ export function registerSlackHandlers(app, context) {
         store,
         eventInput: {
           ...scheduleInput,
-          description: stripSignatureHtml(scheduledCandidateEmail.htmlBody || plainTextToHtml(emailBody)),
         },
       });
 
@@ -3031,8 +3034,8 @@ export function registerSlackHandlers(app, context) {
       if (config.notifications?.enabled) {
         await scheduleCaseNotifications({ store, caseRecord: updated })
       }
-      const candidateEmailResult = await sendRecruiterEmail({ config, logger, caseRecord: updated, email: scheduledCandidateEmail, store });
-      const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, caseRecord: updated })
+      const candidateEmailResult = await sendTrackedRoleEmail({ config, logger, store, caseRecord: updated, email: scheduledCandidateEmail, role: 'candidate', lifecycle: 'scheduled' });
+      const attendeeInviteResults = await sendAttendeeInviteEmails({ config, logger, store, client, caseRecord: updated })
       const reminderUpdated = await store.updateCase(caseId, {
         candidateEmail: persistableEmail(scheduledCandidateEmail),
         gmailSendStatus: candidateEmailResult.mocked ? 'mocked' : 'sent',
@@ -3193,7 +3196,6 @@ export function registerSlackHandlers(app, context) {
       ).typicalDurationMinutes,
     };
     const email = buildRescheduleEmail(caseRecord, request);
-    email.cc = ccRecipientsFromAttendees(caseRecord, request.attendees)
     request.email = email;
 
     const updated = await store.updateCase(caseId, applyRescheduleRequest(caseRecord, request));
@@ -3273,10 +3275,31 @@ export function registerSlackHandlers(app, context) {
         zoomLink: request.zoomLink,
         attendees: request.attendees,
         timeZone: caseRecord.interviewTimezone || SYDNEY_TIME_ZONE,
-        description: plainTextToHtml(plainBody),
       },
     });
-    const emailResult = await sendRecruiterEmail({ config, logger, caseRecord, email, store });
+    const rescheduledDeliveryCase = {
+      ...caseRecord,
+      scheduleVersion: Number(caseRecord.scheduleVersion || 1) + 1,
+    }
+    const emailResult = await sendTrackedRoleEmail({ config, logger, store, caseRecord: rescheduledDeliveryCase, email, role: 'candidate', lifecycle: 'rescheduled' });
+    await sendLifecycleAttendeeEmails({
+      config,
+      logger,
+      store,
+      client,
+      lifecycle: 'rescheduled',
+      caseRecord: {
+        ...rescheduledDeliveryCase,
+        currentSchedule: {
+          ...(caseRecord.currentSchedule || {}),
+          date: request.date,
+          time: request.time,
+          zoomLink: request.zoomLink,
+          attendees: request.attendees,
+          durationMinutes: request.durationMinutes,
+        },
+      },
+    })
     const completedRequest = { ...request, email };
     const updated = await store.updateCase(
       caseId,
@@ -3359,7 +3382,15 @@ export function registerSlackHandlers(app, context) {
           return
         }
 
-        const cancellationResult = await sendRecruiterEmail({ config, logger, caseRecord: pendingCancellation, email: cancellationEmail, store })
+        const cancellationResult = await sendTrackedRoleEmail({ config, logger, store, caseRecord: pendingCancellation, email: cancellationEmail, role: 'candidate', lifecycle: 'cancelled' })
+        await sendLifecycleAttendeeEmails({
+          config,
+          logger,
+          store,
+          client,
+          lifecycle: 'cancelled',
+          caseRecord: pendingCancellation,
+        })
         const updated = await store.updateCase(caseRecord.id, {
           cancellationEmail,
           cancellationEmailStatus: cancellationResult.mocked ? 'mocked' : 'sent',
@@ -3966,6 +3997,9 @@ function buildPrivateMetadata(view, overrides = {}) {
     : parsed.remoteUpdateMessage || ''
   const applicant = 'applicant' in overrides ? overrides.applicant : parsed.applicant || ''
   const googleAccountId = 'googleAccountId' in overrides ? overrides.googleAccountId : parsed.googleAccountId || ''
+  const contactCorrections = 'contactCorrections' in overrides
+    ? overrides.contactCorrections
+    : parsed.contactCorrections || {}
   return JSON.stringify({
     applicant,
     channelId,
@@ -4002,6 +4036,7 @@ function buildPrivateMetadata(view, overrides = {}) {
     candidateSearchSearching,
     candidateSearchError,
     googleAccountId,
+    contactCorrections,
   });
 }
 
@@ -4078,6 +4113,20 @@ export async function refreshIntakeModal({
     overrides.googleAccountId = resolveGoogleAccountId(_config || {}, overrides.accountKey || metadata.accountKey || 'default') || ''
   }
   const stateValues = body.view?.state?.values
+  const selectedCorrectionIds = new Set([
+    ...(overrides.recruiterIds || metadata.recruiterIds || []),
+    ...(overrides.hiringManagerIds || metadata.hiringManagerIds || []),
+  ].map(String))
+  const contactCorrections = {}
+  for (const id of selectedCorrectionIds) {
+    const existing = metadata.contactCorrections?.[id]
+    const recruiterValue = getInputValue(stateValues, personCorrectionActionId('recruiter', id))
+    const hiringManagerValue = getInputValue(stateValues, personCorrectionActionId('hiring_manager', id)) ||
+      getInputValue(stateValues, 'hiring_manager_email_override')
+    const value = recruiterValue || hiringManagerValue || existing?.value || ''
+    if (value) contactCorrections[id] = { ...existing, value }
+  }
+  overrides.contactCorrections = draftOverrides.contactCorrections || contactCorrections
   if (!('zoomLink' in draftOverrides)) {
     if (hasInputElement(stateValues, 'zoom_link')) {
       overrides.zoomLink = getInputValue(stateValues, 'zoom_link')
@@ -4183,6 +4232,7 @@ export async function refreshIntakeModal({
     remoteUpdateMessage: draft.remoteUpdateMessage,
     applicant: draft.applicantId,
     googleAccountId: draft.googleAccountId,
+    contactCorrections: draft.contactCorrections,
   });
 
   const correlationId = crypto.randomUUID()
@@ -4493,7 +4543,8 @@ export async function buildScheduledCandidateEmail(caseRecord) {
     htmlBody: rendered.body,
     plainBody: rendered.plainBody,
     to: caseRecord.applicant?.email,
-    cc: candidateInviteCcRecipients(caseRecord),
+    recipientRole: 'candidate',
+    cc: [],
     from: caseRecord.recruiter?.email,
   }
 }
@@ -4553,18 +4604,9 @@ export function buildCancellationEmail(caseRecord) {
     htmlBody,
     plainBody,
     to: caseRecord.applicant?.email,
-    cc: ccRecipientsFromAttendees(caseRecord, schedule.attendees || caseRecord.guests || []),
+    cc: [],
     from: caseRecord.recruiter?.email,
   }
-}
-
-function candidateInviteCcRecipients(caseRecord) {
-  const candidateEmail = normalizeEmail(caseRecord.applicant?.email)
-  const emails = [
-    caseRecord.recruiter?.email,
-    ...attendeeInviteRecipients(caseRecord).map((attendee) => attendee.email),
-  ]
-  return [...new Set(emails.map(normalizeEmail).filter((email) => email && email !== candidateEmail))]
 }
 
 export function ccRecipientsFromAttendees(caseRecord, attendees = []) {
@@ -4668,12 +4710,23 @@ async function deliverCustomInviteEmailsUnlocked({ config, logger, store, caseRe
   return results
 }
 
-async function sendAttendeeInviteEmails({ config, logger, store, caseRecord }) {
+async function sendAttendeeInviteEmails({ config, logger, store, client, caseRecord }) {
   const recipients = attendeeInviteRecipients(caseRecord)
   const results = []
   for (const attendee of recipients) {
     const email = buildAttendeeInviteEmail(caseRecord, attendee)
-    const result = await sendRecruiterEmail({ config, logger, caseRecord, email, store })
+    if (attendee.role === 'hiring_manager') {
+      await addHiringManagerResumeAttachment({ email, caseRecord, client, config, logger })
+    }
+    const result = await sendTrackedRoleEmail({
+      config,
+      logger,
+      store,
+      caseRecord,
+      email,
+      role: attendee.role,
+      lifecycle: 'scheduled',
+    })
     results.push(result)
   }
   return results
@@ -4684,7 +4737,6 @@ export function attendeeInviteRecipients(caseRecord) {
   const scheduledEmails = new Set((schedule.attendees || caseRecord.guests || []).map(normalizeEmail).filter(Boolean))
   const excludedEmails = new Set([
     normalizeEmail(caseRecord.applicant?.email),
-    normalizeEmail(caseRecord.recruiter?.email),
   ].filter(Boolean))
 
   const details = Array.isArray(schedule.attendeeDetails) && schedule.attendeeDetails.length > 0
@@ -4703,7 +4755,8 @@ export function attendeeInviteRecipients(caseRecord) {
     byEmail.set(email, {
       name: attendee.name || attendee.email || 'there',
       email: attendee.email,
-      role: attendee.positionTitle || attendee.role || 'interviewer',
+      role: attendee.role || 'interviewer',
+      positionTitle: attendee.positionTitle || '',
     })
   }
 
@@ -4714,7 +4767,10 @@ export function buildAttendeeInviteEmail(caseRecord, attendee) {
   const schedule = caseRecord.currentSchedule || {}
   const candidateName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' ') || 'the candidate'
   const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
-  const subject = `Interview invite: ${candidateName} - ${jobTitle}`
+  const isHiringManager = attendee.role === 'hiring_manager'
+  const isRecruiter = attendee.role === 'recruiter'
+  const recipientRole = isHiringManager ? 'hiring manager' : isRecruiter ? 'recruiter' : 'interviewer'
+  const subject = `${participantRoleLabel(attendee.role)} interview invite: ${candidateName} - ${jobTitle}`
   const dateText = schedule.date || caseRecord.selectedInterviewDate || 'TBD'
   const timeText = `${schedule.time || caseRecord.selectedInterviewTime || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim()
   const zoomLink = schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'
@@ -4722,7 +4778,8 @@ export function buildAttendeeInviteEmail(caseRecord, attendee) {
   const plainBody = generatedEmailPlainText([
     `Hi ${attendee.name || 'there'},`,
     '',
-    `You are included as an interviewer/attendee for ${candidateName}'s interview for ${jobTitle}.`,
+    `You are receiving the ${recipientRole} briefing for ${candidateName}'s interview for ${jobTitle}.`,
+    isHiringManager ? 'The candidate’s standardized confidential resume is attached for hiring review.' : '',
     '',
     'Interview details:',
     `Date: ${dateText}`,
@@ -4735,7 +4792,8 @@ export function buildAttendeeInviteEmail(caseRecord, attendee) {
   ])
   const htmlBody = generatedEmailHtml([
     emailParagraph(`Hi <strong>${escapeEmailHtml(attendee.name || 'there')}</strong>,`),
-    emailParagraph(`You are included as an interviewer/attendee for <strong>${escapeEmailHtml(candidateName)}</strong>'s interview for <strong>${escapeEmailHtml(jobTitle)}</strong>.`),
+    emailParagraph(`You are receiving the ${escapeEmailHtml(recipientRole)} briefing for <strong>${escapeEmailHtml(candidateName)}</strong>'s interview for <strong>${escapeEmailHtml(jobTitle)}</strong>.`),
+    isHiringManager ? emailParagraph('The candidate’s standardized confidential resume is attached for hiring review. Do not forward it to the candidate.') : '',
     emailDetailsBlock('Interview details:', [
       { label: 'Date', value: escapeEmailHtml(dateText) },
       { label: 'Time', value: escapeEmailHtml(timeText) },
@@ -4882,6 +4940,7 @@ export function buildTemplateVariables(caseRecord) {
     applicant_full_name: [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' '),
     job_title: caseRecord.applicant?.jobTitle || '',
     client: caseRecord.autofill?.client || '',
+    client_or_company: caseRecord.autofill?.client || caseRecord.autofill?.accountDisplayName || 'the hiring company',
     company_name: caseRecord.autofill?.accountDisplayName || 'Outsourced Pro Global',
     interview_stage: interviewStage,
     date,
@@ -4903,6 +4962,155 @@ export function buildTemplateVariables(caseRecord) {
     schedule_your_interview_here: '',
     recruiter_phone_line: recruiterContactLine(caseRecord),
   };
+}
+
+async function completeStandardInterviewSchedule({
+  config,
+  logger,
+  store,
+  client,
+  body,
+  caseRecord,
+  scheduleInput,
+  scheduledCandidateEmail,
+}) {
+  const eventResult = await createCalendarEvent({
+    config,
+    logger,
+    caseRecord,
+    store,
+    eventInput: scheduleInput,
+  })
+  const scheduleSnapshot = buildScheduleSnapshot({
+    date: scheduleInput.startDate,
+    time: scheduleInput.startTime,
+    zoomLink: scheduleInput.zoomLink,
+    attendees: scheduleInput.attendees,
+    attendeeDetails: scheduleInput.attendeeDetails,
+    durationMinutes: scheduleInput.durationMinutes,
+    eventId: eventResult.eventId,
+    htmlLink: eventResult.googleEvent?.htmlLink || null,
+  })
+  const updated = await store.updateCase(caseRecord.id, {
+    ...applyScheduledEvent(caseRecord, eventResult, scheduleSnapshot),
+    stageKey: caseRecord.stageKey,
+    templateId: caseRecord.templateId,
+    stageOverrides: caseRecord.stageOverrides,
+  })
+  await store.addAudit({
+    caseId: caseRecord.id,
+    actorSlackUserId: body.user.id,
+    action: 'calendar_event_approved',
+    eventId: eventResult.eventId,
+  })
+  if (config.notifications?.enabled) {
+    await scheduleCaseNotifications({ store, caseRecord: updated })
+  }
+  const candidateEmailResult = await sendTrackedRoleEmail({
+    config,
+    logger,
+    store,
+    caseRecord: updated,
+    email: scheduledCandidateEmail,
+    role: 'candidate',
+    lifecycle: 'scheduled',
+  })
+  const attendeeInviteResults = await sendAttendeeInviteEmails({
+    config,
+    logger,
+    store,
+    client,
+    caseRecord: updated,
+  })
+  const finalRecord = await store.updateCase(caseRecord.id, {
+    candidateEmail: persistableEmail(scheduledCandidateEmail),
+    gmailSendStatus: candidateEmailResult.mocked ? 'mocked' : 'sent',
+    attendeeInviteStatus: attendeeInviteResults.length === 0
+      ? 'none'
+      : (attendeeInviteResults.every((result) => result.mocked) ? 'mocked' : 'sent'),
+  })
+  await store.addAudit({
+    caseId: caseRecord.id,
+    actorSlackUserId: body.user.id,
+    action: 'scheduled_role_invitations_sent',
+    candidateCount: 1,
+    attendeeCount: attendeeInviteResults.length,
+    scheduleVersion: finalRecord.scheduleVersion || 1,
+  })
+  await publishHome({ client, userId: body.user.id, store, logger, config })
+  await postCaseThreadMessage({
+    client,
+    config,
+    body,
+    store,
+    caseRecord: finalRecord,
+    text: 'Interview scheduled',
+    blocks: caseMessageBlocks(finalRecord),
+    publishScheduledSummary: true,
+  })
+  return finalRecord
+}
+
+async function completeCustomInviteSchedule({ config, logger, store, client, body, caseRecord, scheduleInput }) {
+  const customInvite = {
+    ...normalizeCustomInviteMetadata(caseRecord),
+    meetingLink: scheduleInput.meetingLink || scheduleInput.zoomLink || '',
+  }
+  const finalCaseRecord = { ...caseRecord, customInvite }
+  const eventResult = await createCalendarEvent({
+    config,
+    logger,
+    caseRecord: finalCaseRecord,
+    store,
+    eventInput: {
+      ...scheduleInput,
+      eventTitle: customInvite.title,
+      meetingLink: customInvite.meetingLink,
+    },
+  })
+  const scheduleSnapshot = buildScheduleSnapshot({
+    date: scheduleInput.startDate,
+    time: scheduleInput.startTime,
+    zoomLink: customInvite.meetingLink,
+    attendees: scheduleInput.attendees,
+    attendeeDetails: scheduleInput.attendeeDetails,
+    durationMinutes: scheduleInput.durationMinutes,
+    eventId: eventResult.eventId,
+    htmlLink: eventResult.googleEvent?.htmlLink || null,
+  })
+  await store.updateCase(caseRecord.id, {
+    ...applyScheduledEvent(finalCaseRecord, eventResult, scheduleSnapshot),
+    customInvite,
+    externalAttendees: customInviteExternalAttendees(customInvite.recipients),
+  })
+  await store.addAudit({
+    caseId: caseRecord.id,
+    actorSlackUserId: body.user.id,
+    action: 'calendar_event_approved',
+    eventId: eventResult.eventId,
+  })
+  const scheduledRecord = await requireCase(store, caseRecord.id)
+  const deliveryResults = await deliverCustomInviteEmails({ config, logger, store, caseRecord: scheduledRecord })
+  const finalRecord = await requireCase(store, caseRecord.id)
+  await store.addAudit({
+    caseId: caseRecord.id,
+    actorSlackUserId: body.user.id,
+    action: 'custom_invitations_sent',
+    sent: deliveryResults.filter((result) => result.status === 'sent' || result.status === 'mocked').length,
+    failed: deliveryResults.filter((result) => result.status === 'failed').length,
+  })
+  await publishHome({ client, userId: body.user.id, store, logger, config })
+  await postCaseThreadMessage({
+    client,
+    config,
+    body,
+    store,
+    caseRecord: finalRecord,
+    text: 'Event scheduled',
+    blocks: caseMessageBlocks(finalRecord),
+    publishScheduledSummary: true,
+  })
+  return finalRecord
 }
 
 function buildHiringManagerNames(caseRecord) {
@@ -4932,30 +5140,38 @@ function buildGuestListText(caseRecord) {
   for (const detail of details) {
     const email = normalizeEmail(detail?.email)
     if (!email) continue
+    if (detail?.role === 'candidate') continue
     byEmail.set(email, {
-      name: detail.name || detail.email || email,
-      email,
+      name: detail.name || 'Interviewer',
+      role: participantRoleLabel(detail.role, detail.positionTitle),
     })
   }
 
-  for (const person of [caseRecord.applicant, caseRecord.recruiter, caseRecord.hiringManager]) {
+  for (const person of [caseRecord.recruiter, caseRecord.hiringManager]) {
     const email = normalizeEmail(person?.email)
     if (!email || byEmail.has(email)) continue
     byEmail.set(email, {
-      name: person.name || [person.firstName, person.lastName].filter(Boolean).join(' ') || person.email || email,
-      email,
+      name: person.name || [person.firstName, person.lastName].filter(Boolean).join(' ') || 'Interviewer',
+      role: participantRoleLabel(person.role, person.positionTitle),
     })
   }
 
   for (const emailValue of attendeeEmails) {
     const email = normalizeEmail(emailValue)
     if (!email || byEmail.has(email)) continue
-    byEmail.set(email, { name: email, email })
+    byEmail.set(email, { name: 'Interviewer', role: 'Interviewer' })
   }
 
   return [...byEmail.values()]
-    .map((guest) => `${guest.name}: ${guest.email}`)
+    .map((guest) => `${guest.name} — ${guest.role}`)
     .join('\n')
+}
+
+function participantRoleLabel(role, positionTitle = '') {
+  if (positionTitle) return positionTitle
+  if (role === 'recruiter') return 'Recruiter'
+  if (role === 'hiring_manager') return 'Hiring Manager'
+  return 'Interviewer'
 }
 
 function resolveInterviewDurationMinutes(caseRecord, stageKey) {
@@ -5120,6 +5336,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
       remoteUpdateMessage: '',
       accountKey: overrides.accountKey || '',
       googleAccountId: overrides.googleAccountId || '',
+      contactCorrections: overrides.contactCorrections || {},
     }
   }
   const customInvitePurpose = customInvite
@@ -5241,7 +5458,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   const hiringManagerEmailOverride = String(
     overrides.hiringManagerEmailOverride !== undefined
       ? overrides.hiringManagerEmailOverride
-      : getInputValue(values, 'hiring_manager_email_override') || '',
+      : getInputValue(values, 'hiring_manager_email_override') || (hiringManagerNeedsEmail ? baseHiringManager?.email : '') || '',
   ).trim()
   const hiringManager = baseHiringManager && hiringManagerNeedsEmail
     ? { ...baseHiringManager, email: hiringManagerEmailOverride }
@@ -5356,6 +5573,7 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
     interviewTimezone,
     accountKey: overrides.accountKey || '',
     googleAccountId,
+    contactCorrections: overrides.contactCorrections || {},
   };
 }
 
@@ -5703,7 +5921,7 @@ function applyPersonContactCorrection(person, role, values, overrides = {}) {
 
   const field = missingName ? 'name' : 'email'
   const actionId = personCorrectionActionId(role, person.id)
-  const saved = overrides.contactCorrections?.[person.id]?.[field]
+  const saved = overrides.contactCorrections?.[person.id]?.[field] ?? overrides.contactCorrections?.[person.id]?.value
   const legacyCorrection = role === 'hiring_manager' && field === 'email'
     ? getInputValue(values, 'hiring_manager_email_override')
     : ''
@@ -5712,6 +5930,119 @@ function applyPersonContactCorrection(person, role, values, overrides = {}) {
   return {
     ...person,
     [field]: correction,
+  }
+}
+
+async function sendLifecycleAttendeeEmails({ config, logger, store, client, caseRecord, lifecycle }) {
+  const results = []
+  for (const attendee of attendeeInviteRecipients(caseRecord)) {
+    const email = buildLifecycleAttendeeEmail(caseRecord, attendee, lifecycle)
+    const result = await sendTrackedRoleEmail({
+      config,
+      logger,
+      store,
+      caseRecord,
+      email,
+      role: attendee.role,
+      lifecycle,
+    })
+    results.push({ attendee, result })
+  }
+  return results
+}
+
+async function sendTrackedRoleEmail({ config, logger, store, caseRecord, email, role, lifecycle }) {
+  if ((email.cc && email.cc.length > 0) || (email.bcc && email.bcc.length > 0)) {
+    throw new Error('Interview role emails must not use CC or BCC recipients.')
+  }
+  const normalizedRecipient = normalizeEmail(email.to)
+  if (!normalizedRecipient) throw new Error(`Missing ${role} recipient email.`)
+  const scheduleVersion = Number(caseRecord.scheduleVersion || 1)
+  const key = `${lifecycle}:${scheduleVersion}:${role}:${normalizedRecipient}`
+  const latest = await store.getCase(caseRecord.id)
+  const deliveries = latest?.roleEmailDeliveries || caseRecord.roleEmailDeliveries || {}
+  if (['sent', 'mocked'].includes(deliveries[key]?.status)) {
+    return { mocked: deliveries[key].status === 'mocked', skipped: true, messageId: deliveries[key].messageId || '' }
+  }
+  await store.updateCase(caseRecord.id, {
+    roleEmailDeliveries: {
+      ...deliveries,
+      [key]: { role, lifecycle, recipient: normalizedRecipient, status: 'sending', updatedAt: new Date().toISOString() },
+    },
+  })
+  try {
+    const result = await sendRecruiterEmail({
+      config,
+      logger,
+      caseRecord,
+      store,
+      email: { ...email, recipientRole: role },
+    })
+    const current = await store.getCase(caseRecord.id)
+    await store.updateCase(caseRecord.id, {
+      roleEmailDeliveries: {
+        ...(current?.roleEmailDeliveries || {}),
+        [key]: {
+          role,
+          lifecycle,
+          recipient: normalizedRecipient,
+          status: result.mocked ? 'mocked' : 'sent',
+          messageId: result.messageId || '',
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    })
+    return result
+  } catch (error) {
+    const current = await store.getCase(caseRecord.id)
+    await store.updateCase(caseRecord.id, {
+      roleEmailDeliveries: {
+        ...(current?.roleEmailDeliveries || {}),
+        [key]: { role, lifecycle, recipient: normalizedRecipient, status: 'failed', error: error.message, updatedAt: new Date().toISOString() },
+      },
+    })
+    throw error
+  }
+}
+
+export function buildLifecycleAttendeeEmail(caseRecord, attendee, lifecycle) {
+  const schedule = caseRecord.currentSchedule || {}
+  const candidateName = [caseRecord.applicant?.firstName, caseRecord.applicant?.lastName].filter(Boolean).join(' ') || 'the candidate'
+  const jobTitle = caseRecord.applicant?.jobTitle || 'the role'
+  const lifecycleText = lifecycle === 'cancelled' ? 'cancelled' : 'rescheduled'
+  const timeText = `${schedule.time || 'TBD'} ${caseRecord.interviewTimezone || ''}`.trim()
+  const detailLines = lifecycleText === 'cancelled'
+    ? []
+    : [
+        `Date: ${schedule.date || 'TBD'}`,
+        `Time: ${timeText}`,
+        `Zoom link: ${schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD'}`,
+      ]
+  const plainBody = generatedEmailPlainText([
+    `Hi ${attendee.name || 'there'},`,
+    '',
+    `${candidateName}'s interview for ${jobTitle} has been ${lifecycleText}.`,
+    '',
+    ...detailLines,
+  ])
+  const htmlBody = generatedEmailHtml([
+    emailParagraph(`Hi <strong>${escapeEmailHtml(attendee.name || 'there')}</strong>,`),
+    emailParagraph(`<strong>${escapeEmailHtml(candidateName)}</strong>'s interview for <strong>${escapeEmailHtml(jobTitle)}</strong> has been ${lifecycleText}.`),
+    lifecycleText === 'cancelled' ? '' : emailDetailsBlock('Updated interview details:', [
+      { label: 'Date', value: escapeEmailHtml(schedule.date || 'TBD') },
+      { label: 'Time', value: escapeEmailHtml(timeText) },
+      { label: 'Zoom Link', value: emailLink(schedule.zoomLink || caseRecord.autofill?.zoomLink || 'TBD') },
+    ]),
+  ])
+  return {
+    to: attendee.email,
+    recipientRole: attendee.role,
+    from: caseRecord.recruiter?.email,
+    subject: `Interview ${lifecycleText}: ${candidateName} - ${jobTitle}`,
+    body: htmlBody,
+    htmlBody,
+    plainBody,
+    cc: [],
   }
 }
 
@@ -6133,7 +6464,7 @@ export function resumeDisplayFilename(originalFilename, caseRecord) {
   return extension ? `${safeBase}.${extension}` : safeBase
 }
 
-async function addRequiredResumeAttachment({ email, caseRecord, client, config, logger }) {
+async function addHiringManagerResumeAttachment({ email, caseRecord, client, config, logger }) {
   if (!stageRequiresResumeLink(caseRecord.stageKey)) return email
   const attachment = await resolveResumeAttachment({
     caseRecord,
