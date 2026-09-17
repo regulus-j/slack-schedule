@@ -899,7 +899,9 @@ export function registerSlackHandlers(app, context) {
             })
             return
           }
-          setApplicantDetail(selectedId, detail, accountKey);
+          // Keep the cached candidate identity and contact fields when the
+          // JazzHR detail response is partial (some responses omit email).
+          setApplicantDetail(selectedId, applicant, accountKey);
         }
       } catch (err) {
         logger.warn('applicant_detail_fetch_failed', { applicantId: selectedId, error: err.message });
@@ -1726,6 +1728,9 @@ export function registerSlackHandlers(app, context) {
       }
     } else if (!intakeDraft.applicantId) {
       errors[findInputBlockId(values, 'applicant_select', 'applicant_block')] = 'Choose a candidate.';
+    }
+    if (intakeDraft.eventType !== 'custom-invite' && !intakeDraft.applicantEmail) {
+      errors[findInputBlockId(values, 'applicant_email', 'applicant_email_block')] = 'Enter applicant email.';
     }
 
     if (intakeDraft.applicantEmail && !isValidEmail(intakeDraft.applicantEmail)) {
@@ -5382,7 +5387,10 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
         applicantEmailOverride,
       )
     : applyApplicantOverrides(
-        overrides.applicantRecord || getApplicantDetail(applicantId, accountKey) || findApplicant(applicantId, getApplicants(accountKey)),
+        overrides.applicantRecord || mergeApplicantDetail(
+          findApplicant(applicantId, getApplicants(accountKey)),
+          getApplicantDetail(applicantId, accountKey),
+        ) || getApplicantDetail(applicantId, accountKey),
         {
           name: applicantNameOverride,
           email: applicantEmailOverride,
