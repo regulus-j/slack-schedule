@@ -2804,6 +2804,25 @@ test('buildTemplateVariables renders recruiter phone first and includes coordina
   assert.equal(variables.recruiter_phone_line, 'Jamal Al Badi: +63 900 111 2222 | Coordinator: coordinator@example.com');
 });
 
+test('buildTemplateVariables uses recruiter mobile for PH candidates and Aircall for other candidates', () => {
+  const recruiter = {
+    name: 'Armi Escamilla',
+    email: 'armi@example.com',
+    mobilePhone: '+63 917 000 0000',
+    aircallPhone: '0480002413',
+  }
+
+  assert.equal(buildTemplateVariables({
+    applicant: { country: 'Philippines' },
+    recruiter,
+  }).recruiter_phone_line, 'Armi Escamilla: +63 917 000 0000')
+
+  assert.equal(buildTemplateVariables({
+    applicant: { country: 'Australia' },
+    recruiter,
+  }).recruiter_phone_line, 'Armi Escamilla: 0480002413')
+})
+
 test('attendee invite emails are personalized for every recruiter and hiring manager', () => {
   const caseRecord = {
     ...baseCase,

@@ -24,7 +24,22 @@ test('normalizeRecruiterPhoneRow uses exact Apps Script export headers', () => {
   assert.equal(row.legalName, 'Christiana Dela Cruz')
   assert.equal(row.email, 'christiana@example.com')
   assert.equal(row.phone, '+63 900 111 2222')
+  assert.equal(row.mobilePhone, '')
+  assert.equal(row.aircallPhone, '+63 900 111 2222')
   assert.equal(row.zoomLink, 'https://zoom.us/j/123')
+})
+
+test('normalizeRecruiterPhoneRow keeps Mobile No. and Aircall separate', () => {
+  const row = normalizeRecruiterPhoneRow({
+    'First Name': 'Armi',
+    'Last Name': 'Escamilla',
+    'Mobile No.': '+63 917 000 0000',
+    Aircall: '0480002413',
+  })
+
+  assert.equal(row.mobilePhone, '+63 917 000 0000')
+  assert.equal(row.aircallPhone, '0480002413')
+  assert.equal(row.phone, '0480002413')
 })
 
 test('normalizeRecruiterPhoneRow accepts Aircall header without trailing space', () => {
@@ -228,6 +243,14 @@ test('recruiterPhoneLine renders exact email format', () => {
   )
   assert.equal(recruiterPhoneLine({ name: 'Christiana Dela Cruz' }), '')
   assert.equal(recruiterPhoneLine({ name: 'Aki Zita', phone: '-' }), '')
+  assert.equal(
+    recruiterPhoneLine({ name: 'Armi Escamilla', mobilePhone: '+63 917 000 0000', aircallPhone: '0480002413' }, { preferMobile: true }),
+    'Armi Escamilla: +63 917 000 0000',
+  )
+  assert.equal(
+    recruiterPhoneLine({ name: 'Armi Escamilla', mobilePhone: '+63 917 000 0000', aircallPhone: '0480002413' }),
+    'Armi Escamilla: 0480002413',
+  )
 })
 
 test('recruiterRowsToPeople maps Apps Script rows into primary recruiter records', () => {

@@ -338,6 +338,7 @@ function mapLiveApplicant(item, sourceOrder = 0) {
     lastName,
     email: firstValue(item, ['email', 'email_address', 'emailAddress']),
     phone: firstValue(item, ['phone', 'prospect_phone', 'cell_phone']),
+    country: firstValue(item, ['country', 'country_code', 'countryCode', 'location']),
     jobTitle: firstValue(item, ['jobTitle', 'job_title', 'job']),
     stage: firstValue(item, ['applicant_progress', 'applicantProgress', 'stage', 'status']),
     recruiterId: normalizeRecruiterId(item?.recruiter_id),

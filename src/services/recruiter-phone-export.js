@@ -61,12 +61,17 @@ export function normalizeRecruiterPhoneRow(row) {
   const lastName = firstClean(row, ['Last Name', 'Surname', 'Family Name'])
   const preferredName = firstClean(row, ['Preferred Name', 'PreferredName', 'Nickname'])
   const designation = firstClean(row, ['Designation', 'Position Title', 'Job Title', 'Title'])
-  const phone = firstClean(row, [
+  const mobilePhone = firstClean(row, [
+    'Mobile No.',
+    'Mobile Number',
+    'Mobile',
+  ])
+  const aircallPhone = firstClean(row, [
     'Aircall',
     'Aircall Number',
-    'Aircall/Mobile',
-    'Mobile',
-    'Mobile Number',
+    'Aircall Phone',
+  ])
+  const phone = aircallPhone || mobilePhone || firstClean(row, [
     'Phone',
     'Phone Number',
     'Contact Number',
@@ -100,6 +105,8 @@ export function normalizeRecruiterPhoneRow(row) {
     name: displayName,
     legalName,
     designation,
+    mobilePhone,
+    aircallPhone,
     phone,
     email,
     zoomLink,
@@ -114,6 +121,8 @@ export function mergeRecruiterPhones(recruiters, phoneRows) {
       ...recruiter,
       legalName: recruiter.legalName || match.legalName || '',
       preferredName: recruiter.preferredName || match.preferredName || '',
+      mobilePhone: match.mobilePhone || recruiter.mobilePhone || '',
+      aircallPhone: match.aircallPhone || recruiter.aircallPhone || '',
       phone: match.phone || recruiter.phone || '',
       zoomLink: match.zoomLink || recruiter.zoomLink || '',
       positionTitle: recruiter.positionTitle || match.designation || '',
@@ -132,15 +141,21 @@ export function recruiterRowsToPeople(phoneRows) {
     slackUserId: '',
     positionTitle: row.designation || '',
     department: 'Recruitment',
+    mobilePhone: row.mobilePhone || '',
+    aircallPhone: row.aircallPhone || '',
     phone: row.phone || '',
     zoomLink: row.zoomLink || '',
     source: 'google_apps_script',
   }))
 }
 
-export function recruiterPhoneLine(recruiter) {
+export function recruiterPhoneLine(recruiter, { preferMobile = false } = {}) {
   const name = clean(recruiter?.name)
-  const phone = cleanPhone(recruiter?.phone)
+  const hasSeparateNumbers = Boolean(cleanPhone(recruiter?.mobilePhone) || cleanPhone(recruiter?.aircallPhone))
+  const selectedPhone = preferMobile
+    ? (recruiter?.mobilePhone || (hasSeparateNumbers ? '' : recruiter?.phone))
+    : (recruiter?.aircallPhone || (hasSeparateNumbers ? '' : recruiter?.phone))
+  const phone = cleanPhone(selectedPhone)
   return name && phone ? `${name}: ${phone}` : ''
 }
 

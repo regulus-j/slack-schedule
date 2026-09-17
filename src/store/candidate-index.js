@@ -19,6 +19,7 @@ export function normalizeJazzhrCandidate(record, index = 0) {
     lastName,
     email: String(record?.email || '').trim(),
     phone: String(record?.phone || '').trim(),
+    country: String(record?.country || record?.countryCode || record?.location || '').trim(),
     jobTitle: String(record?.jobTitle || '').trim(),
     stage: String(record?.stage || '').trim(),
     workflowStepId: String(record?.workflowStepId || '').trim(),

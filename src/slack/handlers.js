@@ -4961,6 +4961,7 @@ export function buildTemplateVariables(caseRecord) {
     guest_list_text: guestListText,
     schedule_your_interview_here: '',
     recruiter_phone_line: recruiterContactLine(caseRecord),
+    candidate_country: caseRecord.applicant?.country || caseRecord.applicant?.countryCode || caseRecord.applicant?.location || '',
   };
 }
 
@@ -5192,7 +5193,9 @@ function formatInterviewDuration(minutes) {
 }
 
 function recruiterContactLine(caseRecord) {
-  const phoneLine = recruiterPhoneLine(caseRecord.recruiter)
+  const phoneLine = recruiterPhoneLine(caseRecord.recruiter, {
+    preferMobile: isPhilippinesCandidate(caseRecord.applicant),
+  })
   const recruiterName = caseRecord.recruiter?.name || 'Recruiter'
   const recruiterEmail = caseRecord.recruiter?.email || ''
   const coordinatorEmail = resolveCoordinatorEmail(caseRecord)
@@ -5577,6 +5580,20 @@ export function buildIntakeDraft(values, templates, overrides = {}) {
   };
 }
 
+function isPhilippinesCandidate(applicant = {}) {
+  const statedLocation = [
+    applicant.country,
+    applicant.countryCode,
+    applicant.location,
+    applicant.address,
+  ].filter(Boolean).join(' ').toLowerCase()
+  if (statedLocation) return /philippines|pilipinas|\bph\b/i.test(statedLocation)
+
+  const phone = String(applicant.phone || '').trim()
+  return /\+63\b|^09\d{8,}/i.test(phone) ||
+    String(applicant.timezone || '').toLowerCase() === 'asia/manila'
+}
+
 function getInputValue(values, actionId) {
   for (const block of Object.values(values || {})) {
     const element = findElementByActionId(block, actionId)
@@ -5824,6 +5841,7 @@ function applicantFromCandidateIndex(candidate) {
     lastName: candidate.lastName || rest.join(' '),
     email: candidate.email || '',
     phone: candidate.phone || '',
+    country: candidate.country || candidate.countryCode || candidate.location || '',
     jobTitle: candidate.jobTitle || '',
     stage: candidate.stage || '',
     workflowStepId: candidate.workflowStepId || '',
@@ -5846,6 +5864,7 @@ function mergeApplicantDetail(applicant, detail) {
     ...applicant,
     email: detail.email || applicant.email || '',
     phone: detail.phone || applicant.phone || '',
+    country: detail.country || detail.countryCode || detail.location || applicant.country || '',
     jobTitle: detail.jobTitle || applicant.jobTitle || '',
     stage: detail.stage || applicant.stage || '',
     workflowStepId: detail.workflowStepId || applicant.workflowStepId || '',
