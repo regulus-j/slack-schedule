@@ -108,6 +108,7 @@ function write(level, event, details = {}) {
 }
 
 export const logger = {
+  debug: (event, details) => write('debug', event, details),
   info: (event, details) => write('info', event, details),
   warn: (event, details) => write('warn', event, details),
   error: (event, details) => write('error', event, details),
