@@ -91,7 +91,7 @@ async function sendSlackDm({ slackClient, slackUserId, text }) {
   }
 }
 
-export function createHttpServer({ config, store, logger, slackClient, isReady = () => true }) {
+export function createHttpServer({ config, store, logger, slackClient, isReady = () => true, isSlackReady = () => true }) {
   return createServer(async (req, res) => {
     const correlationId = crypto.randomUUID()
     const baseUrl = config.publicBaseUrl || `http://localhost:${config.port || 3000}`
@@ -108,6 +108,10 @@ export function createHttpServer({ config, store, logger, slackClient, isReady =
       }
       try {
         await store.stats()
+        if (!isSlackReady()) {
+          sendJson(res, 503, { ok: false, error: 'slack_disconnected' })
+          return
+        }
         sendJson(res, 200, { ok: true })
       } catch (error) {
         logger.error('health_check_failed', { error, correlationId })

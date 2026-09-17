@@ -48,6 +48,22 @@ export async function main() {
     socketMode: true,
     appToken: config.slack.appToken,
   })
+  let slackSocketReady = false
+  let slackDisconnectedAt = 0
+  let slackRecoveryInFlight = false
+  const socketClient = app.receiver?.client
+  socketClient?.on?.('connected', () => {
+    slackSocketReady = true
+    slackDisconnectedAt = 0
+    logger.info('slack_socket_connected', { status: 'connected' })
+  })
+  socketClient?.on?.('disconnected', (error) => {
+    slackSocketReady = false
+    slackDisconnectedAt = slackDisconnectedAt || Date.now()
+    logger.warn('slack_socket_disconnected', {
+      error: error instanceof Error ? error.message : String(error || 'disconnected'),
+    })
+  })
   app.error(async (error) => {
     if (error?.name === 'CaseNotFoundError') {
       logger.warn('slack_bolt_stale_case_interaction', { caseId: error.caseId, message: error.message })
@@ -71,6 +87,7 @@ export async function main() {
     logger,
     slackClient: app.client,
     isReady: () => storeReady,
+    isSlackReady: () => slackSocketReady,
   })
   const httpServerStarted = await listenHttpServer(httpServer, config.port, logger)
 
@@ -110,14 +127,44 @@ export async function main() {
   })
 
   await app.start()
+  slackSocketReady = true
   logger.info('slack_app_started', { status: 'started' })
   logger.info('slack_socket_mode_ready', { status: 'connected' })
 
-  let slackConnectivityTimer = setInterval(() => {
-    app.client.auth.test()
-      .then(() => logger.debug('slack_connectivity_check_succeeded'))
-      .catch((error) => logger.warn('slack_connectivity_check_failed', { error: error.message }))
-  }, 5 * 60 * 1000)
+  let shuttingDown = false
+  const restartSlackConnection = async (reason) => {
+    if (shuttingDown || slackRecoveryInFlight) return
+    slackRecoveryInFlight = true
+    slackSocketReady = false
+    logger.warn('slack_connection_recovery_started', { reason })
+    try {
+      await app.stop()
+      await app.start()
+      slackSocketReady = true
+      slackDisconnectedAt = 0
+      logger.info('slack_connection_recovered', { status: 'connected' })
+    } catch (error) {
+      slackDisconnectedAt = slackDisconnectedAt || Date.now()
+      logger.error('slack_connection_recovery_failed', { error })
+    } finally {
+      slackRecoveryInFlight = false
+    }
+  }
+
+  let slackConnectivityTimer = setInterval(async () => {
+    try {
+      await app.client.auth.test()
+      logger.debug('slack_connectivity_check_succeeded')
+    } catch (error) {
+      slackSocketReady = false
+      slackDisconnectedAt = slackDisconnectedAt || Date.now()
+      logger.warn('slack_connectivity_check_failed', { error: error.message })
+    }
+
+    if (!slackSocketReady && slackDisconnectedAt && Date.now() - slackDisconnectedAt >= 60 * 1000) {
+      await restartSlackConnection('connection_unhealthy_for_60_seconds')
+    }
+  }, 30 * 1000)
   slackConnectivityTimer.unref?.()
 
   if (config.notifications.enabled) {
@@ -145,13 +192,13 @@ export async function main() {
     })
   }
 
-  let shuttingDown = false
   const shutdown = async (signal, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
     logger.info('application_shutdown_started', { reason: signal })
     notificationWorker.stop()
     clearInterval(slackConnectivityTimer)
+    slackSocketReady = false
     stopEventLoopMonitor()
     if (httpServerStarted) await new Promise((resolve) => httpServer.close(resolve))
     await app.stop()
