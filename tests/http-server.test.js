@@ -75,7 +75,7 @@ test('health reports database readiness outside operating hours', async () => {
   }
 })
 
-test('health reports Slack disconnection so infrastructure can recover the app', async () => {
+test('health reports Slack disconnection for operational readiness', async () => {
   const server = createHttpServer({
     config: { port: 0, publicBaseUrl: 'http://localhost' },
     store: { async stats() { return { cases: 0 } } },
@@ -88,6 +88,33 @@ test('health reports Slack disconnection so infrastructure can recover the app',
     const response = await fetch(`http://127.0.0.1:${server.address().port}/health`)
     assert.equal(response.status, 503)
     assert.deepEqual(await response.json(), { ok: false, error: 'slack_disconnected' })
+  } finally {
+    server.close()
+    await once(server, 'close')
+  }
+})
+
+test('liveness stays healthy while dependencies recover', async () => {
+  let statsCalled = false
+  const server = createHttpServer({
+    config: { port: 0, publicBaseUrl: 'http://localhost' },
+    store: {
+      async stats() {
+        statsCalled = true
+        throw new Error('liveness must not query dependencies')
+      },
+    },
+    logger: silentLogger(),
+    isReady: () => false,
+    isSlackReady: () => false,
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/live`)
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), { ok: true })
+    assert.equal(statsCalled, false)
   } finally {
     server.close()
     await once(server, 'close')

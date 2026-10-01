@@ -101,6 +101,7 @@ jobs:
             -var="region=${GCP_REGION}"
             -var="github_repository=${{ github.repository }}"
             -var="container_image=${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/slack-scheduler-image/app:${{ github.sha }}"
+            -var="app_machine_type=${{ vars.APP_MACHINE_TYPE || 'e2-small' }}"
             -var="public_base_url=${{ vars.PUBLIC_BASE_URL }}"
             -var="slack_team_id=${{ vars.SLACK_TEAM_ID }}"
             -var="slack_posting_channel_id=${{ vars.SLACK_POSTING_CHANNEL_ID }}"

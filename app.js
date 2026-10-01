@@ -156,8 +156,8 @@ export async function main() {
       await app.client.auth.test()
       logger.debug('slack_connectivity_check_succeeded')
     } catch (error) {
-      slackSocketReady = false
-      slackDisconnectedAt = slackDisconnectedAt || Date.now()
+      // Web API reachability and the Socket Mode connection are independent.
+      // Only the socket client's disconnected event may mark the socket down.
       logger.warn('slack_connectivity_check_failed', { error: error.message })
     }
 

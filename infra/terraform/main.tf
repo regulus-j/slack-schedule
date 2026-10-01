@@ -131,7 +131,7 @@ resource "google_project_iam_member" "app_artifact_reader" {
 }
 resource "google_compute_instance" "app" {
   name         = "${local.service_name}-${var.environment}-app"
-  machine_type = "e2-micro"
+  machine_type = var.app_machine_type
   zone         = "${var.region}-a"
   tags         = ["slack-scheduler-app"]
   boot_disk {
@@ -173,7 +173,7 @@ resource "google_compute_instance" "app" {
     google_shared_calendar_id   = var.google_shared_calendar_id
     google_auth_slack_user_id   = var.google_auth_slack_user_id
     email_test_mode             = var.email_test_mode
-    email_test_recipient       = var.email_test_recipient
+    email_test_recipient        = var.email_test_recipient
   }) }
   depends_on = [google_project_iam_member.app_artifact_reader]
 }

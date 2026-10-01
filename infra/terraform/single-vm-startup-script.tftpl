@@ -98,7 +98,9 @@ if ! systemctl is-active --quiet docker; then
   systemctl start docker
 fi
 
-if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/health >/dev/null; then
+# Restart only when the process is not serving. Dependency readiness is
+# reported separately by /health and recovered inside the application.
+if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:3000/live >/dev/null; then
   exit 0
 fi
 

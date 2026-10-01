@@ -86,6 +86,6 @@ npm.cmd run notifications:test -- --today --type all --email test@example.com --
 
 ## Recovery
 
-The production recovery workflow starts the application VM, starts local PostgreSQL and Docker, recreates the Compose app, and verifies the local health endpoint. It does not reference a separate PostgreSQL VM. The VM's `slack-scheduler-health-recovery.timer` performs the same lightweight recovery automatically every three minutes when the app health check fails.
+The production recovery workflow starts the application VM, starts local PostgreSQL and Docker, recreates the Compose app, and verifies the readiness endpoint. It does not reference a separate PostgreSQL VM. The VM's `slack-scheduler-health-recovery.timer` checks `/live` every three minutes and recreates the app only when the process is no longer serving. `/health` remains the dependency-readiness signal and may report a transient PostgreSQL or Slack outage without causing a destructive restart loop.
 
 Use [incident-response.md](incident-response.md) for credential exposure, OAuth compromise, unauthorized actions, duplicate sends, dependency vulnerabilities, and database recovery.

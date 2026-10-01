@@ -97,6 +97,15 @@ export function createHttpServer({ config, store, logger, slackClient, isReady =
     const baseUrl = config.publicBaseUrl || `http://localhost:${config.port || 3000}`
     const url = new URL(req.url, baseUrl)
 
+    if (url.pathname === '/live') {
+      if (req.method !== 'GET') {
+        sendJson(res, 405, { ok: false, error: 'method_not_allowed' })
+        return
+      }
+      sendJson(res, 200, { ok: true })
+      return
+    }
+
     if (url.pathname === '/health') {
       if (req.method !== 'GET') {
         sendJson(res, 405, { ok: false, error: 'method_not_allowed' })
